@@ -29,7 +29,7 @@
 
 Config& conf = Config::getInstance();
 
-void analyze(TString path, TString particle){    
+void analyze(Int_t run_num, TString particle){    
     // +---------+
     // | setting |
     // +---------+
@@ -50,15 +50,16 @@ void analyze(TString path, TString particle){
     // +-----------+
     // | load file |
     // +-----------+
+    TString root_file_path = Form("%s/hodo/hodo_run%05d.root", DATA_DIR.Data(), run_num);
     auto *f = new TFile(path.Data());
     if (!f || f->IsZombie()) {
         std::cerr << "Error: Could not open file : " << path << std::endl;
         return;
     }
-    TTreeReader reader("hodo", f);
-    TTreeReaderValue<unsigned int> run_number(reader, "run_number");
-    reader.SetEntry(0);
-    Int_t run_num = *run_number;
+    // TTreeReader reader("hodo", f);
+    // TTreeReaderValue<unsigned int> run_number(reader, "run_number");
+    // reader.SetEntry(0);
+    // Int_t run_num = *run_number;
 
 
     // // +--------------------------+
