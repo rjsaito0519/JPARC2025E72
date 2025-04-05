@@ -38,19 +38,11 @@ struct FitResult {
     std::vector<Double_t> additional; // 何か追加で値を返したいときのコンテナ
 };
 
-// -- fitting result container -----
-struct PwaOption {
-    Bool_t debug_cout;
-    Bool_t fix_s_wave;
-    Int_t min_print_level;
-    Int_t min_strategy;
-    TString anl_osaka_model;
-};
-
-
 namespace ana_helper {
     TCanvas* add_tab(TGTab *tab, const char* tabName);
-    std::vector<std::vector<Double_t>> load_data(TString path);
+
+    // -- hodo -----
+    FitResult t0_adc_fit(TH1D *h, TCanvas *c, Int_t n_c);
 }
 
 #endif  // ANA_HELPER_
