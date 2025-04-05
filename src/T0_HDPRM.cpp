@@ -50,7 +50,7 @@ void analyze(Int_t run_num, TString particle){
     // +-----------+
     // | load file |
     // +-----------+
-    TString root_file_path = Form("%s/hodo/hodo_run%05d.root", DATA_DIR.Data(), run_num);
+    TString path = Form("%s/hodo/hodo_run%05d.root", DATA_DIR.Data(), run_num);
     auto *f = new TFile(path.Data());
     if (!f || f->IsZombie()) {
         std::cerr << "Error: Could not open file : " << path << std::endl;
