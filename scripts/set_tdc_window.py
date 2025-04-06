@@ -258,6 +258,7 @@ elif args.counter_name in ["AC"]:
 elif args.counter_name in ["BAC", "SAC"]:
     print("{}_TDC_seg{}U".format(args.counter_name, num_of_ch[args.counter_name]))
     hist_data = file["{}_TDC_seg{}U".format(args.counter_name, num_of_ch[args.counter_name])].to_numpy()
+    print(hist_data)
 
     bin_values = np.zeros_like(hist_data[0])
     bin_edges = hist_data[1]
