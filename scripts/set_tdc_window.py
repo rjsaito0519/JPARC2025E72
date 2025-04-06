@@ -175,7 +175,7 @@ def on_key(event):
 
 file = uproot.open(args.rootfile_path)
 
-if args.counter_name in ["BHT", "T0", "T1", "CVC", "NC", "BH2", "BAC"]:
+if args.counter_name in ["BHT", "T0", "T1", "CVC", "NC", "BH2"]:
     hist_data = file["{}_TDC_seg0U".format(args.counter_name)].to_numpy()
 
     bin_values_u = np.zeros_like(hist_data[0])
@@ -255,10 +255,10 @@ elif args.counter_name in ["AC"]:
 
     plt.show()
 
-elif args.counter_name in [ "SAC"]:
+elif args.counter_name in ["BAC", "SAC"]:
     hist_data = file["{}_TDC_seg{}U".format(args.counter_name, num_of_ch[args.counter_name])].to_numpy()
 
-    bin_values = np.zeros_like(hist_data[0])
+    bin_values = hist_data[0]
     bin_edges = hist_data[1]
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
