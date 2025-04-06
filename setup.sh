@@ -14,3 +14,10 @@ SOURCE_FILE="$SCRIPT_DIR/include/paths_example.h"
 if [ ! -e "$TARGET_FILE" ]; then
   cp "$SOURCE_FILE" "$TARGET_FILE"
 fi
+
+TARGET_FILE="$SCRIPT_DIR/scripts/conf.py"
+SOURCE_FILE="$SCRIPT_DIR/scripts/conf_example.py"
+
+if [ ! -e "$TARGET_FILE" ]; then
+  cp "$SOURCE_FILE" "$TARGET_FILE"
+fi

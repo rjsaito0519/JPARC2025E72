@@ -3,4 +3,5 @@ bin
 results
 include/paths.h
 scripts/__pycache__
+scripts/conf.py
 data
