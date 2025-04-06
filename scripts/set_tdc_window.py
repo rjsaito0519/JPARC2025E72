@@ -131,24 +131,20 @@ def on_key(event):
                             x3 = selected_points[-1]
                             x_min, x_max = sorted([x1, x2])
                             if s_list[0] == tdc_label:
-                                log.append(s_list)
                                 s_list[1] = int(x_min+0.5)
                                 s_list[2] = int(x_max+0.5)  
                                 log.append(s_list)                              
                             elif s_list[0] == tdc_label+"_Pi":
-                                log.append(s_list)
                                 s_list[1] = int(x_min+0.5)
                                 s_list[2] = int(x3+0.5)
                                 log.append(s_list)                   
                             elif s_list[0] == tdc_label+"_K":
-                                log.append(s_list)
                                 s_list[1] = int(x3+0.5)
                                 s_list[2] = int(x_max+0.5)  
                                 log.append(s_list)
                                 do_update = True
                         else:
                             if s_list[0] == tdc_label:
-                                log.append(s_list)
                                 x1 = selected_points[-2]
                                 x2 = selected_points[-1]
                                 x_min, x_max = sorted([x1, x2])
@@ -260,6 +256,7 @@ elif args.counter_name in ["AC"]:
     plt.show()
 
 elif args.counter_name in ["BAC", "SAC"]:
+    print("{}_TDC_seg{}U".format(args.counter_name, num_of_ch[args.counter_name]))
     hist_data = file["{}_TDC_seg{}U".format(args.counter_name, num_of_ch[args.counter_name])].to_numpy()
 
     bin_values = np.zeros_like(hist_data[0])
