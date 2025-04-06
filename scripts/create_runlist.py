@@ -31,7 +31,7 @@ for suffix in args.suffix:
     conf_dir = os.path.join(conf.analyzer_dir, "param", "conf")
     conf_target_file = f"{conf_dir}/analyzer_e72_run{args.run_num:0=5}_{prefix}_{suffix}.conf"
     if not os.path.isfile(conf_target_file):
-        shutil.copy(os.path.join(conf_dir, "analyzer_e72_2025.conf"), conf_target_file)
+        shutil.copy(os.path.join(conf_dir, "analyzer_e72_20250307.conf"), conf_target_file)
 
     buf = []
     with open(conf_target_file) as f:
