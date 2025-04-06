@@ -256,8 +256,7 @@ elif args.counter_name in ["AC"]:
     plt.show()
 
 elif args.counter_name in ["BAC", "SAC"]:
-    print("{}_TDC_seg{}U".format(args.counter_name, num_of_ch[args.counter_name]))
-    hist_data = file["{}_TDC_seg{}U".format(args.counter_name, num_of_ch[args.counter_name])].to_numpy()
+    hist_data = file["{}_TDC_seg{}U".format(args.counter_name, num_of_ch[args.counter_name]+1)].to_numpy()
     print(hist_data)
 
     bin_values = np.zeros_like(hist_data[0])
