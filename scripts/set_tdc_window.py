@@ -29,7 +29,7 @@ user_param_dir = "{}/param/USER".format(conf.analyzer_dir)
 target_file = "{}/UserParam_run{:0=5}".format(user_param_dir, run_num)
 
 if not os.path.isfile(target_file):
-    shutil.copy("{}/UserParam_0".format(user_param_dir), target_file)
+    shutil.copy("{}/UserParam_e72_20250307".format(user_param_dir), target_file)
 # ---------------------------------------------------------------------------
 
 plt.rcParams['font.family'] = 'Times New Roman' #全体のフォントを設定
