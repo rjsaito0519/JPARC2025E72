@@ -39,16 +39,16 @@ for suffix in args.suffix:
             s_list = line.split()
             if len(s_list) != 0 and s_list[0] == "USER:":
                 target = f"param/USER/UserParam_run{args.run_num:0=5}"
-                if os.path.isfile(os.path.join(analyzer_dir, target)):
+                if os.path.isfile(os.path.join(conf.analyzer_dir, target)):
                     s_list[1] = target
             if prefix == "hodo":
                 if len(s_list) != 0 and s_list[0] == "HDPRM:" and suffix in ["Pi", "K"]:
                     target = f"param/HDPRM/HodoParam_run{args.run_num:0=5}_{suffix}"
-                    if os.path.isfile(os.path.join(analyzer_dir, target)):  
+                    if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
                 if len(s_list) != 0 and s_list[0] == "HDPHC:" and suffix in ["Pi", "K"]:
                     target = f"param/HDPHC/HodoPHC_run{args.run_num:0=5}_{suffix}"
-                    if os.path.isfile(os.path.join(analyzer_dir, target)):  
+                    if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
             # elif prefix == "dc":
             #     if len(s_list) != 0 and s_list[0] == "DCTDC:" and suffix in ["Pi_1", "K_1", "Pi_2", "K_2", "Pi_3", "K_3"]:
