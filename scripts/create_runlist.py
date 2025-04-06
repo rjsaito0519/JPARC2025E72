@@ -16,6 +16,8 @@ args = parser.parse_args()
 import sys
 import os
 import shutil
+import conf
+prefix = "dc" if args.dc else "hodo"
 set1 = set(args.suffix)
 set2 = set(["0", "Pi", "K"])
 
@@ -24,22 +26,13 @@ if common_elements:
     print("please input correct suffix: 0, Pi, K")
     sys.exit()
 
-# ---------------------------------------------------------------------------
-import conf
-prefix = "dc" if args.dc else "hodo"
-runlist_dir = os.path.join(conf.analyzer_dir, "runmanager", "runlist")
-runlist_target_file = os.path.join(runlist_dir, f"{prefix}_run{args.run_num:05d}.yml")
-if not os.path.isfile(runlist_target_file):
-    shutil.copy(os.path.join(runlist_dir, "myexample.yml"), runlist_target_file)
-
-conf_dir = os.path.join(conf.analyzer_dir, "param", "conf")
-conf_target_file = f"{conf_dir}/analyzer_e72_run{args.run_num:0=5}_{prefix}_{suffix}.conf"
-if not os.path.isfile(conf_target_file):
-    shutil.copy(os.path.join(conf_dir, "analyzer_e72_2025.conf"), conf_target_file)
-# ---------------------------------------------------------------------------
-
 # -- write conf file  -----------------------------------
 for suffix in args.suffix:
+    conf_dir = os.path.join(conf.analyzer_dir, "param", "conf")
+    conf_target_file = f"{conf_dir}/analyzer_e72_run{args.run_num:0=5}_{prefix}_{suffix}.conf"
+    if not os.path.isfile(conf_target_file):
+        shutil.copy(os.path.join(conf_dir, "analyzer_e72_2025.conf"), conf_target_file)
+
     buf = []
     with open(conf_target_file) as f:
         for line in f:
@@ -69,6 +62,11 @@ for suffix in args.suffix:
 # ---------------------------------------------------------------------------
 
 # -- write runlist file  -----------------------------------
+runlist_dir = os.path.join(conf.analyzer_dir, "runmanager", "runlist")
+runlist_target_file = os.path.join(runlist_dir, f"{prefix}_run{args.run_num:05d}.yml")
+if not os.path.isfile(runlist_target_file):
+    shutil.copy(os.path.join(runlist_dir, "myexample.yml"), runlist_target_file)
+
 buf = []
 with open(runlist_target_file) as f:
     for line in f:
