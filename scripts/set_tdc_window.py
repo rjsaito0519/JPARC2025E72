@@ -25,11 +25,11 @@ filename = os.path.basename(args.rootfile_path)
 index = filename.find("run")
 run_num = int(filename[index+3:index+8])
 
-user_param_dir = "{}/param/USER".format(conf.analyzer_dir)
-target_file = "{}/UserParam_run{:0=5}".format(user_param_dir, run_num)
+user_param_dir = os.path.join(conf.analyzer_dir, "param", "USER")
+target_file = os.path.join(user_param_dir, f"UserParam_run{run_num:05d}")
 
 if not os.path.isfile(target_file):
-    shutil.copy("{}/UserParam_e72_20250307".format(user_param_dir), target_file)
+    shutil.copy(os.path.join(user_param_dir, "UserParam_e72_20250307"), target_file)
 # ---------------------------------------------------------------------------
 
 plt.rcParams['font.family'] = 'Times New Roman' #全体のフォントを設定
@@ -197,6 +197,7 @@ if args.counter_name in ["BHT", "T0", "T1", "CVC", "NC", "BH2"]:
     # プロット
     ax.hist(bin_centers, bins=bin_edges, weights=bin_values_u, histtype='step', color="C1", label = "up")
     ax.hist(bin_centers, bins=bin_edges, weights=bin_values_d, histtype='step', color="C0", label = "down")
+    ax.set_yscale("log")
     
     if (args.check):
         tdc_label = "{}_TDC".format(args.counter_name)
@@ -238,7 +239,8 @@ elif args.counter_name in ["AC"]:
 
     # プロット
     ax.hist(bin_centers, bins=bin_edges, weights=bin_values, histtype='step')
-    
+    ax.set_yscale("log")
+
     if (args.check):
         tdc_label = "{}_TDC".format(args.counter_name)
         with open(target_file) as f:
@@ -269,6 +271,7 @@ elif args.counter_name in ["BAC", "SAC"]:
 
     # プロット
     ax.hist(bin_centers, bins=bin_edges, weights=bin_values, histtype='step')
+    ax.set_yscale("log")
     
     if (args.check):
         tdc_label = "{}_TDC".format(args.counter_name)
