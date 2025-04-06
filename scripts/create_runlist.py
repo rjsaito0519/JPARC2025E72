@@ -15,6 +15,7 @@ args = parser.parse_args()
 
 import sys
 import os
+import shutil
 set1 = set(args.suffix)
 set2 = set(["0", "Pi", "K"])
 
