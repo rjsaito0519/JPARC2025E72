@@ -12,7 +12,7 @@ namespace ana_helper {
         // -- pedestal -----
         Double_t ped_pos        = h->GetBinCenter(h->GetMaximumBin());
         Double_t ped_half_width = 5.0;
-        std::pair<Double_t, Double_t> ped_n_sigma(1.5, 1.5);
+        std::pair<Double_t, Double_t> ped_n_sigma(2.0, 2.0);
 
         // -- first fit -----
         TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", ped_pos-ped_half_width, ped_pos+ped_half_width);
@@ -43,7 +43,7 @@ namespace ana_helper {
         Double_t ped_mip_distance = 50.0;
         Double_t mip_pos          = ped_pos + ped_mip_distance;
         Double_t mip_half_width   = 20.0;
-        std::pair<Double_t, Double_t> mip_n_sigma(1.5, 2.0);
+        std::pair<Double_t, Double_t> mip_n_sigma(2.0, 2.5);
 
         // -- first fit -----
         f_prefit->SetRange(mip_pos-mip_half_width, mip_pos+mip_half_width);
