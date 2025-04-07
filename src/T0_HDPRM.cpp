@@ -111,6 +111,7 @@ void analyze(TString path, TString particle){
         // gPad->SetLogy(1);
         // nth_pad++;
 
+        std::cout << i << std::endl;
         FitResult result = ana_helper::t0_adc_fit(h_t0_adc[0][i], c_t0_adc_u, nth_pad);
         // fit_result_ped_u.push_back(par[0]);
         // fit_result_mip_u.push_back(par[1]);
