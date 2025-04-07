@@ -29,7 +29,7 @@
 
 Config& conf = Config::getInstance();
 
-void analyze(Int_t run_num, TString particle){    
+void analyze(TString path, TString particle){    
     // +---------+
     // | setting |
     // +---------+
@@ -50,17 +50,15 @@ void analyze(Int_t run_num, TString particle){
     // +-----------+
     // | load file |
     // +-----------+
-    TString path = Form("%s/hodo/hodo_run%05d.root", DATA_DIR.Data(), run_num);
     auto *f = new TFile(path.Data());
     if (!f || f->IsZombie()) {
         std::cerr << "Error: Could not open file : " << path << std::endl;
         return;
     }
-    // TTreeReader reader("hodo", f);
-    // TTreeReaderValue<unsigned int> run_number(reader, "run_number");
-    // reader.SetEntry(0);
-    // Int_t run_num = *run_number;
-
+    TTreeReader reader("hodo", f);
+    TTreeReaderValue<unsigned int> run_number(reader, "run_number");
+    reader.SetEntry(0);
+    Int_t run_num = *run_number;
 
     // // +--------------------------+
     // // | prepare output root file |
@@ -151,27 +149,18 @@ void analyze(Int_t run_num, TString particle){
 
 Int_t main(int argc, char** argv) {
 
-    // // -- check argments -----
-    // if (argc < 2) {
-    //     std::cerr << "Usage: " << argv[0] << " <root file path> [focus_pdg_code]" << std::endl;
-    //     return 1;
-    // }
-    // TString path = argv[1];
-    
-    // // -- for beam data -----
-    // if (path.Contains("beam")) {
-    //     conf.beam_initialize();
-    //     std::cout << " ---" << std::endl;
-    // }
+    // -- check argments -----
+    if (argc < 3) {
+        std::cerr << "Usage: " << argv[0] << " <root file path> <particle>" << std::endl;
+        return 1;
+    }
+    TString path = argv[1];
+    TString particle = argv[2];
+    if (name != "Pi" && name != "K") {
+        std::cerr << "Error: Unexpected particle name: " << name << std::endl;
+        return 1;
+    }
 
-    // Int_t focus_pdg_code = 9999;
-    // if (argc >= 3) {
-    //     focus_pdg_code = std::atoi(argv[2]);
-    //     std::cout << "focus_pdg_code: " << focus_pdg_code << std::endl;
-    // } else {
-    //     std::cout << "No optional focus_pdg_code provided." << std::endl;
-    // }
-
-    analyze(70, "Pi");
+    analyze(path, particle);
     return 0;
 }
