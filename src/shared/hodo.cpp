@@ -142,7 +142,7 @@ namespace ana_helper {
         // -- first fit -----
         TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         f_prefit->SetParameter(1, peak_pos);
-        f_prefit->SetParameter(2, stdev);
+        f_prefit->SetParameter(2, stdev*0.9);
         h->Fit(f_prefit, fit_option.Data(), "", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
         delete f_prefit;
