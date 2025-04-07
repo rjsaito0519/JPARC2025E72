@@ -42,7 +42,7 @@ namespace ana_helper {
     TCanvas* add_tab(TGTab *tab, const char* tabName);
 
     // -- hodo -----
-    FitResult t0_adc_fit(TH1D *h, TCanvas *c, Int_t n_c);
+    FitResult t0_adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Double_t ped_mip_distance);
 }
 
 #endif  // ANA_HELPER_

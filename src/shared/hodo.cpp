@@ -3,7 +3,7 @@
 namespace ana_helper {
 
     // ____________________________________________________________________________________________
-    FitResult t0_adc_fit(TH1D *h, TCanvas *c, Int_t n_c) {
+    FitResult t0_adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Double_t ped_mip_distance) {
         Config& conf = Config::getInstance();
 
         c->cd(n_c);
@@ -40,7 +40,6 @@ namespace ana_helper {
 
         // -- mip -----
         par.clear(); err.clear();
-        Double_t ped_mip_distance = 80.0;
         Double_t mip_pos          = ped_pos + ped_mip_distance;
         Double_t mip_half_width   = 20.0;
         std::pair<Double_t, Double_t> mip_n_sigma(1.5, 2.0);

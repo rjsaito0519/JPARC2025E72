@@ -20,6 +20,12 @@ public:
         { "BH2",  1 },
     };
 
+    const std::vector<std::vector<Double_t>> t0_ped_mip_distance{
+        {80.0, 50.0, 70.0, 50.0, 70.0}, // UP
+        {80.0, 50.0, 70.0, 50.0, 70.0}  // DOWN
+    };
+
+
     // void beam_initialize() {
     //     beam_generator = -1;
     // }
