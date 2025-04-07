@@ -97,6 +97,7 @@ void analyze(TString path, TString particle){
     std::vector<std::vector<Double_t>> fit_result_mip_u;
     auto c_t0_adc_u = new TCanvas("t0_adc_u", "", 1500, 1200);
     c_t0_adc_u->Divide(cols, rows);
+    c_t0_adc_u->Print(pdf_path + "["); // start
     nth_pad = 1;
     for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++) {
         if (nth_pad > max_pads) {
