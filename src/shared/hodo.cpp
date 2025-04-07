@@ -43,12 +43,12 @@ namespace ana_helper {
         par.clear(); err.clear();
         Double_t mip_pos          = ped_pos + ped_mip_distance;
         Double_t mip_half_width   = 20.0;
-        std::pair<Double_t, Double_t> mip_n_sigma(1.6, 2.0);
+        std::pair<Double_t, Double_t> mip_n_sigma(1.5, 2.0);
 
         // -- first fit -----
         f_prefit->SetRange(mip_pos-mip_half_width, mip_pos+mip_half_width);
         f_prefit->SetParameter(1, mip_pos);
-        f_prefit->SetParameter(2, mip_half_width);
+        f_prefit->SetParameter(2, mip_half_width*0.9);
         h->Fit(f_prefit, "0Q", "", mip_pos-mip_half_width, mip_pos+mip_half_width);
         for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
         delete f_prefit;
@@ -73,13 +73,13 @@ namespace ana_helper {
         Double_t p_value_l = TMath::Prob(chi_square_l, f_fit_mip_l->GetNDF());
 
         // -- debug ------
-        // std::cout << "gauss:  " << p_value_g << ", " << f_fit_mip_g->GetChisquare() << std::endl;
-        // std::cout << "landau: " << p_value_l << ", " << f_fit_mip_l->GetChisquare() << std::endl;
-        // Bool_t flag = p_value_g >= p_value_l;
-        // std::cout << flag << std::endl;
+        std::cout << "gauss:  " << p_value_g << ", " << f_fit_mip_g->GetChisquare() << std::endl;
+        std::cout << "landau: " << p_value_l << ", " << f_fit_mip_l->GetChisquare() << std::endl;
+        Bool_t flag = p_value_g >= p_value_l;
+        std::cout << flag << std::endl;
 
         // if (p_value_g >= p_value_l) {
-        if (chi_square_g >= chi_square_l) {
+        if (chi_square_g <= chi_square_l) {
             for (Int_t i = 0, n_par = f_fit_mip_g->GetNpar(); i < n_par; i++) {
                 result.par.push_back(f_fit_mip_g->GetParameter(i));
                 result.err.push_back(f_fit_mip_g->GetParError(i));
@@ -134,15 +134,15 @@ namespace ana_helper {
         gPad->SetLogy(1);
         std::vector<Double_t> par, err;
 
-        Double_t peak_pos        = h->GetBinCenter(h->GetMaximumBin());
-        Double_t peak_half_width = 5.0*1000.0;
+        Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
+        Double_t stdev    = h->GetStdDev();
         std::pair<Double_t, Double_t> peak_n_sigma(2.0, 2.0);
 
         // -- first fit -----
-        TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", peak_pos-peak_half_width, peak_pos+peak_half_width);
+        TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         f_prefit->SetParameter(1, peak_pos);
-        f_prefit->SetParameter(2, peak_half_width);
-        h->Fit(f_prefit, "0Q", "", peak_pos-peak_half_width, peak_pos+peak_half_width);
+        // f_prefit->SetParameter(2, stdev);
+        h->Fit(f_prefit, "0Q", "", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
         delete f_prefit;
 
@@ -193,10 +193,10 @@ namespace ana_helper {
         std::pair<Double_t, Double_t> peak_n_sigma(2.0, 2.0);
 
         // -- first fit -----
-        TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", peak_pos-stdev, peak_pos+stdev);
+        TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         f_prefit->SetParameter(1, peak_pos);
         f_prefit->SetParameter(2, stdev);
-        h->Fit(f_prefit, "0Q", "", peak_pos-stdev, peak_pos+stdev);
+        h->Fit(f_prefit, "0Q", "", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
         delete f_prefit;
 
@@ -222,7 +222,7 @@ namespace ana_helper {
         // -- draw -----
         FitResult result;
         // if (p_value_g >= p_value_l) {
-        if (chi_square_g >= chi_square_l) {
+        if (chi_square_g <= chi_square_l) {
             for (Int_t i = 0, n_par = f_fit_g->GetNpar(); i < n_par; i++) {
                 result.par.push_back(f_fit_g->GetParameter(i));
                 result.err.push_back(f_fit_g->GetParError(i));
