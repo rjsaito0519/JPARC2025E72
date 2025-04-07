@@ -112,13 +112,20 @@ void analyze(TString path, TString particle){
         // gPad->SetLogy(1);
         // nth_pad++;
 
-        std::cout << i << std::endl;
         FitResult result = ana_helper::t0_adc_fit(h_t0_adc[0][i], c_t0_adc_u, nth_pad, conf.t0_ped_mip_distance[0][i]);
         // fit_result_ped_u.push_back(par[0]);
         // fit_result_mip_u.push_back(par[1]);
         gPad->SetLogy(1);
         nth_pad++;
+        std::cout << "UP" << i << ", " << result.par[4] - result.par[1] << std::endl;
 
+        result = ana_helper::t0_adc_fit(h_t0_adc[1][i], c_t0_adc_u, nth_pad, conf.t0_ped_mip_distance[1][i]);
+        // fit_result_ped_u.push_back(par[0]);
+        // fit_result_mip_u.push_back(par[1]);
+        gPad->SetLogy(1);
+        nth_pad++;
+        std::cout << "Down" << i << ", " << result.par[4] - result.par[1] << std::endl;
+        
     }
     c_t0_adc_u->Print(pdf_path);
     c_t0_adc_u->Print(pdf_path + "]"); // end
