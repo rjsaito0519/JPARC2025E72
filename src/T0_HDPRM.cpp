@@ -106,23 +106,28 @@ void analyze(TString path, TString particle){
             c_t0_adc_u->Divide(cols, rows);
             nth_pad = 1;
         }
-        // FitResult result1 = ana_helper::t0_tdc_fit(h_t0_tdc[0][i], c_t0_adc_u, nth_pad);
+        FitResult result1 = ana_helper::t0_tdc_fit(h_t0_tdc[0][i], c_t0_adc_u, nth_pad);
         // // fit_result_ped_u.push_back(par[0]);
         // // fit_result_mip_u.push_back(par[1]);
         // gPad->SetLogy(1);
-        // nth_pad++;
+        nth_pad++;
+
+        FitResult result2 = ana_helper::t0_tdc_fit(h_t0_tdc[1][i], c_t0_adc_u, nth_pad);
+        // // fit_result_ped_u.push_back(par[0]);
+        // // fit_result_mip_u.push_back(par[1]);
+        // gPad->SetLogy(1);
+        nth_pad++;
+
 
         FitResult result = ana_helper::t0_adc_fit(h_t0_adc[0][i], c_t0_adc_u, nth_pad, conf.t0_ped_mip_distance[0][i]);
         // fit_result_ped_u.push_back(par[0]);
         // fit_result_mip_u.push_back(par[1]);
-        gPad->SetLogy(1);
         nth_pad++;
         std::cout << "UP" << i << ", " << result.par[4] - result.par[1] << std::endl;
 
         result = ana_helper::t0_adc_fit(h_t0_adc[1][i], c_t0_adc_u, nth_pad, conf.t0_ped_mip_distance[1][i]);
         // fit_result_ped_u.push_back(par[0]);
         // fit_result_mip_u.push_back(par[1]);
-        gPad->SetLogy(1);
         nth_pad++;
         std::cout << "Down" << i << ", " << result.par[4] - result.par[1] << std::endl;
         

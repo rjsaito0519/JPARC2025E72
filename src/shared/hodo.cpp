@@ -7,6 +7,7 @@ namespace ana_helper {
         Config& conf = Config::getInstance();
 
         c->cd(n_c);
+        gPad->SetLogy(1);
         std::vector<Double_t> par, err;
 
         // -- pedestal -----
@@ -115,6 +116,59 @@ namespace ana_helper {
 
         return result;
     }
+
+    // ____________________________________________________________________________________________
+    FitResult t0_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c) {
+        Config& conf = Config::getInstance();
+
+        c->cd(n_c);
+        gPad->SetLogy(1);
+        std::vector<Double_t> par, err;
+
+        Double_t peak_pos        = h->GetBinCenter(h->GetMaximumBin());
+        Double_t peak_half_width = 5.0*1000.0;
+        std::pair<Double_t, Double_t> peak_n_sigma(2.0, 2.0);
+
+        // -- first fit -----
+        TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", peak_pos-peak_half_width, peak_pos+peak_half_width);
+        f_prefit->SetParameter(1, peak_pos);
+        f_prefit->SetParameter(2, peak_half_width);
+        h->Fit(f_prefit, "0Q", "", peak_pos-peak_half_width, peak_pos+peak_half_width);
+        for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
+
+        // -- second fit -----
+        TF1 *f_fit = new TF1( Form("ped_%s", h->GetName()), "gausn", par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
+        f_fit->SetParameter(0, par[0]);
+        f_fit->SetParameter(1, par[1]);
+        f_fit->SetParameter(2, par[2]*0.9);
+        f_fit->SetLineColor(kOrange);
+        f_fit->SetLineWidth(2);
+        f_fit->SetNpx(1000);
+        h->Fit(f_fit, "0Q", "", par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
+
+        FitResult result;
+        for (Int_t i = 0, n_par = f_fit->GetNpar(); i < n_par; i++) {
+            result.par.push_back(f_fit->GetParameter(i));
+            result.err.push_back(f_fit->GetParError(i));
+        }
+
+        h->GetXaxis()->SetRangeUser(
+            result.par[1]- 5.0*result.par[2], 
+            result.par[1]+ 5.0*result.par[5]
+        );
+        h->Draw();
+        f_fit_ped->Draw("same");
+
+        TLine *line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
+        line->SetLineStyle(2); // 点線に設定
+        line->SetLineColor(kRed); // 色を赤に設定
+        line->Draw("same");
+
+        c->Update();
+
+        return result;
+    }
+
 
     // // ____________________________________________________________________________________________
     // FitResult npe_gauss_fit(TH1D *h, TCanvas *c, Int_t n_c, Double_t n_sigma, Double_t cutoff_threshold) { // cutoff_thresholdは主にKVCの調整用
