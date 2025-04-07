@@ -44,6 +44,7 @@ namespace ana_helper {
     // -- hodo -----
     FitResult t0_adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Double_t ped_mip_distance);
     FitResult t0_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
+    FitResult bht_tot_fit(TH1D *h, TCanvas *c, Int_t n_c);
 }
 
 #endif  // ANA_HELPER_

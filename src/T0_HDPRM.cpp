@@ -89,10 +89,10 @@ void analyze(TString path, TString particle){
     TString pdf_path = Form("%s/img/run%05d_T0_HDPRM_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
 
     // -- container -----
-    std::vector<FitResult> adc_up(conf.num_of_ch.at("t0"));
-    std::vector<FitResult> adc_down(conf.num_of_ch.at("t0"));
-    std::vector<FitResult> tdc_up(conf.num_of_ch.at("t0"));
-    std::vector<FitResult> tdc_down(conf.num_of_ch.at("t0"));
+    std::vector<FitResult> adc_up;
+    std::vector<FitResult> adc_down;
+    std::vector<FitResult> tdc_up;
+    std::vector<FitResult> tdc_down;
 
     auto c_t0 = new TCanvas("t0", "", 1500, 1200);
     c_t0->Divide(cols, rows);
@@ -136,7 +136,7 @@ void analyze(TString path, TString particle){
     Int_t ch;
     std::vector<Double_t> adc_p0_val, adc_p1_val, tdc_p0_val; 
     std::vector<Double_t> adc_p0_err, adc_p1_err, tdc_p0_err; 
-    tree->Branch("ch", ch, "ch/I");
+    tree->Branch("ch", &ch, "ch/I");
     tree->Branch("adc_p0_val", &adc_p0_val);
     tree->Branch("adc_p1_val", &adc_p1_val);
     tree->Branch("tdc_p0_val", &tdc_p0_val);
@@ -144,11 +144,8 @@ void analyze(TString path, TString particle){
     tree->Branch("adc_p1_err", &adc_p1_err);
     tree->Branch("tdc_p0_err", &tdc_p0_err);
     
-    std::cout << "--------------------" << std::endl;
-
     for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++) {
         ch = i;
-        std::cout << ch << ", " << adc_up[i].par[1] << std::endl;
         adc_p0_val.clear(); adc_p1_val.clear(); tdc_p0_val.clear();
         adc_p0_err.clear(); adc_p1_err.clear(); tdc_p0_err.clear();
 
@@ -157,22 +154,22 @@ void analyze(TString path, TString particle){
         adc_p0_val.push_back(adc_down[i].par[1]);
         adc_p0_err.push_back(adc_up[i].err[1]);
         adc_p0_err.push_back(adc_down[i].err[1]);
-
+    
         // -- mip -----
         adc_p1_val.push_back(adc_up[i].par[4]);
         adc_p1_val.push_back(adc_down[i].par[4]);
         adc_p1_err.push_back(adc_up[i].err[4]);
         adc_p1_err.push_back(adc_down[i].err[4]);
-
+    
         // -- tdc -----
         tdc_p0_val.push_back(tdc_up[i].par[1]);
         tdc_p0_val.push_back(tdc_down[i].par[1]);
         tdc_p0_err.push_back(tdc_up[i].err[1]);
         tdc_p0_err.push_back(tdc_down[i].err[1]);
-
+    
         tree->Fill();
     }
-
+    
     fout->cd();
     tree->Write();
     fout->Close(); 
