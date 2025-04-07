@@ -137,7 +137,7 @@ namespace ana_helper {
         for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
 
         // -- second fit -----
-        TF1 *f_fit = new TF1( Form("ped_%s", h->GetName()), "gausn", par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
+        TF1 *f_fit = new TF1( Form("gaus_%s", h->GetName()), "gausn", par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
         f_fit->SetParameter(0, par[0]);
         f_fit->SetParameter(1, par[1]);
         f_fit->SetParameter(2, par[2]*0.9);
@@ -157,7 +157,7 @@ namespace ana_helper {
             result.par[1]+ 5.0*result.par[5]
         );
         h->Draw();
-        f_fit_ped->Draw("same");
+        f_fit->Draw("same");
 
         TLine *line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
         line->SetLineStyle(2); // 点線に設定
