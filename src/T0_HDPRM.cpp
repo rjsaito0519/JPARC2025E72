@@ -60,16 +60,12 @@ void analyze(TString path, TString particle){
     reader.SetEntry(0);
     Int_t run_num = *run_number;
 
-    // // +--------------------------+
-    // // | prepare output root file |
-    // // +--------------------------+
-    // TString save_name;
-    // Int_t dot_index = path.Last('.');
-    // Int_t sla_index = path.Last('/');
-    // for (Int_t i = sla_index+1; i < dot_index; i++) save_name += path[i];
-    // TString output_path = Form("%s/root/acceptance_%s_%d.root", OUTPUT_DIR.Data(), save_name.Data(), focus_pdg_code);
-    // if (std::ifstream(output_path.Data())) std::remove(output_path.Data());
-    // TFile fout(output_path.Data(), "create");
+    // +--------------------------+
+    // | prepare output root file |
+    // +--------------------------+
+    TString output_path = Form("%s/root/run%05d_T0_HDPEM_%s.root", OUTPUT_DIR.Data(), run_num, particle.Data());
+    if (std::ifstream(output_path.Data())) std::remove(output_path.Data());
+    TFile* fout = new TFile(output_path.Data(), "RECREATE");
 
     // +-------------------+
     // | prepare histogram |
@@ -90,83 +86,93 @@ void analyze(TString path, TString particle){
     Int_t nth_pad = 1;
     Int_t rows = 2, cols = 2;
     Int_t max_pads = rows * cols;
-    TString pdf_path = Form("%s/img/run%05d_t0_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
+    TString pdf_path = Form("%s/img/run%05d_T0_HDPRM_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
 
-    // -- adc up typical -----
-    std::vector<std::vector<Double_t>> fit_result_ped_u;
-    std::vector<std::vector<Double_t>> fit_result_mip_u;
-    auto c_t0_adc_u = new TCanvas("t0_adc_u", "", 1500, 1200);
-    c_t0_adc_u->Divide(cols, rows);
-    c_t0_adc_u->Print(pdf_path + "["); // start
+    // -- container -----
+    std::vector<FitResult> adc_up(conf.num_of_ch.at("t0"));
+    std::vector<FitResult> adc_down(conf.num_of_ch.at("t0"));
+    std::vector<FitResult> tdc_up(conf.num_of_ch.at("t0"));
+    std::vector<FitResult> tdc_down(conf.num_of_ch.at("t0"));
+
+    auto c_t0 = new TCanvas("t0", "", 1500, 1200);
+    c_t0->Divide(cols, rows);
+    c_t0->Print(pdf_path + "["); // start
     nth_pad = 1;
     for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++) {
         if (nth_pad > max_pads) {
-            c_t0_adc_u->Print(pdf_path);
-            c_t0_adc_u->Clear();
-            c_t0_adc_u->Divide(cols, rows);
+            c_t0->Print(pdf_path);
+            c_t0->Clear();
+            c_t0->Divide(cols, rows);
             nth_pad = 1;
         }
-        FitResult result1 = ana_helper::t0_tdc_fit(h_t0_tdc[0][i], c_t0_adc_u, nth_pad);
-        // // fit_result_ped_u.push_back(par[0]);
-        // // fit_result_mip_u.push_back(par[1]);
-        // gPad->SetLogy(1);
+
+        FitResult result;
+        // -- UP -----
+        result = ana_helper::t0_tdc_fit(h_t0_tdc[0][i], c_t0, nth_pad);
+        tdc_up.push_back(result);
         nth_pad++;
 
-        FitResult result2 = ana_helper::t0_tdc_fit(h_t0_tdc[1][i], c_t0_adc_u, nth_pad);
-        // // fit_result_ped_u.push_back(par[0]);
-        // // fit_result_mip_u.push_back(par[1]);
-        // gPad->SetLogy(1);
+        result = ana_helper::t0_adc_fit(h_t0_adc[0][i], c_t0, nth_pad, conf.t0_ped_mip_distance[0][i]);
+        adc_up.push_back(result);
         nth_pad++;
 
-
-        FitResult result = ana_helper::t0_adc_fit(h_t0_adc[0][i], c_t0_adc_u, nth_pad, conf.t0_ped_mip_distance[0][i]);
-        // fit_result_ped_u.push_back(par[0]);
-        // fit_result_mip_u.push_back(par[1]);
+        // -- DOWN -----
+        result = ana_helper::t0_tdc_fit(h_t0_tdc[1][i], c_t0, nth_pad);
+        tdc_down.push_back(result);
         nth_pad++;
-        std::cout << "UP" << i << ", " << result.par[4] - result.par[1] << std::endl;
 
-        result = ana_helper::t0_adc_fit(h_t0_adc[1][i], c_t0_adc_u, nth_pad, conf.t0_ped_mip_distance[1][i]);
-        // fit_result_ped_u.push_back(par[0]);
-        // fit_result_mip_u.push_back(par[1]);
-        nth_pad++;
-        std::cout << "Down" << i << ", " << result.par[4] - result.par[1] << std::endl;
-        
+        result = ana_helper::t0_adc_fit(h_t0_adc[1][i], c_t0, nth_pad, conf.t0_ped_mip_distance[1][i]);
+        adc_down.push_back(result);
+        nth_pad++;        
     }
-    c_t0_adc_u->Print(pdf_path);
-    c_t0_adc_u->Print(pdf_path + "]"); // end
-    delete c_t0_adc_u;
+    c_t0->Print(pdf_path);
+    c_t0->Print(pdf_path + "]"); // end
+    delete c_t0;
 
-    // // +-------+
-    // // | Write |
-    // // +-------+
-    // // -- cal acceptance -----
-    // h_acceptance->Divide( h_cos_theta_trig, h_cos_theta_raw, 1, 1 );
-    // h_acceptance->GetYaxis()->SetRangeUser(0, 1.05);
-    // h_acceptance->SetLineColor(kBlack);
-    // h_acceptance->SetLineWidth(2);
+    // +-------+
+    // | Write |
+    // +-------+
+    TTree* tree = new TTree("tree", "");
+    Int_t ch;
+    std::vector<Double_t> adc_p0_val, adc_p1_val, tdc_p0_val; 
+    std::vector<Double_t> adc_p0_err, adc_p1_err, tdc_p0_err; 
+    tree->Branch("ch", ch, "ch/I");
+    tree->Branch("adc_p0_val", &adc_p0_val);
+    tree->Branch("adc_p1_val", &adc_p1_val);
+    tree->Branch("tdc_p0_val", &tdc_p0_val);
+    tree->Branch("adc_p0_err", &adc_p0_err);
+    tree->Branch("adc_p1_err", &adc_p1_err);
+    tree->Branch("tdc_p0_err", &tdc_p0_err);
+    
+    for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++) {
+        ch = i;
+        adc_p0_val.clear(); adc_p1_val.clear(); tdc_p0_val.clear();
+        adc_p0_err.clear(); adc_p1_err.clear(); tdc_p0_err.clear();
 
-    // h_acceptance_mp2->Divide( h_cos_theta_mp2, h_cos_theta_raw, 1, 1 );
-    // h_acceptance_mp2->GetYaxis()->SetRangeUser(0, 1.05);
-    // h_acceptance_mp2->SetLineColor(kBlue);
-    // h_acceptance_mp2->SetLineWidth(2);
+        // -- pedestal -----
+        adc_p0_val.push_back(adc_up.par[1]);
+        adc_p0_val.push_back(adc_down.par[1]);
+        adc_p0_err.push_back(adc_up.err[1]);
+        adc_p0_err.push_back(adc_down.err[1]);
 
-    // h_acceptance_htofp->Divide( h_cos_theta_htofp, h_cos_theta_raw, 1, 1 );
-    // h_acceptance_htofp->GetYaxis()->SetRangeUser(0, 1.05);
-    // h_acceptance_htofp->SetLineColor(kOrange);
-    // h_acceptance_htofp->SetLineWidth(2);
+        // -- mip -----
+        adc_p1_val.push_back(adc_up.par[4]);
+        adc_p1_val.push_back(adc_down.par[4]);
+        adc_p1_err.push_back(adc_up.err[4]);
+        adc_p1_err.push_back(adc_down.err[4]);
 
-    // // -- write -----
-    // fout.cd();
-    // h_cos_theta_raw->Write();
-    // h_cos_theta_trig->Write();
-    // h_cos_theta_mp2->Write();
-    // h_cos_theta_htofp->Write();
-    // h_acceptance->Write();
-    // h_acceptance_mp2->Write();
-    // h_acceptance_htofp->Write();
-    // h_mom_dist->Write();
+        // -- tdc -----
+        tdc_p0_val.push_back(tdc_up.par[1]);
+        tdc_p0_val.push_back(tdc_down.par[1]);
+        tdc_p0_err.push_back(tdc_up.err[1]);
+        tdc_p0_err.push_back(tdc_down.err[1]);
 
-    // fout.Close(); 
+        tree->Fill();
+    }
+
+    fout->cd();
+    tree->Write();
+    fout->Close(); 
 }
 
 Int_t main(int argc, char** argv) {
