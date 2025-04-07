@@ -40,7 +40,7 @@ namespace ana_helper {
 
         // -- mip -----
         par.clear(); err.clear();
-        Double_t ped_mip_distance = 50.0;
+        Double_t ped_mip_distance = 80.0;
         Double_t mip_pos          = ped_pos + ped_mip_distance;
         Double_t mip_half_width   = 20.0;
         std::pair<Double_t, Double_t> mip_n_sigma(1.5, 2.0);
