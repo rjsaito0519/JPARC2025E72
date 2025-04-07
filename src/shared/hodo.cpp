@@ -43,7 +43,7 @@ namespace ana_helper {
         par.clear(); err.clear();
         Double_t mip_pos          = ped_pos + ped_mip_distance;
         Double_t mip_half_width   = 20.0;
-        std::pair<Double_t, Double_t> mip_n_sigma(1.5, 2.0);
+        std::pair<Double_t, Double_t> mip_n_sigma(1.6, 2.0);
 
         // -- first fit -----
         f_prefit->SetRange(mip_pos-mip_half_width, mip_pos+mip_half_width);
@@ -141,7 +141,7 @@ namespace ana_helper {
         // -- first fit -----
         TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         f_prefit->SetParameter(1, peak_pos);
-        // f_prefit->SetParameter(2, stdev);
+        f_prefit->SetParameter(2, stdev);
         h->Fit(f_prefit, "0Q", "", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
         delete f_prefit;
