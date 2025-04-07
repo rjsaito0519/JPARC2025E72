@@ -148,6 +148,7 @@ void analyze(TString path, TString particle){
 
     for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++) {
         ch = i;
+        std::cout << ch << std::endl;
         adc_p0_val.clear(); adc_p1_val.clear(); tdc_p0_val.clear();
         adc_p0_err.clear(); adc_p1_err.clear(); tdc_p0_err.clear();
 
