@@ -156,8 +156,8 @@ Int_t main(int argc, char** argv) {
     }
     TString path = argv[1];
     TString particle = argv[2];
-    if (name != "Pi" && name != "K") {
-        std::cerr << "Error: Unexpected particle name: " << name << std::endl;
+    if (particle != "Pi" && particle != "K") {
+        std::cerr << "Error: Unexpected particle name: " << particle << std::endl;
         return 1;
     }
 
