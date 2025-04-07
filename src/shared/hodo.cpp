@@ -133,6 +133,7 @@ namespace ana_helper {
         c->cd(n_c);
         gPad->SetLogy(1);
         std::vector<Double_t> par, err;
+        TString fit_option = h->GetMaximum() > 500.0 ? "0Q" : "0QL";
 
         Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
         Double_t stdev    = h->GetStdDev();
@@ -142,7 +143,7 @@ namespace ana_helper {
         TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         f_prefit->SetParameter(1, peak_pos);
         f_prefit->SetParameter(2, stdev);
-        h->Fit(f_prefit, "0Q", "", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
+        h->Fit(f_prefit, fit_option.Data(), "", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
         delete f_prefit;
 
@@ -154,7 +155,7 @@ namespace ana_helper {
         f_fit->SetLineColor(kOrange);
         f_fit->SetLineWidth(2);
         f_fit->SetNpx(1000);
-        h->Fit(f_fit, "0Q", "", par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
+        h->Fit(f_fit, fit_option.Data(), "", par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
 
         FitResult result;
         for (Int_t i = 0, n_par = f_fit->GetNpar(); i < n_par; i++) {
