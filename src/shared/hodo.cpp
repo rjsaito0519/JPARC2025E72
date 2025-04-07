@@ -42,7 +42,7 @@ namespace ana_helper {
         par.clear(); err.clear();
         Double_t mip_pos          = ped_pos + ped_mip_distance;
         Double_t mip_half_width   = 20.0;
-        std::pair<Double_t, Double_t> mip_n_sigma(1.5, 2.0);
+        std::pair<Double_t, Double_t> mip_n_sigma(1.7, 2.0);
 
         // -- first fit -----
         f_prefit->SetRange(mip_pos-mip_half_width, mip_pos+mip_half_width);
