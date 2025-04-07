@@ -150,22 +150,22 @@ void analyze(TString path, TString particle){
         adc_p0_err.clear(); adc_p1_err.clear(); tdc_p0_err.clear();
 
         // -- pedestal -----
-        adc_p0_val.push_back(adc_up.par[1]);
-        adc_p0_val.push_back(adc_down.par[1]);
-        adc_p0_err.push_back(adc_up.err[1]);
-        adc_p0_err.push_back(adc_down.err[1]);
+        adc_p0_val.push_back(adc_up[i].par[1]);
+        adc_p0_val.push_back(adc_down[i].par[1]);
+        adc_p0_err.push_back(adc_up[i].err[1]);
+        adc_p0_err.push_back(adc_down[i].err[1]);
 
         // -- mip -----
-        adc_p1_val.push_back(adc_up.par[4]);
-        adc_p1_val.push_back(adc_down.par[4]);
-        adc_p1_err.push_back(adc_up.err[4]);
-        adc_p1_err.push_back(adc_down.err[4]);
+        adc_p1_val.push_back(adc_up[i].par[4]);
+        adc_p1_val.push_back(adc_down[i].par[4]);
+        adc_p1_err.push_back(adc_up[i].err[4]);
+        adc_p1_err.push_back(adc_down[i].err[4]);
 
         // -- tdc -----
-        tdc_p0_val.push_back(tdc_up.par[1]);
-        tdc_p0_val.push_back(tdc_down.par[1]);
-        tdc_p0_err.push_back(tdc_up.err[1]);
-        tdc_p0_err.push_back(tdc_down.err[1]);
+        tdc_p0_val.push_back(tdc_up[i].par[1]);
+        tdc_p0_val.push_back(tdc_down[i].par[1]);
+        tdc_p0_err.push_back(tdc_up[i].err[1]);
+        tdc_p0_err.push_back(tdc_down[i].err[1]);
 
         tree->Fill();
     }
