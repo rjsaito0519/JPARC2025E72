@@ -144,6 +144,8 @@ void analyze(TString path, TString particle){
     tree->Branch("adc_p1_err", &adc_p1_err);
     tree->Branch("tdc_p0_err", &tdc_p0_err);
     
+    std::cout << "--------------------" << std::endl;
+
     for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++) {
         ch = i;
         adc_p0_val.clear(); adc_p1_val.clear(); tdc_p0_val.clear();
