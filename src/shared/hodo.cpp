@@ -153,8 +153,8 @@ namespace ana_helper {
         }
 
         h->GetXaxis()->SetRangeUser(
-            result.par[1]- 5.0*result.par[2], 
-            result.par[1]+ 5.0*result.par[5]
+            result.par[1] - 15.0*result.par[2], 
+            result.par[1] + 15.0*result.par[2]
         );
         h->Draw();
         f_fit->Draw("same");
