@@ -121,6 +121,7 @@ void analyze(TString path, TString particle){
 
     }
     c_t0_adc_u->Print(pdf_path);
+    c_t0_adc_u->Print(pdf_path + "]"); // end
     delete c_t0_adc_u;
 
     // // +-------+
