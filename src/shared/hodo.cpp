@@ -72,11 +72,11 @@ namespace ana_helper {
         Double_t chi_square_l = f_fit_mip_l->GetChisquare();
         Double_t p_value_l = TMath::Prob(chi_square_l, f_fit_mip_l->GetNDF());
 
-        // -- debug ------
-        std::cout << "gauss:  " << p_value_g << ", " << f_fit_mip_g->GetChisquare() << std::endl;
-        std::cout << "landau: " << p_value_l << ", " << f_fit_mip_l->GetChisquare() << std::endl;
-        Bool_t flag = p_value_g >= p_value_l;
-        std::cout << flag << std::endl;
+        // // -- debug ------
+        // std::cout << "gauss:  " << p_value_g << ", " << f_fit_mip_g->GetChisquare() << std::endl;
+        // std::cout << "landau: " << p_value_l << ", " << f_fit_mip_l->GetChisquare() << std::endl;
+        // Bool_t flag = p_value_g >= p_value_l;
+        // std::cout << flag << std::endl;
 
         // if (p_value_g >= p_value_l) {
         if (chi_square_g <= chi_square_l) {
