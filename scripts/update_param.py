@@ -37,7 +37,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 # ---------------------------------------------------------------------------
 import conf
 
-if args.suffix == "hdprm":
+if args.param_type == "hdprm":
     hdprm_dir = f"{conf.param_dir}/HDPRM"
     hdprm_target_file = f"{hdprm_dir}/HodoParam_run{args.run_num:0=5}_{args.suffix}"
     if not os.path.isfile(hdprm_target_file):
