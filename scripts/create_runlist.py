@@ -43,11 +43,11 @@ for suffix in args.suffix:
                     s_list[1] = target
             if prefix == "hodo":
                 if len(s_list) != 0 and s_list[0] == "HDPRM:" and suffix in ["Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_phc", "K_hdphc"]:
-                    target = f"param/HDPRM/HodoParam_run{args.run_num:0=5}_{suffix.split("_")[0]}"
+                    target = "param/HDPRM/HodoParam_run{:0=5}_{}".format(args.run_num, suffix.split("_")[0])
                     if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
                 if len(s_list) != 0 and s_list[0] == "HDPHC:" and suffix in ["Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"]:
-                    target = f"param/HDPHC/HodoPHC_run{args.run_num:0=5}_{suffix.split("_")[0]}"
+                    target = "param/HDPHC/HodoPHC_run{:0=5}_{}".format(args.run_num, suffix.split("_")[0])
                     if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
             # elif prefix == "dc":
