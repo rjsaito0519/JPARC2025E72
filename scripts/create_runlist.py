@@ -19,11 +19,11 @@ import shutil
 import conf
 prefix = "dc" if args.dc else "hodo"
 set1 = set(args.suffix)
-set2 = set(["0", "Pi", "K"])
+set2 = set(["0", "Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"])
 
 common_elements = set1.difference(set2)
 if common_elements:
-    print("please input correct suffix: 0, Pi, K")
+    print("please input correct suffix: 0, Pi/K_hdprm, , Pi/K_to, Pi/K_hdphc")
     sys.exit()
 
 # -- write conf file  -----------------------------------
@@ -42,12 +42,12 @@ for suffix in args.suffix:
                 if os.path.isfile(os.path.join(conf.analyzer_dir, target)):
                     s_list[1] = target
             if prefix == "hodo":
-                if len(s_list) != 0 and s_list[0] == "HDPRM:" and suffix in ["Pi", "K"]:
-                    target = f"param/HDPRM/HodoParam_run{args.run_num:0=5}_{suffix}"
+                if len(s_list) != 0 and s_list[0] == "HDPRM:" and suffix in ["Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_phc", "K_hdphc"]:
+                    target = f"param/HDPRM/HodoParam_run{args.run_num:0=5}_{suffix.split("_")[0]}"
                     if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
-                if len(s_list) != 0 and s_list[0] == "HDPHC:" and suffix in ["Pi", "K"]:
-                    target = f"param/HDPHC/HodoPHC_run{args.run_num:0=5}_{suffix}"
+                if len(s_list) != 0 and s_list[0] == "HDPHC:" and suffix in ["Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"]:
+                    target = f"param/HDPHC/HodoPHC_run{args.run_num:0=5}_{suffix.split("_")[0]}"
                     if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
             # elif prefix == "dc":
@@ -81,7 +81,7 @@ with open(runlist_target_file) as f:
                     buf.append(["  bin: ./bin/BcOutTracking"])
                 buf.append([f"  conf: ./param/conf/analyzer_e72_run{args.run_num:0=5}_{prefix}_{suffix}.conf"])
                 buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
-                buf.append([f"  root: ./root/{prefix}/{prefix}_run{args.run_num:0=5}_{suffix}.root"])
+                buf.append([f"  root: /group/had/sks/Users/sryuta/JPARC2025Feb/{prefix}/{prefix}_run{args.run_num:0=5}_{suffix}.root"])
             break
         else:
             buf.append(s_list)

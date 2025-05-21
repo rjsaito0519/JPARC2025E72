@@ -63,7 +63,7 @@ void analyze(TString path, TString particle){
     // +--------------------------+
     // | prepare output root file |
     // +--------------------------+
-    TString output_path = Form("%s/root/run%05d_T0_HDPEM_%s.root", OUTPUT_DIR.Data(), run_num, particle.Data());
+    TString output_path = Form("%s/root/run%05d_T0_HDPRM_%s.root", OUTPUT_DIR.Data(), run_num, particle.Data());
     if (std::ifstream(output_path.Data())) std::remove(output_path.Data());
     TFile* fout = new TFile(output_path.Data(), "RECREATE");
 
