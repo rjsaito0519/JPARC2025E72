@@ -25,6 +25,8 @@
 #include <TROOT.h>
 #include <TLatex.h>
 #include <TProfile.h>
+#include <TRandom3.h>
+#include <TKDE.h>
 
 #include "config.h"
 
@@ -42,8 +44,9 @@ namespace ana_helper {
     TCanvas* add_tab(TGTab *tab, const char* tabName);
 
     // -- hodo -----
+    void set_tdc_search_range(TH1D *h);
+    FitResult tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult t0_adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Double_t ped_mip_distance);
-    FitResult t0_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult bht_tot_fit(TH1D *h, TCanvas *c, Int_t n_c);
 }
 

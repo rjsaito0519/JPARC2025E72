@@ -79,6 +79,15 @@ void analyze(TString path, TString particle){
     for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++ ) h_t0_adc[0][i] = (TH1D*)f->Get(Form("T0_ADC_seg%dU_%s", i, particle.Data()));
     for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++ ) h_t0_adc[1][i] = (TH1D*)f->Get(Form("T0_ADC_seg%dD_%s", i, particle.Data()));
 
+    // -- set tdc range ----------
+    TH1D *h_sum_tdc = (TH1D*)h_t0_tdc[0][0]->Clone("h_sum_tdc");
+    h_sum_tdc->Reset(); 
+    for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++) {
+        h_sum_tdc->Add(h_t0_tdc[0][i]);
+        h_sum_tdc->Add(h_t0_tdc[1][i]);
+    }
+    ana_helper::set_tdc_search_range(h_sum_tdc);
+
     // +--------------+
     // | fit and plot |
     // +--------------+
@@ -108,7 +117,7 @@ void analyze(TString path, TString particle){
 
         FitResult result;
         // -- UP -----
-        result = ana_helper::t0_tdc_fit(h_t0_tdc[0][i], c_t0, nth_pad);
+        result = ana_helper::tdc_fit(h_t0_tdc[0][i], c_t0, nth_pad);
         tdc_up.push_back(result);
         nth_pad++;
 
@@ -117,7 +126,7 @@ void analyze(TString path, TString particle){
         nth_pad++;
 
         // -- DOWN -----
-        result = ana_helper::t0_tdc_fit(h_t0_tdc[1][i], c_t0, nth_pad);
+        result = ana_helper::tdc_fit(h_t0_tdc[1][i], c_t0, nth_pad);
         tdc_down.push_back(result);
         nth_pad++;
 
@@ -189,6 +198,7 @@ Int_t main(int argc, char** argv) {
         return 1;
     }
 
+    conf.detector = "t0";
     analyze(path, particle);
     return 0;
 }
