@@ -8,7 +8,7 @@ namespace ana_helper {
 
         Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
         Double_t stdev    = h->GetStdDev();
-        std::cout << stdev << std::endl;
+        stdev = 10.0*1000.0;
         std::pair<Double_t, Double_t> peak_n_sigma(5.0, 5.0);
         TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         f_prefit->SetParameter(1, peak_pos);
@@ -41,10 +41,8 @@ namespace ana_helper {
 
         Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
         Double_t stdev    = h->GetStdDev();
+        stdev = 10.0*1000.0;
         std::pair<Double_t, Double_t> peak_n_sigma(2.0, 2.0);
-
-        std::cout << stdev << std::endl;
-
 
         Double_t evnum_within_range = h->Integral(
             h->FindBin(conf.tdc_search_range[conf.detector.Data()].first),
