@@ -17,7 +17,7 @@ namespace ana_helper {
         Double_t fit_center = f_prefit->GetParameter(1);
         Double_t fit_sigma  = f_prefit->GetParameter(2);
  
-        Double_t range_n_sigma = 5.0;
+        Double_t range_n_sigma = 10.0;
         conf.tdc_search_range[conf.detector.Data()].first  = fit_center - range_n_sigma*fit_sigma;
         conf.tdc_search_range[conf.detector.Data()].second = fit_center + range_n_sigma*fit_sigma;
         
@@ -40,8 +40,7 @@ namespace ana_helper {
         );
 
         Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
-        Double_t stdev    = h->GetStdDev();
-        stdev = 10.0*1000.0;
+        Double_t width    = (conf.tdc_search_range[conf.detector.Data()].second - conf.tdc_search_range[conf.detector.Data()].first) / 3.0;
         std::pair<Double_t, Double_t> peak_n_sigma(2.0, 2.0);
 
         Double_t evnum_within_range = h->Integral(
@@ -51,22 +50,26 @@ namespace ana_helper {
         
         if (evnum_within_range > 300.0) {
             // -- first fit -----
-            TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
+            Double_t lower = std::max(peak_pos-peak_n_sigma.first*width,  h->GetXaxis()->GetXmin());
+            Double_t upper = std::min(peak_pos+peak_n_sigma.second*width, h->GetXaxis()->GetXmax());
+            TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", lower, upper);
             f_prefit->SetParameter(1, peak_pos);
-            f_prefit->SetParameter(2, stdev*0.9);
-            h->Fit(f_prefit, fit_option.Data(), "", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
+            f_prefit->SetParameter(2, width*0.9);
+            h->Fit(f_prefit, fit_option.Data(), "", lower, upper);
             for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
             delete f_prefit;
 
             // -- second fit -----
-            TF1 *f_fit = new TF1( Form("gaus_%s", h->GetName()), "gausn", par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
+            lower = std::max(par[1]-peak_n_sigma.first*par[2],  h->GetXaxis()->GetXmin());
+            upper = std::min(par[1]+peak_n_sigma.second*par[2], h->GetXaxis()->GetXmax());
+            TF1 *f_fit = new TF1( Form("gaus_%s", h->GetName()), "gausn", lower, upper);
             f_fit->SetParameter(0, par[0]);
             f_fit->SetParameter(1, par[1]);
             f_fit->SetParameter(2, par[2]*0.9);
             f_fit->SetLineColor(kOrange);
             f_fit->SetLineWidth(2);
             f_fit->SetNpx(1000);
-            h->Fit(f_fit, fit_option.Data(), "", par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
+            h->Fit(f_fit, fit_option.Data(), "", lower, upper);
 
             // -- fill result -----
             for (Int_t i = 0, n_par = f_fit->GetNpar(); i < n_par; i++) {
@@ -116,7 +119,7 @@ namespace ana_helper {
     }
 
     // ____________________________________________________________________________________________
-    FitResult t0_adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Double_t ped_mip_distance) {
+    FitResult t0_adc_fit(TH1D *h, TCanvas *c, Int_t n_c) {
         Config& conf = Config::getInstance();
 
         c->cd(n_c);
@@ -154,10 +157,15 @@ namespace ana_helper {
 
         // -- mip -----
         par.clear(); err.clear();
-        Double_t mip_pos          = ped_pos + ped_mip_distance;
+        h->GetXaxis()->SetRangeUser(
+            result.par[1] + conf.t0_adc_ped_remove_nsigma*result.par[2], 
+            h->GetXaxis()->GetXmax()
+        );
+        Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
         Double_t mip_half_width   = 20.0;
         std::pair<Double_t, Double_t> mip_n_sigma(1.6, 2.0);
-
+        h->GetXaxis()->UnZoom();
+        
         // -- first fit -----
         f_prefit->SetRange(mip_pos-mip_half_width, mip_pos+mip_half_width);
         f_prefit->SetParameter(1, mip_pos);
