@@ -83,7 +83,7 @@ with open(runlist_target_file) as f:
                     buf.append(["  bin: ./bin/BcOutTracking"])
                 buf.append([f"  conf: ./param/conf/analyzer_e72_run{args.run_num:0=5}_{prefix}_{suffix}.conf"])
                 buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
-                buf.append([f"  root: {os.path.join(conf.output_dir, f"{prefix}/{prefix}_run{args.run_num:0=5}_{suffix}.root")}"])
+                buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}/{prefix}_run{args.run_num:0=5}_{suffix}.root"))])
             break
         else:
             buf.append(s_list)
