@@ -3,13 +3,12 @@
 import argparse
 parser = argparse.ArgumentParser(
     prog="update_param",
-    usage="python3 update_param.py <run_num> <result_dir> <suffix> <param_type>", # プログラムの利用方法
+    usage="python3 update_param.py <run_num> <suffix> <param_type>", # プログラムの利用方法
     description="", # ヘルプの前に表示
     epilog="end", # ヘルプの後に表示
     add_help=True, # -h/–-helpオプションの追加
 )
 parser.add_argument("run_num", type=int, help="Input run number")
-parser.add_argument("result_dir", type=str, help="Input result dir")
 parser.add_argument("suffix", type=str, help="Input suffix")
 parser.add_argument("param_type", type=str, help="Input parameter type")
 # parser.add_argument("--bht_min", type=int, help="Input num of duplication", required=False, default=13)
