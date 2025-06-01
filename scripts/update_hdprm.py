@@ -62,5 +62,5 @@ def update_file(target_file, data):
             f.write('\t'.join(str(item) for item in l))
             f.write("\n")
     
-    return len(data) == n_update:
+    return len(data) == n_update
 # ---------------------------------------------------------------------------
