@@ -23,12 +23,14 @@ public:
         { "BAC",  4 },
         { "SAC",  8 },
         { "KVC",  4 },
-        { "BH2",  1 },
+        { "bh2",  11 },
     };
 
     std::unordered_map<std::string, std::pair<Double_t, Double_t>> tdc_search_range{
         { "bht", {0.0, 0.0} },
         {  "t0", {0.0, 0.0} },
+        { "bh2", {0.0, 0.0} },
+        
         // { "BAC",  4 },
         // { "SAC",  8 },
         // { "KVC",  4 },

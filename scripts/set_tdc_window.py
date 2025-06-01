@@ -56,7 +56,7 @@ num_of_ch = dict(
     BAC = 4,
     SAC = 8,
     KVC = 4,
-    BH2 = 1,
+    BH2 = 11,
     CVC = 10,
     NC = 6,
 
