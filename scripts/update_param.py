@@ -51,6 +51,10 @@ if args.param_type == "hdprm":
     data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_T0_HDPRM_{args.suffix}.root"))
     update_hdprm.update_file(hdprm_target_file, data)
 
+    # -- BH2 -----
+    data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BH2_HDPRM_{args.suffix}.root"))
+    update_hdprm.update_file(hdprm_target_file, data)
+
 # elif args.suffix == "hdprm":
 #     hdphc_dir = "{}/HDPHC".format(conf.param_dir)
 #     hdphc_target_file = "{}/HodoPHC_run{:0=5}_{}".format(hdphc_dir, args.run_num, args.suffix)

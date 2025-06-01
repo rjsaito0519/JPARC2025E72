@@ -2,10 +2,11 @@ import uproot
 
 detector_id_list = {
     "BHT": 1,
-    "T0":  2
+    "T0":  2,
+    "BH2": 6
 }
 
-# -- write HDPRM file  -----------------------------------
+# -- prepare HDPRM data  -----------------------------------
 def make_dictdata(root_file_path):
 
     file = uproot.open(root_file_path)
@@ -15,6 +16,8 @@ def make_dictdata(root_file_path):
         detector_id = detector_id_list["BHT"]
     elif "T0" in root_file_path:
         detector_id = detector_id_list["T0"]
+    elif "BH2" in root_file_path:
+        detector_id = detector_id_list["BH2"]
 
     if detector_id == -1:
         print("something wrong")
