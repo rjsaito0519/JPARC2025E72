@@ -41,6 +41,7 @@ def make_dictdata(root_file_path):
 # -- write HDPRM file  -----------------------------------
 def update_file(target_file, data):
     buf = []
+    n_update = 0
     with open(target_file) as f:
         for line in f:
             s_list = line.split()
@@ -52,11 +53,14 @@ def update_file(target_file, data):
                 key += "-"+s_list[i]
             if key in data.keys():
                 for i in range(len(data[key])):
-                    s_list[i+key_length] = data[key][i]                    
+                    s_list[i+key_length] = data[key][i]
+                n_update += 1               
             buf.append(s_list)
 
     with open(target_file, mode='w') as f:
         for l in buf:
             f.write('\t'.join(str(item) for item in l))
             f.write("\n")
+    
+    return len(data) == n_update:
 # ---------------------------------------------------------------------------

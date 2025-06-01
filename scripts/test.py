@@ -13,6 +13,7 @@ tree = file["tree"].arrays(library="np")
 print(tree["tdc_p0_val"])
 
 data = dict()
+counter = 0
 for i in range(len(tree["adc_p0_val"])):
     # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
     for UorD in [0, 1]:
@@ -24,7 +25,7 @@ for i in range(len(tree["adc_p0_val"])):
         key = f"2-0-{i:.0f}-1-{UorD:.0f}"
         data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ]
 
-# print(data)
+        counter += 1
 
 # for row1, row2 in zip(result1, result2):
 #     # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)

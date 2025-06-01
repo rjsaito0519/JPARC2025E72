@@ -29,6 +29,12 @@ import os
 import shutil
 import numpy as np
 
+def report_status(do_succeeded, counter_name):
+    if do_succeeded:
+        print(f"\033[92m✅ {counter_name} HDPRM successfully updated\033[0m")
+    else:
+        print(f"\033[91m❌ Failed to update {counter_name} HDPRM\033[0m")
+
 import update_hdprm
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -44,15 +50,18 @@ if args.param_type == "hdprm":
 
     # -- BHT -----
     data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BHT_HDPRM_{args.suffix}.root"))
-    update_hdprm.update_file(hdprm_target_file, data)
-    
+    do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
+    report_status(do_succeeded, "BHT")
+
     # -- T0 -----
     data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_T0_HDPRM_{args.suffix}.root"))
-    update_hdprm.update_file(hdprm_target_file, data)
+    do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
+    report_status(do_succeeded, "T0")
 
     # -- BH2 -----
     data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BH2_HDPRM_{args.suffix}.root"))
-    update_hdprm.update_file(hdprm_target_file, data)
+    do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
+    report_status(do_succeeded, "BH2")
 
 # elif args.suffix == "hdprm":
 #     hdphc_dir = "{}/HDPHC".format(conf.param_dir)
