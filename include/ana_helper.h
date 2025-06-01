@@ -49,6 +49,7 @@ namespace ana_helper {
     FitResult tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult t0_adc_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult bht_tot_fit(TH1D *h, TCanvas *c, Int_t n_c);
+    FitResult t0_offset_fit(TH1D *h, TCanvas *c, Int_t n_c);
 }
 
 #endif  // ANA_HELPER_
