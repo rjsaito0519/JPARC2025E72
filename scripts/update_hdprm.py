@@ -28,7 +28,7 @@ def make_dictdata(root_file_path, is_t0_offset = False):
         for i in range(len(tree["offset_p0_val"])):
             # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
             key = f"{detector_id}-0-{i:.0f}-1-2"
-            data[key] = [ tree["offset_p0_val"][i], 1.0 ]
+            data[key] = [ tree["offset_p0_val"][i][0], 1.0 ]
     else:
         for i in range(len(tree["adc_p0_val"])):
             # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
