@@ -31,9 +31,9 @@ import numpy as np
 
 def report_status(do_succeeded, counter_name):
     if do_succeeded:
-        print(f"\033[92m✅ {counter_name} HDPRM successfully updated\033[0m")
+        print(f"\033[92m✅ {counter_name} {args.param_type} successfully updated\033[0m")
     else:
-        print(f"\033[91m❌ Failed to update {counter_name} HDPRM\033[0m")
+        print(f"\033[91m❌ Failed to update {counter_name} {args.param_type}\033[0m")
 
 import update_hdprm
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -42,12 +42,12 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 # ---------------------------------------------------------------------------
 import conf
 
-if args.param_type == "hdprm":
-    hdprm_dir = f"{conf.param_dir}/HDPRM"
-    hdprm_target_file = f"{hdprm_dir}/HodoParam_run{args.run_num:0=5}_{args.suffix}"
-    if not os.path.isfile(hdprm_target_file):
-        shutil.copy(f"{hdprm_dir}/HodoParam_0", hdprm_target_file)
+hdprm_dir = f"{conf.param_dir}/HDPRM"
+hdprm_target_file = f"{hdprm_dir}/HodoParam_run{args.run_num:0=5}_{args.suffix}"
+if not os.path.isfile(hdprm_target_file):
+    shutil.copy(f"{hdprm_dir}/HodoParam_0", hdprm_target_file)
 
+if args.param_type == "hdprm":
     # -- BHT -----
     data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BHT_HDPRM_{args.suffix}.root"))
     do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
@@ -62,6 +62,12 @@ if args.param_type == "hdprm":
     data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BH2_HDPRM_{args.suffix}.root"))
     do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
     report_status(do_succeeded, "BH2")
+
+elif args.param_type == "t0":
+    # -- T0 -----
+    data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_T0_Offset_{args.suffix}.root"))
+    do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
+    report_status(do_succeeded, "T0")
 
 # elif args.suffix == "hdprm":
 #     hdphc_dir = "{}/HDPHC".format(conf.param_dir)

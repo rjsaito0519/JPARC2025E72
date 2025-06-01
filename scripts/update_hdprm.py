@@ -7,7 +7,7 @@ detector_id_list = {
 }
 
 # -- prepare HDPRM data  -----------------------------------
-def make_dictdata(root_file_path):
+def make_dictdata(root_file_path, is_t0_offset = False):
 
     file = uproot.open(root_file_path)
     tree = file["tree"].arrays(library="np")
@@ -24,16 +24,22 @@ def make_dictdata(root_file_path):
         sys.exit()
 
     data = dict()
-    for i in range(len(tree["adc_p0_val"])):
-        # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
-        for UorD in [0, 1]:
-            # -- ADC -----
-            key = f"{detector_id}-0-{i:.0f}-0-{UorD:.0f}"
-            data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
+    if is_t0_offset:
+        for i in range(len(tree["offset_p0_val"])):
+            # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
+            key = f"{detector_id}-0-{i:.0f}-1-2"
+            data[key] = [ tree["offset_p0_val"][i], 1.0 ]
+    else:
+        for i in range(len(tree["adc_p0_val"])):
+            # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
+            for UorD in [0, 1]:
+                # -- ADC -----
+                key = f"{detector_id}-0-{i:.0f}-0-{UorD:.0f}"
+                data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
 
-            # -- TDC -----
-            key = f"{detector_id}-0-{i:.0f}-1-{UorD:.0f}"
-            data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ]
+                # -- TDC -----
+                key = f"{detector_id}-0-{i:.0f}-1-{UorD:.0f}"
+                data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ] 
 
     return data
 # ---------------------------------------------------------------------------
