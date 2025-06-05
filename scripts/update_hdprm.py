@@ -30,18 +30,20 @@ def make_dictdata(root_file_path, is_t0_offset = False):
     if is_t0_offset:
         for i in range(len(tree["offset_p0_val"])):
             # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
-            key = f"{detector_id}-0-{i:.0f}-1-2"
+            ch = tree["ch"][i]
+            key = f"{detector_id}-0-{ch:.0f}-1-2"
             data[key] = [ tree["offset_p0_val"][i][0], 1.0 ]
     else:
         for i in range(len(tree["adc_p0_val"])):
             # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
+            ch = tree["ch"][i]
             for UorD in [0, 1]:
                 # -- ADC -----
-                key = f"{detector_id}-0-{i:.0f}-0-{UorD:.0f}"
+                key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
                 data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
 
                 # -- TDC -----
-                key = f"{detector_id}-0-{i:.0f}-1-{UorD:.0f}"
+                key = f"{detector_id}-0-{ch:.0f}-1-{UorD:.0f}"
                 data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ] 
 
     return data
@@ -70,6 +72,6 @@ def update_file(target_file, data):
         for l in buf:
             f.write('\t'.join(str(item) for item in l))
             f.write("\n")
-    print(len(data), n_update)
+
     return len(data) == n_update
 # ---------------------------------------------------------------------------

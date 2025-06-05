@@ -27,6 +27,8 @@ for i in range(len(tree["adc_p0_val"])):
 
         counter += 1
 
+print(tree["ch"][0])
+
 
 
 # for row1, row2 in zip(result1, result2):
