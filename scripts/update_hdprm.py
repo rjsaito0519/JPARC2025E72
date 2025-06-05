@@ -70,6 +70,6 @@ def update_file(target_file, data):
         for l in buf:
             f.write('\t'.join(str(item) for item in l))
             f.write("\n")
-    
+    print(len(data), n_update)
     return len(data) == n_update
 # ---------------------------------------------------------------------------
