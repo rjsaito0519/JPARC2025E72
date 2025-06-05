@@ -121,7 +121,7 @@ void analyze(TString path, TString particle){
         tdc_up.push_back(result);
         nth_pad++;
 
-        result = ana_helper::t0_adc_fit(h_t0_adc[0][i], c_t0, nth_pad);
+        result = ana_helper::adc_fit(h_t0_adc[0][i], c_t0, nth_pad);
         adc_up.push_back(result);
         nth_pad++;
 
@@ -130,7 +130,7 @@ void analyze(TString path, TString particle){
         tdc_down.push_back(result);
         nth_pad++;
 
-        result = ana_helper::t0_adc_fit(h_t0_adc[1][i], c_t0, nth_pad);
+        result = ana_helper::adc_fit(h_t0_adc[1][i], c_t0, nth_pad);
         adc_down.push_back(result);
         nth_pad++;        
     }

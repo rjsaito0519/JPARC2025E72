@@ -9,13 +9,13 @@ public:
         return instance;
     }
 
-    Double_t HRTDC_factor = -0.000939002;
+    const Double_t HRTDC_factor = -0.000939002;
+    const Int_t max_tdc_hit = 16;
 
     TString detector = "none";
 
-    Double_t t0_adc_ped_remove_nsigma = 15.0;
-
-    const Int_t max_tdc_hit = 16;
+    Double_t adc_ped_remove_nsigma = 15.0;
+    const std::pair<Int_t, Int_t> htof_adc_exist_seg = {18, 21};
 
     const std::unordered_map<std::string, Int_t> num_of_ch{
         { "bht", 63 },
@@ -24,12 +24,14 @@ public:
         { "SAC",  8 },
         { "KVC",  4 },
         { "bh2",  11 },
+        { "htof",  34 },
     };
 
     std::unordered_map<std::string, std::pair<Double_t, Double_t>> tdc_search_range{
         { "bht", {0.0, 0.0} },
         {  "t0", {0.0, 0.0} },
         { "bh2", {0.0, 0.0} },
+        { "htof", {0.0, 0.0} },
         
         // { "BAC",  4 },
         // { "SAC",  8 },

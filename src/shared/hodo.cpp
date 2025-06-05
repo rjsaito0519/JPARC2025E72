@@ -119,7 +119,7 @@ namespace ana_helper {
     }
 
     // ____________________________________________________________________________________________
-    FitResult t0_adc_fit(TH1D *h, TCanvas *c, Int_t n_c) {
+    FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c) {
         Config& conf = Config::getInstance();
 
         c->cd(n_c);
@@ -158,7 +158,7 @@ namespace ana_helper {
         // -- mip -----
         par.clear(); err.clear();
         h->GetXaxis()->SetRangeUser(
-            result.par[1] + conf.t0_adc_ped_remove_nsigma*result.par[2], 
+            result.par[1] + conf.adc_ped_remove_nsigma*result.par[2], 
             h->GetXaxis()->GetXmax()
         );
         Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
