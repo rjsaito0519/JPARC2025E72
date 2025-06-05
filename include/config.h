@@ -37,6 +37,31 @@ public:
         // { "BH2",  1 },
     };
 
+    std::unordered_map<std::string, std::pair<Double_t, Double_t>> phc_time_window{
+        { "bht", {-4.0, 2.0} },
+        {  "t0", {-2.5, 1.5} },
+        { "bh2", {-2.0, 1.0} },
+        
+        // { "BAC",  4 },
+        // { "SAC",  8 },
+        // { "KVC",  4 },
+        // { "BH2",  1 },
+    };
+
+    Double_t phc_de_range_min = 0.0;
+    std::unordered_map<std::string, Double_t> phc_de_range_ratio{
+        { "bht", 0.001 },
+        {  "t0", 0.01 },
+        { "bh2", 0.01 },
+        
+        // { "BAC",  4 },
+        // { "SAC",  8 },
+        // { "KVC",  4 },
+        // { "BH2",  1 },
+    };
+
+    
+
     // void beam_initialize() {
     //     beam_generator = -1;
     // }

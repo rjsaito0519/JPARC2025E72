@@ -30,8 +30,9 @@ if common_elements:
 
 # -- write conf file  -----------------------------------
 for suffix in args.suffix:
+    suffix_head = suffix.split("_")[0]
     conf_dir = os.path.join(conf.analyzer_dir, "param", "conf")
-    conf_target_file = f"{conf_dir}/analyzer_e72_run{args.run_num:0=5}_{prefix}_{suffix}.conf"
+    conf_target_file = f"{conf_dir}/analyzer_e72_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"
     if not os.path.isfile(conf_target_file):
         shutil.copy(os.path.join(conf_dir, "analyzer_e72_20250518.conf"), conf_target_file)
 
@@ -45,11 +46,11 @@ for suffix in args.suffix:
                     s_list[1] = target
             if prefix == "hodo":
                 if len(s_list) != 0 and s_list[0] == "HDPRM:" and suffix in ["Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_phc", "K_hdphc"]:
-                    target = "param/HDPRM/HodoParam_run{:0=5}_{}".format(args.run_num, suffix.split("_")[0])
+                    target = f"param/HDPRM/HodoParam_run{args.run_num:0=5}_{suffix_head}"
                     if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
                 if len(s_list) != 0 and s_list[0] == "HDPHC:" and suffix in ["Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"]:
-                    target = "param/HDPHC/HodoPHC_run{:0=5}_{}".format(args.run_num, suffix.split("_")[0])
+                    target = f"param/HDPHC/HodoPHC_run{args.run_num:0=5}_{suffix_head}"
                     if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
             # elif prefix == "dc":
@@ -81,7 +82,7 @@ with open(runlist_target_file) as f:
                     buf.append(["  bin: ./bin/Hodoscope"])
                 elif prefix == "dc":
                     buf.append(["  bin: ./bin/BcOutTracking"])
-                buf.append([f"  conf: ./param/conf/analyzer_e72_run{args.run_num:0=5}_{prefix}_{suffix}.conf"])
+                buf.append([f"  conf: ./param/conf/analyzer_e72_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
                 buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
                 buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}/{prefix}_run{args.run_num:0=5}_{suffix}.root"))])
             break

@@ -11,8 +11,6 @@ parser = argparse.ArgumentParser(
 parser.add_argument("run_num", type=int, help="Input run number")
 parser.add_argument("suffix", type=str, help="Input suffix")
 parser.add_argument("param_type", type=str, help="Input parameter type")
-# parser.add_argument("--bht_min", type=int, help="Input num of duplication", required=False, default=13)
-# parser.add_argument("--bht_max", type=int, help="Input num of duplication", required=False, default=49)
 args = parser.parse_args()
 # ---------------------------------------------------------------------------
 

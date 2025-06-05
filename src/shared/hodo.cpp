@@ -421,5 +421,83 @@ namespace ana_helper {
         return result;
     }
 
+    std::pair<Double_t, Double_t> find_phc_range(TH1D* h, Double_t ratio) {
+        Config& conf = Config::getInstance();
+            
+        // 1. x=1のときのbinとその値
+        Int_t ref_bin = h->FindBin(1.0);
+        Double_t ref_val = h->GetBinContent( ref_bin );
+        Double_t threshold = ref_val * ratio;
+
+        // 2. 右側方向（x増加方向）
+        Int_t nbins = h->GetNbinsX();
+        Int_t bin_right = -1;
+        for (Int_t b = ref_bin + 1; b <= nbins; ++b) {
+            if (h->GetBinContent(b) <= threshold) {
+                bin_right = b;
+                break;
+            }
+        }
+
+        // 3. 左側方向（x減少方向）
+        Int_t bin_left = -1;
+        for (Int_t b = ref_bin - 1; b >= 1; --b) {
+            if (h->GetBinContent(b) <= threshold) {
+                bin_left = b;
+                break;
+            }
+        }
+
+        return std::make_pair( std::max(h->GetBinCenter(bin_left), conf.phc_de_range_min), h->GetBinCenter(bin_right) );
+    }
+    
+    // ____________________________________________________________________________________________
+    FitResult phc_fit(TH2D *h, TCanvas *c, Int_t n_c) {
+        Config& conf = Config::getInstance();
+
+        c->cd(n_c);
+        std::vector<Double_t> par, err;
+        TString fit_option = "0QEMR";
+        FitResult result;
+
+        // -- make TProfile -----
+        Int_t time_min = h->GetYaxis()->FindBin(conf.phc_time_window[conf.detector.Data()].first);
+        Int_t time_max = h->GetYaxis()->FindBin(conf.phc_time_window[conf.detector.Data()].second);
+        TProfile *pf   = h->ProfileX(Form("profile_%s", h->GetName()), time_min, time_max);
+        pf->SetLineColor(kRed);
+
+        // -- prepare parameter -----
+        TH1D* de_proj  = h->ProjectionX(Form("projection_%s", h->GetName()), time_min, time_max);
+        std::pair<Double_t, Double_t> fit_range = find_phc_range(de_proj, conf.phc_de_range_ratio[conf.detector.Data()]);
+        std::vector<std::vector<Double_t>> par_limits = {
+            {0.001, 15.0},
+            {-5.0, 0.05},
+            {-1.0, 10.0}
+        };
+
+        // -- fit -----
+        TF1 *f_fit = new TF1( Form("phc_%s", h->GetName()), "-[0]/TMath::Sqrt(TMath::Abs(x-[1]))+[2]", fit_range.first, fit_range.second);
+        for (Int_t i = 0; i < 3; i++) {
+            f_fit->SetParameter(i, (3.0*par_limits[i][0]+par_limits[i][1])/4.0);
+            f_fit->SetParLimits(i, par_limits[i][0], par_limits[i][1]);
+        }
+        f_fit->SetLineColor(kOrange);
+        f_fit->SetLineWidth(1);
+        pf->Fit(f_fit, fit_option.Data(), "", fit_range.first, fit_range.second);
+
+        // -- fill result -----
+        for (Int_t i = 0, n_par = f_fit->GetNpar(); i < n_par; i++) {
+            result.par.push_back(f_fit->GetParameter(i));
+            result.err.push_back(f_fit->GetParError(i));
+        }
+        
+        // draw
+        h->Draw("colz");
+        pf->Draw("same");
+        f_fit->Draw("same");
+
+        return result;
+    }
+
 
 }
