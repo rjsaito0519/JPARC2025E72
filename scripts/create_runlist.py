@@ -32,7 +32,7 @@ if common_elements:
 for suffix in args.suffix:
     suffix_head = suffix.split("_")[0]
     conf_dir = os.path.join(conf.analyzer_dir, "param", "conf")
-    conf_target_file = f"{conf_dir}/analyzer_e72_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"
+    conf_target_file = f"{conf_dir}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"
     if not os.path.isfile(conf_target_file):
         shutil.copy(os.path.join(conf_dir, "analyzer_e72_20250518.conf"), conf_target_file)
 
@@ -82,7 +82,7 @@ with open(runlist_target_file) as f:
                     buf.append(["  bin: ./bin/Hodoscope"])
                 elif prefix == "dc":
                     buf.append(["  bin: ./bin/BcOutTracking"])
-                buf.append([f"  conf: ./param/conf/analyzer_e72_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
+                buf.append([f"  conf: ./param/conf/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
                 buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
                 buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}/{prefix}_run{args.run_num:0=5}_{suffix}.root"))])
             break
