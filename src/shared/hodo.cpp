@@ -161,7 +161,8 @@ namespace ana_helper {
             result.par[1] + conf.adc_ped_remove_nsigma*result.par[2], 
             h->GetXaxis()->GetXmax()
         );
-        Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
+        // Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
+        Double_t mip_pos          = h->GetMean();
         Double_t mip_half_width   = 20.0;
         std::pair<Double_t, Double_t> mip_n_sigma(1.6, 2.0);
         h->GetXaxis()->UnZoom();
