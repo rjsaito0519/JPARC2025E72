@@ -490,11 +490,18 @@ namespace ana_helper {
             result.par.push_back(f_fit->GetParameter(i));
             result.err.push_back(f_fit->GetParError(i));
         }
-        
+
         // draw
         h->Draw("colz");
         pf->Draw("same");
         f_fit->Draw("same");
+
+        Double_t chi_square = f_fit->GetChisquare();
+        Double_t p_value = TMath::Prob(chi_square, f_fit->GetNDF());
+        TLatex* commnet = new TLatex();
+        commnet->SetNDC();  // NDC座標（0〜1の正規化）を使う
+        commnet->SetTextSize(0.04);
+        commnet->DrawLatex(0.7, 0.85, Form("%2f", chi_square/f_fit->GetNDF()));
 
         return result;
     }

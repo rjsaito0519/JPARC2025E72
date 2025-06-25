@@ -1,4 +1,5 @@
 import uproot
+import sys
 
 detector_id_list = {
     "BHT":  1,

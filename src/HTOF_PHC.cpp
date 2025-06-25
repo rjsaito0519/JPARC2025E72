@@ -63,7 +63,7 @@ void analyze(TString path, TString particle){
     // +--------------------------+
     // | prepare output root file |
     // +--------------------------+
-    TString output_path = Form("%s/root/run%05d_BH2_PHC_%s.root", OUTPUT_DIR.Data(), run_num, particle.Data());
+    TString output_path = Form("%s/root/run%05d_HTOF_PHC_%s.root", OUTPUT_DIR.Data(), run_num, particle.Data());
     if (std::ifstream(output_path.Data())) std::remove(output_path.Data());
     TFile* fout = new TFile(output_path.Data(), "RECREATE");
 
@@ -71,9 +71,9 @@ void analyze(TString path, TString particle){
     // | prepare histogram |
     // +-------------------+    
     // -- BTOF vs dE ----------
-    TH2D *h_bh2_btof_vs_de[2][conf.num_of_ch.at("bh2")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_bh2_btof_vs_de[0][i] = (TH2D*)f->Get(Form("BH2_seg%dU_TOF_vs_DeltaE_%s", i, particle.Data()));
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_bh2_btof_vs_de[1][i] = (TH2D*)f->Get(Form("BH2_seg%dD_TOF_vs_DeltaE_%s", i, particle.Data()));
+    TH2D *h_htof_btof_vs_de[2][conf.num_of_ch.at("htof")];
+    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++ ) h_htof_btof_vs_de[0][i] = (TH2D*)f->Get(Form("HTOF_seg%dU_TOF_vs_DeltaE_%s", i, particle.Data()));
+    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++ ) h_htof_btof_vs_de[1][i] = (TH2D*)f->Get(Form("HTOF_seg%dD_TOF_vs_DeltaE_%s", i, particle.Data()));
 
     // +--------------+
     // | fit and plot |
@@ -82,38 +82,38 @@ void analyze(TString path, TString particle){
     Int_t nth_pad = 1;
     Int_t rows = 2, cols = 2;
     Int_t max_pads = rows * cols;
-    TString pdf_path = Form("%s/img/run%05d_BH2_PHC_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
+    TString pdf_path = Form("%s/img/run%05d_HTOF_PHC_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
 
     // -- container -----
     std::vector<FitResult> phc_up;
     std::vector<FitResult> phc_down;
     
-    auto c_bh2 = new TCanvas("bh2", "", 1500, 1200);
-    c_bh2->Divide(cols, rows);
-    c_bh2->Print(pdf_path + "["); // start
+    auto c_htof = new TCanvas("htof", "", 1500, 1200);
+    c_htof->Divide(cols, rows);
+    c_htof->Print(pdf_path + "["); // start
     nth_pad = 1;
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++) {
+    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++) {
         if (nth_pad > max_pads) {
-            c_bh2->Print(pdf_path);
-            c_bh2->Clear();
-            c_bh2->Divide(cols, rows);
+            c_htof->Print(pdf_path);
+            c_htof->Clear();
+            c_htof->Divide(cols, rows);
             nth_pad = 1;
         }
 
         FitResult result;
         // -- UP -----
-        result = ana_helper::phc_fit(h_bh2_btof_vs_de[0][i], c_bh2, nth_pad);
+        result = ana_helper::phc_fit(h_htof_btof_vs_de[0][i], c_htof, nth_pad);
         phc_up.push_back(result);
         nth_pad++;
 
         // -- DOWN -----
-        result = ana_helper::phc_fit(h_bh2_btof_vs_de[1][i], c_bh2, nth_pad);
+        result = ana_helper::phc_fit(h_htof_btof_vs_de[1][i], c_htof, nth_pad);
         phc_down.push_back(result);
         nth_pad++;
     }
-    c_bh2->Print(pdf_path);
-    c_bh2->Print(pdf_path + "]"); // end
-    delete c_bh2;
+    c_htof->Print(pdf_path);
+    c_htof->Print(pdf_path + "]"); // end
+    delete c_htof;
 
     // +-------+
     // | Write |
@@ -130,7 +130,7 @@ void analyze(TString path, TString particle){
     tree->Branch("p1_err", &p1_err);
     tree->Branch("p2_err", &p2_err);
     
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++) {
+    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++) {
         ch = i;
         p0_val.clear(); p1_val.clear(); p2_val.clear();
         p0_err.clear(); p1_err.clear(); p2_err.clear();
@@ -175,7 +175,7 @@ Int_t main(int argc, char** argv) {
         return 1;
     }
 
-    conf.detector = "bh2";
+    conf.detector = "htof";
     conf.phc_de_range_min = 0.5;
     analyze(path, particle);
     return 0;
