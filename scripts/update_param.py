@@ -34,9 +34,11 @@ def report_status(do_succeeded, counter_name):
         print(f"\033[91m❌ Failed to update {counter_name} {args.param_type}\033[0m")
 
 import update_hdprm
+import update_phc
+import phc_conf
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-# どのparamファイルをアップデートするかあたりを指定
+# prepare param file
 # ---------------------------------------------------------------------------
 import conf
 
@@ -45,6 +47,13 @@ hdprm_target_file = f"{hdprm_dir}/HodoParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(hdprm_target_file):
     shutil.copy(f"{hdprm_dir}/HodoParam_0", hdprm_target_file)
 
+hdprm_dir = f"{conf.param_dir}/HDPHC"
+hdprm_target_file = f"{hdprm_dir}/HodoPHCParam_run{args.run_num:0=5}_{args.suffix}"
+if not os.path.isfile(hdprm_target_file):
+    shutil.copy(f"{hdprm_dir}/HodoPHCParam_0", hdprm_target_file)
+
+# update param file
+# ---------------------------------------------------------------------------
 if args.param_type == "hdprm":
     # -- BHT -----
     data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BHT_HDPRM_{args.suffix}.root"))
@@ -71,6 +80,40 @@ elif args.param_type == "t0":
     data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_T0_Offset_{args.suffix}.root"), is_t0_offset = True)
     do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
     report_status(do_succeeded, "T0")
+
+elif args.param_type == "phc":
+    # -- BHT -----
+    limits = [-np.inf, np.inf]
+    if f"{args.run_num:0=5}_{args.suffix}_bht" in phc_conf.limits_dict.keys():
+        limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_bht"]
+    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BHT_HDPRM_{args.suffix}.root"), limits)
+    do_succeeded = update_phc.update_file(hdprm_target_file, data)
+    report_status(do_succeeded, "BHT")
+
+    # -- T0 -----
+    limits = [-np.inf, np.inf]
+    if f"{args.run_num:0=5}_{args.suffix}_t0" in phc_conf.limits_dict.keys():
+        limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_t0"]
+    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_T0_HDPRM_{args.suffix}.root"), limits)
+    do_succeeded = update_phc.update_file(hdprm_target_file, data)
+    report_status(do_succeeded, "T0")
+
+    # -- BH2 -----
+    limits = [-np.inf, np.inf]
+    if f"{args.run_num:0=5}_{args.suffix}_bh2" in phc_conf.limits_dict.keys():
+        limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_bh2"]
+    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BH2_HDPRM_{args.suffix}.root"), limits)
+    do_succeeded = update_phc.update_file(hdprm_target_file, data)
+    report_status(do_succeeded, "BH2")
+
+    # -- HTOF -----
+    limits = [-np.inf, np.inf]
+    if f"{args.run_num:0=5}_{args.suffix}_htof" in phc_conf.limits_dict.keys():
+        limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_htof"]
+    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_HTOF_HDPRM_{args.suffix}.root"), limits)
+    do_succeeded = update_phc.update_file(hdprm_target_file, data)
+    report_status(do_succeeded, "HTOF")
+
 
 # elif args.suffix == "hdprm":
 #     hdphc_dir = "{}/HDPHC".format(conf.param_dir)

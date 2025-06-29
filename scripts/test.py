@@ -1,7 +1,19 @@
 import uproot
 import os 
+import sys
+import pprint
+import update_phc
+import phc_conf
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
+root_file_path = os.path.join(script_dir, "../results/root/run00344_BHT_PHC_Pi.root")
+
+a = update_phc.make_dictdata(root_file_path, phc_conf.limits_dict["344_Pi"]["bht"])
+a = update_phc.make_dictdata(root_file_path)
+pprint.pprint(a)
+
+sys.exit()
+
 root_file_path = os.path.join(script_dir, "../results/root/run00088_T0_HDPEM_Pi.root")
 
 if "T0" in root_file_path:
