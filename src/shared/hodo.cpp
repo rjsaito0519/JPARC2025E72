@@ -157,8 +157,9 @@ namespace ana_helper {
 
         // -- mip -----
         par.clear(); err.clear();
+        Double_t mip_range_left = conf.hdprm_mip_range_left > 0.0 ? conf.hdprm_mip_range_left : result.par[1] + conf.adc_ped_remove_nsigma*result.par[2];
         h->GetXaxis()->SetRangeUser(
-            conf.hdprm_mip_range_left > 0.0 ? conf.hdprm_mip_range_left : result.par[1] + conf.adc_ped_remove_nsigma*result.par[2], 
+            mip_range_left, 
             h->GetXaxis()->GetXmax()
         );
         Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
@@ -169,14 +170,16 @@ namespace ana_helper {
         // -- first fit -----
         f_prefit->SetRange(mip_pos-mip_half_width, mip_pos+mip_half_width);
         f_prefit->SetParameter(1, mip_pos);
+        f_prefit->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
         f_prefit->SetParameter(2, mip_half_width*0.9);
-        h->Fit(f_prefit, "0QEMR", "", mip_pos-mip_half_width, mip_pos+mip_half_width);
+        h->Fit(f_prefit, "0QEMR", "", mip_range_left, mip_pos+mip_half_width);
         for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
         delete f_prefit;
 
         // -- second fit -----
         TF1 *f_fit_mip_g = new TF1( Form("mip_gauss_%s", h->GetName()), "gausn", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
         f_fit_mip_g->SetParameter(1, par[1]);
+        f_fit_mip_g->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
         f_fit_mip_g->SetParameter(2, par[2]*0.9);
         f_fit_mip_g->SetLineColor(kOrange);
         f_fit_mip_g->SetLineWidth(2.0);
@@ -186,6 +189,7 @@ namespace ana_helper {
 
         TF1 *f_fit_mip_l = new TF1( Form("mip_landau_%s", h->GetName()), "landaun", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
         f_fit_mip_l->SetParameter(1, par[1]);
+        f_fit_mip_l->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
         f_fit_mip_l->SetParameter(2, par[2]*0.9);
         f_fit_mip_l->SetLineColor(kOrange);
         f_fit_mip_l->SetLineWidth(2.0);
