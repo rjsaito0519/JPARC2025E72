@@ -92,7 +92,7 @@ void analyze(TString path, TString particle){
     c_htof->Divide(cols, rows);
     c_htof->Print(pdf_path + "["); // start
     nth_pad = 1;
-    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++) {
+    for (Int_t i = conf.htof_adc_exist_seg.first; i < conf.htof_adc_exist_seg.second+1; i++) {
         if (nth_pad > max_pads) {
             c_htof->Print(pdf_path);
             c_htof->Clear();

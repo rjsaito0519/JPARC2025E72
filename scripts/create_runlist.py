@@ -25,7 +25,7 @@ set2 = set(["0", "Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"])
 
 common_elements = set1.difference(set2)
 if common_elements or len(set1) == 0:
-    print("please input correct suffix: 0, Pi/K_hdprm, , Pi/K_to, Pi/K_hdphc")
+    print("please input correct suffix: 0, Pi/K_hdprm, Pi/K_t0, Pi/K_hdphc")
     sys.exit()
 
 # -- write conf file  -----------------------------------
