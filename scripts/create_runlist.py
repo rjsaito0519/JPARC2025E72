@@ -20,11 +20,8 @@ import os
 import shutil
 import conf
 prefix = "dc" if args.dc else "hodo"
-set1 = set(args.suffix)
-set2 = set(["0", "Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"])
 
-common_elements = set1.difference(set2)
-if common_elements:
+if args.suffix not in ["0", "Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"]:
     print("please input correct suffix: 0, Pi/K_hdprm, , Pi/K_to, Pi/K_hdphc")
     sys.exit()
 
