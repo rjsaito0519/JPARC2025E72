@@ -81,7 +81,7 @@ elif args.param_type == "t0":
     do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
     report_status(do_succeeded, "T0")
 
-elif args.param_type == "phc":
+elif args.param_type == "hdphc":
     # -- BHT -----
     limits = [-np.inf, np.inf]
     if f"{args.run_num:0=5}_{args.suffix}_bht" in phc_conf.limits_dict.keys():
