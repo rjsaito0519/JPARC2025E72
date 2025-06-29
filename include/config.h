@@ -13,8 +13,9 @@ public:
     const Int_t max_tdc_hit = 16;
 
     TString detector = "none";
-
     Double_t adc_ped_remove_nsigma = 15.0;
+    Double_t hdprm_mip_range_left = -1.0;
+
     const std::pair<Int_t, Int_t> htof_adc_exist_seg = {18, 21};
 
     const std::unordered_map<std::string, Int_t> num_of_ch{

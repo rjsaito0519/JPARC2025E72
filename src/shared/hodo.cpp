@@ -158,11 +158,10 @@ namespace ana_helper {
         // -- mip -----
         par.clear(); err.clear();
         h->GetXaxis()->SetRangeUser(
-            result.par[1] + conf.adc_ped_remove_nsigma*result.par[2], 
+            conf.hdprm_mip_range_left > 0.0 ? conf.hdprm_mip_range_left : result.par[1] + conf.adc_ped_remove_nsigma*result.par[2], 
             h->GetXaxis()->GetXmax()
         );
-        // Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
-        Double_t mip_pos          = h->GetMean();
+        Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
         Double_t mip_half_width   = 20.0;
         std::pair<Double_t, Double_t> mip_n_sigma(1.6, 2.0);
         h->GetXaxis()->UnZoom();

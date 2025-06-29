@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ana_helper.h"
 #include "paths.h"
+#include "params.h"
 
 Config& conf = Config::getInstance();
 
@@ -116,16 +117,21 @@ void analyze(TString path, TString particle){
         }
 
         FitResult result;
+        TString key;
         // -- UP -----
         result = ana_helper::tdc_fit(h_bh2_tdc[0][i], c_bh2, nth_pad);
         tdc_up.push_back(result);
         nth_pad++;
 
+        key = Form("bh2-%d-u", i);
+        conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
         result = ana_helper::adc_fit(h_bh2_adc[0][i], c_bh2, nth_pad);
         adc_up.push_back(result);
         nth_pad++;
 
         // -- DOWN -----
+        key = Form("bh2-%d-d", i);
+        conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
         result = ana_helper::tdc_fit(h_bh2_tdc[1][i], c_bh2, nth_pad);
         tdc_down.push_back(result);
         nth_pad++;
