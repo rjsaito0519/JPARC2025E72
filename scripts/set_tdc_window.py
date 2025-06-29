@@ -59,12 +59,13 @@ num_of_ch = dict(
     SAC = 8,
     KVC = 4,
     BH2 = 11,
-    CVC = 10,
-    NC = 6,
+    HTOF = 34,
 
     # for E73
     AC = 5,
     T1 = 1,
+    CVC = 10,
+    NC = 6,
 )
 
 # matplotlibのグラフを動的にする
@@ -177,7 +178,7 @@ def on_key(event):
 
 file = uproot.open(args.rootfile_path)
 
-if args.counter_name in ["BHT", "T0", "T1", "CVC", "NC", "BH2"]:
+if args.counter_name in ["BHT", "T0", "T1", "CVC", "NC", "BH2", "HTOF"]:
     hist_data = file["{}_TDC_seg0U".format(args.counter_name)].to_numpy()
 
     bin_values_u = np.zeros_like(hist_data[0])

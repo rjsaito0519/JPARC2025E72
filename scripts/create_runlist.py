@@ -42,8 +42,9 @@ for suffix in args.suffix:
             s_list = line.split()
             if len(s_list) != 0 and s_list[0] == "USER:":
                 target = f"param/USER/UserParam_run{args.run_num:0=5}"
-                if os.path.isfile(os.path.join(conf.analyzer_dir, target)):
-                    s_list[1] = target
+                if not os.path.isfile(os.path.join(conf.analyzer_dir, target)):
+                    shutil.copy(os.path.join(conf.analyzer_dir, "param/USER/UserParam_e72_20250518"), target)
+                s_list[1] = target
             if prefix == "hodo":
                 if len(s_list) != 0 and s_list[0] == "HDPRM:" and suffix in ["Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_phc", "K_hdphc"]:
                     target = f"param/HDPRM/HodoParam_run{args.run_num:0=5}_{suffix_head}"
