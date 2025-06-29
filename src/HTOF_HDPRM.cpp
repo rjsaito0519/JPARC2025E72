@@ -172,11 +172,7 @@ void analyze(TString path, TString particle){
     
         // -- mip -----
         adc_p1_val.push_back(adc_up[i-conf.htof_adc_exist_seg.first].par[4]);
-        if (i == 18) {
-            adc_p1_val.push_back(599.313); // temporary
-        } else {
-            adc_p1_val.push_back(adc_down[i-conf.htof_adc_exist_seg.first].par[4]);
-        }
+        adc_p1_val.push_back(adc_down[i-conf.htof_adc_exist_seg.first].par[4]);
         adc_p1_err.push_back(adc_up[i-conf.htof_adc_exist_seg.first].err[4]);
         adc_p1_err.push_back(adc_down[i-conf.htof_adc_exist_seg.first].err[4]);
 
