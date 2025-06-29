@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser(
     add_help=True,
 )
 parser.add_argument("run_num", type=int, help="Input run number")
-parser.add_argument("suffix",  type=str, help="Input suffix", nargs='*')
+parser.add_argument("suffix",  type=str, help="Input suffix")
 parser.add_argument('--dc', action="store_true", help='Set check to True')
 args = parser.parse_args()
 # ---------------------------------------------------------------------------
