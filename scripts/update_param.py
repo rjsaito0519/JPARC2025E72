@@ -86,7 +86,7 @@ elif args.param_type == "hdphc":
     limits = [-np.inf, np.inf]
     if f"{args.run_num:0=5}_{args.suffix}_bht" in phc_conf.limits_dict.keys():
         limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_bht"]
-    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BHT_HDPRM_{args.suffix}.root"), limits)
+    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BHT_PHC_{args.suffix}.root"), limits)
     do_succeeded = update_phc.update_file(hdprm_target_file, data)
     report_status(do_succeeded, "BHT")
 
@@ -94,7 +94,7 @@ elif args.param_type == "hdphc":
     limits = [-np.inf, np.inf]
     if f"{args.run_num:0=5}_{args.suffix}_t0" in phc_conf.limits_dict.keys():
         limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_t0"]
-    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_T0_HDPRM_{args.suffix}.root"), limits)
+    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_T0_PHC_{args.suffix}.root"), limits)
     do_succeeded = update_phc.update_file(hdprm_target_file, data)
     report_status(do_succeeded, "T0")
 
@@ -102,7 +102,7 @@ elif args.param_type == "hdphc":
     limits = [-np.inf, np.inf]
     if f"{args.run_num:0=5}_{args.suffix}_bh2" in phc_conf.limits_dict.keys():
         limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_bh2"]
-    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BH2_HDPRM_{args.suffix}.root"), limits)
+    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BH2_PHC_{args.suffix}.root"), limits)
     do_succeeded = update_phc.update_file(hdprm_target_file, data)
     report_status(do_succeeded, "BH2")
 
@@ -110,7 +110,7 @@ elif args.param_type == "hdphc":
     limits = [-np.inf, np.inf]
     if f"{args.run_num:0=5}_{args.suffix}_htof" in phc_conf.limits_dict.keys():
         limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_htof"]
-    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_HTOF_HDPRM_{args.suffix}.root"), limits)
+    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_HTOF_PHC_{args.suffix}.root"), limits)
     do_succeeded = update_phc.update_file(hdprm_target_file, data)
     report_status(do_succeeded, "HTOF")
 
