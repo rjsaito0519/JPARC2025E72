@@ -484,7 +484,7 @@ namespace ana_helper {
         std::pair<Double_t, Double_t> fit_range = find_phc_range(de_proj, conf.phc_de_range_ratio[conf.detector.Data()]);        
         std::vector<std::vector<Double_t>> par_limits = {
             {0.001, 15.0},
-            {-5.0, 0.05},
+            {-5.0, 0.1},
             {-1.0, 10.0}
         };
 
