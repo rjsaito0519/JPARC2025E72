@@ -53,11 +53,11 @@ public:
     };
 
     Double_t phc_de_range_min = 0.0;
-    Double_t phc_de_range_max = 3.0;
+    Double_t phc_de_range_max = 3.5;
     std::unordered_map<std::string, Double_t> phc_de_range_ratio{
         { "bht", 0.001 },
         {  "t0", 0.01 },
-        { "bh2", 0.0 },
+        { "bh2", 0.001 },
         { "htof", 0.01 },
         
         // { "BAC",  4 },
