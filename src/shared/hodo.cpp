@@ -435,10 +435,10 @@ namespace ana_helper {
 
         // 2. 右側方向（x増加方向）
         Int_t nbins = h->GetNbinsX();
-        std::cout << nbins << ", " << ref_bin << std::endl;
         Int_t bin_right = -1;
         for (Int_t b = ref_bin + 1; b <= nbins; ++b) {
             if (h->GetBinContent(b) <= threshold) {
+                std::cout << b << std::endl;
                 bin_right = b;
                 break;
             }
