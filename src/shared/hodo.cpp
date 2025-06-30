@@ -484,7 +484,7 @@ namespace ana_helper {
         std::pair<Double_t, Double_t> fit_range = find_phc_range(de_proj, conf.phc_de_range_ratio[conf.detector.Data()]);        
         std::vector<std::vector<Double_t>> par_limits = {
             {0.001, 15.0},
-            {-5.0, 0.3},
+            {-5.0, fit_range.first},
             {-1.0, 10.0}
         };
 
@@ -494,7 +494,7 @@ namespace ana_helper {
             f_fit->SetParameter(i, (3.0*par_limits[i][0]+par_limits[i][1])/4.0);
             f_fit->SetParLimits(i, par_limits[i][0], par_limits[i][1]);
         }
-        f_fit->SetParameter(1, fit_range.first + (fit_range.second - fit_range.first)*0.01);
+        f_fit->SetParameter(1, fit_range.first - (fit_range.second - fit_range.first)*0.005);
         f_fit->SetLineColor(kOrange);
         f_fit->SetLineWidth(1);
         pf->Fit(f_fit, fit_option.Data(), "", fit_range.first, fit_range.second);
