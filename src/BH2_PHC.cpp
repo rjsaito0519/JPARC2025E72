@@ -176,8 +176,8 @@ Int_t main(int argc, char** argv) {
     }
 
     conf.detector = "bh2";
-    conf.phc_de_range_min = 0.2;
-    conf.phc_de_range_max = 2.5;    
+    conf.phc_de_range_min = 0.15;
+    conf.phc_de_range_max = 2.0;    
     analyze(path, particle);
     return 0;
 }
