@@ -438,10 +438,12 @@ namespace ana_helper {
         Int_t bin_right = -1;
         for (Int_t b = ref_bin + 1; b <= nbins; ++b) {
             if (h->GetBinContent(b) <= threshold) {
-                std::cout << b << std::endl;
                 bin_right = b;
                 break;
             }
+        }
+        if (bin_right == -1) {
+            bin_right = nbins;
         }
 
         // 3. 左側方向（x減少方向）
@@ -451,6 +453,9 @@ namespace ana_helper {
                 bin_left = b;
                 break;
             }
+        }
+        if (bin_left == -1) {
+            bin_left = 1;
         }
 
         return std::make_pair( 
@@ -476,10 +481,7 @@ namespace ana_helper {
 
         // -- prepare parameter -----
         TH1D* de_proj  = h->ProjectionX(Form("projection_%s", h->GetName()), time_min, time_max);
-        std::pair<Double_t, Double_t> fit_range = find_phc_range(de_proj, conf.phc_de_range_ratio[conf.detector.Data()]);
-        
-        std::cout << fit_range.first << ", " << fit_range.second << std::endl;
-        
+        std::pair<Double_t, Double_t> fit_range = find_phc_range(de_proj, conf.phc_de_range_ratio[conf.detector.Data()]);        
         std::vector<std::vector<Double_t>> par_limits = {
             {0.001, 15.0},
             {-5.0, 0.05},
