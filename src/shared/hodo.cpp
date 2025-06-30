@@ -452,7 +452,10 @@ namespace ana_helper {
             }
         }
 
-        return std::make_pair( std::max(h->GetBinCenter(bin_left), conf.phc_de_range_min), h->GetBinCenter(bin_right) );
+        return std::make_pair( 
+            std::max(h->GetBinCenter(bin_left),  conf.phc_de_range_min),
+            std::min(h->GetBinCenter(bin_right), conf.phc_de_range_max)
+        );
     }
     
     // ____________________________________________________________________________________________
