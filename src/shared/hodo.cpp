@@ -494,6 +494,7 @@ namespace ana_helper {
             f_fit->SetParameter(i, (3.0*par_limits[i][0]+par_limits[i][1])/4.0);
             f_fit->SetParLimits(i, par_limits[i][0], par_limits[i][1]);
         }
+        f_fit->SetParameter(1, fit_range.first + (fit_range.second - fit_range.first)*0.01);
         f_fit->SetLineColor(kOrange);
         f_fit->SetLineWidth(1);
         pf->Fit(f_fit, fit_option.Data(), "", fit_range.first, fit_range.second);
