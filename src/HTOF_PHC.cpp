@@ -176,7 +176,7 @@ Int_t main(int argc, char** argv) {
     }
 
     conf.detector = "htof";
-    conf.phc_de_range_min = 0.5;
+    conf.phc_de_range_min = 0.2;
     analyze(path, particle);
     return 0;
 }
