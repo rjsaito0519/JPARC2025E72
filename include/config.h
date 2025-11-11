@@ -16,15 +16,15 @@ public:
     Double_t adc_ped_remove_nsigma = 15.0;
     Double_t hdprm_mip_range_left = -1.0;
 
-    const std::pair<Int_t, Int_t> htof_adc_exist_seg = {18, 21};
+    const std::pair<Int_t, Int_t> htof_adc_exist_seg = {0, 33};
 
     const std::unordered_map<std::string, Int_t> num_of_ch{
         { "bht", 63 },
         {  "t0",  5 },
         { "BAC",  4 },
         { "SAC",  8 },
-        { "KVC",  4 },
-        { "bh2",  11 },
+        { "KVC",  8 },
+        { "bh2",  15 },
         { "htof",  34 },
     };
 
