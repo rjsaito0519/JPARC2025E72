@@ -34,7 +34,7 @@ for suffix in args.suffix:
     conf_dir = os.path.join(conf.analyzer_dir, "param", "conf")
     conf_target_file = f"{conf_dir}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"
     if not os.path.isfile(conf_target_file):
-        shutil.copy(os.path.join(conf_dir, "analyzer_e72_20250518.conf"), conf_target_file)
+        shutil.copy(os.path.join(conf_dir, "analyzer_e72_20251113.conf"), conf_target_file)
 
     buf = []
     with open(conf_target_file) as f:
@@ -43,7 +43,7 @@ for suffix in args.suffix:
             if len(s_list) != 0 and s_list[0] == "USER:":
                 target = f"param/USER/UserParam_run{args.run_num:0=5}"
                 if not os.path.isfile(os.path.join(conf.analyzer_dir, target)):
-                    shutil.copy(os.path.join(conf.analyzer_dir, "param/USER/UserParam_e72_20250518"), os.path.join(conf.analyzer_dir, target))
+                    shutil.copy(os.path.join(conf.analyzer_dir, "param/USER/UserParam_e72_20251104"), os.path.join(conf.analyzer_dir, target))
                 s_list[1] = target
             if prefix == "hodo":
                 if len(s_list) != 0 and s_list[0] == "HDPRM:" and suffix in ["Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_phc", "K_hdphc"]:
