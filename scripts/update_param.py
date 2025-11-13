@@ -47,10 +47,10 @@ hdprm_target_file = f"{hdprm_dir}/HodoParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(hdprm_target_file):
     shutil.copy(f"{hdprm_dir}/HodoParam_0", hdprm_target_file)
 
-hdprm_dir = f"{conf.param_dir}/HDPHC"
-hdprm_target_file = f"{hdprm_dir}/HodoPHCParam_run{args.run_num:0=5}_{args.suffix}"
-if not os.path.isfile(hdprm_target_file):
-    shutil.copy(f"{hdprm_dir}/HodoPHCParam_0", hdprm_target_file)
+hdphc_dir = f"{conf.param_dir}/HDPHC"
+hdphc_target_file = f"{hdphc_dir}/HodoPHCParam_run{args.run_num:0=5}_{args.suffix}"
+if not os.path.isfile(hdphc_target_file):
+    shutil.copy(f"{hdphc_dir}/HodoPHCParam_0", hdphc_target_file)
 
 # update param file
 # ---------------------------------------------------------------------------
@@ -60,10 +60,10 @@ if args.param_type == "hdprm":
     do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
     report_status(do_succeeded, "BHT")
 
-    # -- T0 -----
-    data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_T0_HDPRM_{args.suffix}.root"))
-    do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
-    report_status(do_succeeded, "T0")
+    # # -- T0 -----
+    # data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_T0_HDPRM_{args.suffix}.root"))
+    # do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
+    # report_status(do_succeeded, "T0")
 
     # -- BH2 -----
     data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BH2_HDPRM_{args.suffix}.root"))
@@ -87,23 +87,23 @@ elif args.param_type == "hdphc":
     if f"{args.run_num:0=5}_{args.suffix}_bht" in phc_conf.limits_dict.keys():
         limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_bht"]
     data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BHT_PHC_{args.suffix}.root"), limits)
-    do_succeeded = update_phc.update_file(hdprm_target_file, data)
+    do_succeeded = update_phc.update_file(hdphc_target_file, data)
     report_status(do_succeeded, "BHT")
 
-    # -- T0 -----
-    limits = [-np.inf, np.inf]
-    if f"{args.run_num:0=5}_{args.suffix}_t0" in phc_conf.limits_dict.keys():
-        limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_t0"]
-    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_T0_PHC_{args.suffix}.root"), limits)
-    do_succeeded = update_phc.update_file(hdprm_target_file, data)
-    report_status(do_succeeded, "T0")
+    # # -- T0 -----
+    # limits = [-np.inf, np.inf]
+    # if f"{args.run_num:0=5}_{args.suffix}_t0" in phc_conf.limits_dict.keys():
+    #     limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_t0"]
+    # data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_T0_PHC_{args.suffix}.root"), limits)
+    # do_succeeded = update_phc.update_file(hdphc_target_file, data)
+    # report_status(do_succeeded, "T0")
 
     # -- BH2 -----
     limits = [-np.inf, np.inf]
     if f"{args.run_num:0=5}_{args.suffix}_bh2" in phc_conf.limits_dict.keys():
         limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_bh2"]
     data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BH2_PHC_{args.suffix}.root"), limits)
-    do_succeeded = update_phc.update_file(hdprm_target_file, data)
+    do_succeeded = update_phc.update_file(hdphc_target_file, data)
     report_status(do_succeeded, "BH2")
 
     # -- HTOF -----
@@ -111,7 +111,7 @@ elif args.param_type == "hdphc":
     if f"{args.run_num:0=5}_{args.suffix}_htof" in phc_conf.limits_dict.keys():
         limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_htof"]
     data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_HTOF_PHC_{args.suffix}.root"), limits)
-    do_succeeded = update_phc.update_file(hdprm_target_file, data)
+    do_succeeded = update_phc.update_file(hdphc_target_file, data)
     report_status(do_succeeded, "HTOF")
 
 

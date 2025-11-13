@@ -56,16 +56,12 @@ num_of_ch = dict(
     BHT = 63,
     T0 = 5,
     BAC = 4,
-    SAC = 8,
-    KVC = 4,
-    BH2 = 11,
+    SAC3 = 1,
+    KVC = 8,
+    BH2 = 15,
     HTOF = 34,
-
-    # for E73
-    AC = 5,
     T1 = 1,
-    CVC = 10,
-    NC = 6,
+    CVC = 8,
 )
 
 # matplotlibのグラフを動的にする
