@@ -32,7 +32,7 @@ if common_elements or len(set1) == 0:
 for suffix in args.suffix:
     suffix_head = suffix.split("_")[0]
     conf_dir = os.path.join(conf.analyzer_dir, "param", "conf")
-    conf_target_file = f"{conf_dir}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"
+    conf_target_file = f"{conf_dir}/{prefix}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"
     if not os.path.isfile(conf_target_file):
         shutil.copy(os.path.join(conf_dir, "analyzer_e72_20251113.conf"), conf_target_file)
 
@@ -41,17 +41,17 @@ for suffix in args.suffix:
         for line in f:
             s_list = line.split()
             if len(s_list) != 0 and s_list[0] == "USER:":
-                target = f"param/USER/UserParam_run{args.run_num:0=5}"
+                target = f"param/USER/{prefix}/UserParam_run{args.run_num:0=5}"
                 if not os.path.isfile(os.path.join(conf.analyzer_dir, target)):
                     shutil.copy(os.path.join(conf.analyzer_dir, "param/USER/UserParam_e72_20251104"), os.path.join(conf.analyzer_dir, target))
                 s_list[1] = target
             if prefix == "hodo":
                 if len(s_list) != 0 and s_list[0] == "HDPRM:" and suffix in ["Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_phc", "K_hdphc"]:
-                    target = f"param/HDPRM/HodoParam_run{args.run_num:0=5}_{suffix_head}"
+                    target = f"param/HDPRM/{prefix}/HodoParam_run{args.run_num:0=5}_{suffix_head}"
                     if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
                 if len(s_list) != 0 and s_list[0] == "HDPHC:" and suffix in ["Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"]:
-                    target = f"param/HDPHC/HodoPHC_run{args.run_num:0=5}_{suffix_head}"
+                    target = f"param/HDPHC/{prefix}/HodoPHC_run{args.run_num:0=5}_{suffix_head}"
                     if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
             # elif prefix == "dc":
@@ -83,7 +83,7 @@ with open(runlist_target_file) as f:
                     buf.append(["  bin: ./bin/Hodoscope"])
                 elif prefix == "dc":
                     buf.append(["  bin: ./bin/BcOutTracking"])
-                buf.append([f"  conf: ./param/conf/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
+                buf.append([f"  conf: ./param/conf/{prefix}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
                 buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
                 buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}/{prefix}_run{args.run_num:0=5}_{suffix}.root"))])
             break

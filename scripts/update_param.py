@@ -42,12 +42,12 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 # ---------------------------------------------------------------------------
 import conf
 
-hdprm_dir = f"{conf.param_dir}/HDPRM"
+hdprm_dir = f"{conf.param_dir}/HDPRM/hodo"
 hdprm_target_file = f"{hdprm_dir}/HodoParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(hdprm_target_file):
     shutil.copy(f"{hdprm_dir}/HodoParam_0", hdprm_target_file)
 
-hdphc_dir = f"{conf.param_dir}/HDPHC"
+hdphc_dir = f"{conf.param_dir}/HDPHC/hodo"
 hdphc_target_file = f"{hdphc_dir}/HodoPHCParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(hdphc_target_file):
     shutil.copy(f"{hdphc_dir}/HodoPHCParam_0", hdphc_target_file)
