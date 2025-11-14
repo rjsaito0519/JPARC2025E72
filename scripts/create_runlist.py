@@ -66,7 +66,7 @@ for suffix in args.suffix:
 # ---------------------------------------------------------------------------
 
 # -- write runlist file  -----------------------------------
-runlist_dir = os.path.join(conf.analyzer_dir, "runmanager", "runlist")
+runlist_dir = os.path.join(conf.analyzer_dir, "runmanager", "runlist", f"{prefix}")
 runlist_target_file = os.path.join(runlist_dir, f"{prefix}_run{args.run_num:05d}.yml")
 if not os.path.isfile(runlist_target_file):
     shutil.copy(os.path.join(runlist_dir, "myexample.yml"), runlist_target_file)
