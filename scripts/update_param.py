@@ -50,7 +50,7 @@ if not os.path.isfile(hdprm_target_file):
 hdphc_dir = f"{conf.param_dir}/HDPHC/hodo"
 hdphc_target_file = f"{hdphc_dir}/HodoPHCParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(hdphc_target_file):
-    shutil.copy(f"{hdphc_dir}/HodoPHCParam_0", hdphc_target_file)
+    shutil.copy(f"{hdphc_dir}/HodoPHCParam_1", hdphc_target_file)
 
 # update param file
 # ---------------------------------------------------------------------------
