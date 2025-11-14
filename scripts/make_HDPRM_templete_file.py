@@ -3,7 +3,7 @@ import conf
 
 # --- ユーザーが設定する項目 ---
 hdprm_dir = f"{conf.param_dir}/HDPHC/hodo"
-OUTPUT_FILE = f"{hdprm_dir}/HodoParam_1"
+OUTPUT_FILE = f"{hdprm_dir}/HodoParam_1.txt"
 
 # 生成したいCIdと、それぞれが持つSegIdの最大値+1
 # (例: CId=1はSegId 0-62 (計63個))

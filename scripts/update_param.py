@@ -45,7 +45,7 @@ import conf
 hdprm_dir = f"{conf.param_dir}/HDPRM/hodo"
 hdprm_target_file = f"{hdprm_dir}/HodoParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(hdprm_target_file):
-    shutil.copy(f"{hdprm_dir}/HodoParam_0", hdprm_target_file)
+    shutil.copy(f"{hdprm_dir}/HodoParam_1", hdprm_target_file)
 
 hdphc_dir = f"{conf.param_dir}/HDPHC/hodo"
 hdphc_target_file = f"{hdphc_dir}/HodoPHCParam_run{args.run_num:0=5}_{args.suffix}"
