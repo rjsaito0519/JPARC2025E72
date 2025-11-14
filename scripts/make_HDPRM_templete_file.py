@@ -2,7 +2,7 @@ import os
 import conf
 
 # --- ユーザーが設定する項目 ---
-hdprm_dir = f"{conf.param_dir}/HDPHC"
+hdprm_dir = f"{conf.param_dir}/HDPRM"
 OUTPUT_FILE = f"{hdprm_dir}/HodoParam_1.txt"
 
 # 生成したいCIdと、それぞれが持つSegIdの最大値+1
