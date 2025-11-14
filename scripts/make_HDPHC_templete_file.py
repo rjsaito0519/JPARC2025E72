@@ -3,7 +3,7 @@ import datetime
 import conf
 
 # --- ユーザーが設定する項目 ---
-hdphc_dir = f"{conf.param_dir}/HDPHC"
+hdphc_dir = f"{conf.param_dir}/HDPHC/hodo"
 OUTPUT_FILE = f"{hdphc_dir}/HodoPHCParam_1"
 
 DETECTOR_CONFIG = {
