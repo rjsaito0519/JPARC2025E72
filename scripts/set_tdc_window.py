@@ -27,7 +27,7 @@ filename = os.path.basename(args.rootfile_path)
 index = filename.find("run")
 run_num = int(filename[index+3:index+8])
 
-user_param_dir = os.path.join(conf.analyzer_dir, "param", "USER")
+user_param_dir = os.path.join(conf.analyzer_dir, "param", "USER", "hodo")
 target_file = os.path.join(user_param_dir, f"UserParam_run{run_num:05d}")
 
 if not os.path.isfile(target_file):
