@@ -220,6 +220,7 @@ namespace ana_helper {
             h->Draw();
             f_fit_mip_g->SetNpx(1000);
             f_fit_mip_g->Draw("same");
+            result.chi_square = chi_square_g;
             delete f_fit_mip_l;
         } else {
             for (Int_t i = 0, n_par = f_fit_mip_l->GetNpar(); i < n_par; i++) {
@@ -235,6 +236,7 @@ namespace ana_helper {
             h->Draw();
             f_fit_mip_l->SetNpx(1000);
             f_fit_mip_l->Draw("same");
+            result.chi_square = chi_square_l;
             delete f_fit_mip_g;
         }
         f_fit_ped->Draw("same");
