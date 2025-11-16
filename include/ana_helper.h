@@ -47,7 +47,7 @@ namespace ana_helper {
     // -- hodo -----
     void set_tdc_search_range(TH1D *h);
     FitResult tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
-    FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c);
+    FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin = 1);
     FitResult bht_tot_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult t0_offset_fit(TH1D *h, TCanvas *c, Int_t n_c);
     std::pair<Double_t, Double_t> find_phc_range(TH1D* h, Double_t ratio);

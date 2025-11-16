@@ -119,10 +119,10 @@ namespace ana_helper {
     }
 
     // ____________________________________________________________________________________________
-    FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c) {
+    FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin) {
         Config& conf = Config::getInstance();
 
-        h = (TH1D*)h->Rebin(5, h->GetName());
+        h = (TH1D*)h->Rebin(n_rebin, h->GetName());
 
         c->cd(n_c);
         gPad->SetLogy(1);
