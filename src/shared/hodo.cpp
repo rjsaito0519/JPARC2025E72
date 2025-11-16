@@ -122,6 +122,8 @@ namespace ana_helper {
     FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c) {
         Config& conf = Config::getInstance();
 
+        h = (TH1D*)h->Rebin(5, h->GetName());
+
         c->cd(n_c);
         gPad->SetLogy(1);
         std::vector<Double_t> par, err;
