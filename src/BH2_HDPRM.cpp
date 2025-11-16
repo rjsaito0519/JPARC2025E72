@@ -127,7 +127,7 @@ void analyze(TString path, TString particle){
         conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
         result = ana_helper::adc_fit(h_bh2_adc[0][i], c_bh2, nth_pad);
         adc_up.push_back(result);
-        std::cout << result.chi_square
+        std::cout << result.chi_square << std::endl;
         nth_pad++;
 
         // -- DOWN -----
