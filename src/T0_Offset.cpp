@@ -71,8 +71,8 @@ void analyze(TString path, TString particle){
     // | prepare histogram |
     // +-------------------+    
     // -- tdc ----------
-    TH1D *h_t0_offset[conf.num_of_ch.at("t0")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++ ) h_t0_offset[i] = (TH1D*)f->Get(Form("T0_seg%d_TimeOffset_%s", i, particle.Data()));
+    TH1D *h_t0_offset[conf.num_of_ch.at("bh2")];
+    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_t0_offset[i] = (TH1D*)f->Get(Form("T0_seg%d_TimeOffset_%s", i, particle.Data()));
 
     // +--------------+
     // | fit and plot |

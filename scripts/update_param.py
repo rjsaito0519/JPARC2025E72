@@ -79,7 +79,7 @@ elif args.param_type == "t0":
     # -- T0 -----
     data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_T0_Offset_{args.suffix}.root"), is_t0_offset = True)
     do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
-    report_status(do_succeeded, "T0")
+    report_status(do_succeeded, "BH2")
 
 elif args.param_type == "hdphc":
     # -- BHT -----
