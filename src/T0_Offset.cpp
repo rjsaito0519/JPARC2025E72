@@ -117,7 +117,7 @@ void analyze(TString path, TString particle){
     tree->Branch("offset_p0_val", &offset_p0_val);
     tree->Branch("offset_p0_err", &offset_p0_err);
     
-    for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++) {
+    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++) {
         ch = i;
         offset_p0_val.clear();
         offset_p0_err.clear();
