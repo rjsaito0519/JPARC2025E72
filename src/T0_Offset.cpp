@@ -90,7 +90,7 @@ void analyze(TString path, TString particle){
     c_t0->Divide(cols, rows);
     c_t0->Print(pdf_path + "["); // start
     nth_pad = 1;
-    for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++) {
+    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++) {
         if (nth_pad > max_pads) {
             c_t0->Print(pdf_path);
             c_t0->Clear();
