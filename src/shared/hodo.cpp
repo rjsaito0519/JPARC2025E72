@@ -122,7 +122,7 @@ namespace ana_helper {
     FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin) {
         Config& conf = Config::getInstance();
 
-        h = (TH1D*)h->Rebin(n_rebin, h->GetName());
+        // h = (TH1D*)h->Rebin(n_rebin, h->GetName());
 
         c->cd(n_c);
         gPad->SetLogy(1);
@@ -165,7 +165,8 @@ namespace ana_helper {
             h->GetXaxis()->GetXmax()
         );
         Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
-        Double_t mip_half_width   = 20.0;
+        // Double_t mip_half_width   = 20.0;
+        Double_t mip_half_width   = h->GetStdDev();
         std::pair<Double_t, Double_t> mip_n_sigma(1.6, 2.0);
         h->GetXaxis()->UnZoom();
         
