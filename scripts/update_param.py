@@ -106,13 +106,13 @@ elif args.param_type == "hdphc":
     do_succeeded = update_phc.update_file(hdphc_target_file, data)
     report_status(do_succeeded, "BH2")
 
-    # -- HTOF -----
-    limits = [-np.inf, np.inf]
-    if f"{args.run_num:0=5}_{args.suffix}_htof" in phc_conf.limits_dict.keys():
-        limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_htof"]
-    data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_HTOF_PHC_{args.suffix}.root"), limits)
-    do_succeeded = update_phc.update_file(hdphc_target_file, data)
-    report_status(do_succeeded, "HTOF")
+    # # -- HTOF -----
+    # limits = [-np.inf, np.inf]
+    # if f"{args.run_num:0=5}_{args.suffix}_htof" in phc_conf.limits_dict.keys():
+    #     limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_htof"]
+    # data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_HTOF_PHC_{args.suffix}.root"), limits)
+    # do_succeeded = update_phc.update_file(hdphc_target_file, data)
+    # report_status(do_succeeded, "HTOF")
 
 
 # elif args.suffix == "hdprm":

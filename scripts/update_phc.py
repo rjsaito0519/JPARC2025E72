@@ -6,8 +6,8 @@ import statistics
 detector_id_list = {
     "BHT":  1,
     "T0":   2,
-    "BH2":  6,
-    "HTOF": 7
+    "BH2":  3,
+    "HTOF": 5
 }
 
 # -- prepare HDPRM data  -----------------------------------
