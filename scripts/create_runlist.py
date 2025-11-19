@@ -51,7 +51,7 @@ for suffix in args.suffix:
                     if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
                 if len(s_list) != 0 and s_list[0] == "HDPHC:" and suffix in ["Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"]:
-                    target = f"param/HDPHC/{prefix}/HodoPHC_run{args.run_num:0=5}_{suffix_head}"
+                    target = f"param/HDPHC/{prefix}/HodoPHCParam_run{args.run_num:0=5}_{suffix_head}"
                     if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
             # elif prefix == "dc":
