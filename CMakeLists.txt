@@ -30,6 +30,8 @@ file(GLOB SHARED_SRC "${CMAKE_SOURCE_DIR}/src/shared/*.cpp")
 
 # 各ソースファイルに対して実行ファイルを作成
 file(GLOB EXECUTABLE_SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp")
+# "unused" という名前が含まれるファイルやディレクトリを除外
+list(FILTER EXECUTABLE_SOURCES EXCLUDE REGEX "unused")
 foreach(EXECUTABLE_SOURCE ${EXECUTABLE_SOURCES})
     # 実行ファイル名を取得
     get_filename_component(EXECUTABLE_NAME ${EXECUTABLE_SOURCE} NAME_WE)
