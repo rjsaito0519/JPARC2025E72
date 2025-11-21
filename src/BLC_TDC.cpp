@@ -141,7 +141,6 @@ void analyze(TString path, TString particle){
     for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++) {
         ch = i;
         tdc_p0_val.clear();
-        tdc_p0_err.clear();
     
         // -- tdc -----
         tdc_p0_val.push_back(blca_tdc[i].additional[1]);
