@@ -69,6 +69,10 @@ for suffix in args.suffix:
                 target = f"param/DCTDC/{SUB_DIR}/DCTdcParam_run{args.run_num:0=5}_{suffix_head}"
                 if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                     s_list[1] = target
+            if len(s_list) != 0 and s_list[0] == "DCDRFT:":
+                target = f"param/DCDRFT/{SUB_DIR}/DCDriftParam_run{args.run_num:0=5}_{suffix_head}.root"
+                if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
+                    s_list[1] = target
             buf.append(s_list)
 
     with open(conf_target_file, mode='w') as f:
@@ -124,6 +128,12 @@ with open(runlist_target_file, mode='w') as f:
 # ---------------------------------------------------------------------------
 print("\n" + "-"*30)
 print("make runlist: {}_run{:0=5}.yml".format(prefix, args.run_num))
+print("-- conf ", "-"*22)
+conf_dir = os.path.join(conf.analyzer_dir, "param", "conf")
+conf_target_file = f"{conf_dir}/{SUB_DIR}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"
+with open(conf_target_file, "r") as f:
+    print(f.read())
+print("-- runlist ", "-"*19)
 with open(runlist_target_file, "r") as f:
     print(f.read())
 print("-"*30)
