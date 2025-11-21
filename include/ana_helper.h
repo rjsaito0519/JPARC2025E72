@@ -54,7 +54,7 @@ namespace ana_helper {
     FitResult phc_fit(TH2D *h, TCanvas *c, Int_t n_c);
 
     // -- dcana -----
-    FitResult dc_t0_fit(TH1D *h, TCanvas *c, Int_t n_c);
+    FitResult dc_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
 }
 
 #endif  // ANA_HELPER_

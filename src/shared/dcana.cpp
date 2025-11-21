@@ -3,7 +3,7 @@
 namespace ana_helper {
 
     // ____________________________________________________________________________________________    
-    FitResult dc_t0_fit(TH1D *h, TCanvas *c, Int_t n_c) {
+    FitResult dc_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c) {
         Config& conf = Config::getInstance();
 
         c->cd(n_c);

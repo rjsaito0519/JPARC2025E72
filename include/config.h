@@ -26,6 +26,8 @@ public:
         { "KVC",  8 },
         { "bh2",  15 },
         { "htof",  34 },
+
+        { "blc",  8 },
     };
 
     std::unordered_map<std::string, std::pair<Double_t, Double_t>> tdc_search_range{
