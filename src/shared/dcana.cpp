@@ -7,9 +7,7 @@ namespace ana_helper {
         Config& conf = Config::getInstance();
 
         c->cd(n_c);
-        // TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
-        TString fit_option = h->GetMaximum() > 500.0 ? "0EMR" : "0EMRL";
-        
+        TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
         FitResult result;
 
         Double_t tdc_width = 50.0;
@@ -41,7 +39,6 @@ namespace ana_helper {
         Bool_t is_success = rootFinder.Solve();
         Double_t t0 = is_success ? rootFinder.Root() : 0.0;
         result.additional.push_back(t0);
-        std::cout << t0 << ", " << result.par[1] - 2*result.par[2] << std::endl;
 
         // draw
         h->GetXaxis()->SetRangeUser(fit_range_min - tdc_width/2.0, fit_range_max);
