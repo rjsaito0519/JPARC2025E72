@@ -7,7 +7,9 @@ namespace ana_helper {
         Config& conf = Config::getInstance();
 
         c->cd(n_c);
-        TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
+        // TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
+        TString fit_option = h->GetMaximum() > 500.0 ? "0EMR" : "0EMRL";
+        
         FitResult result;
 
         Double_t tdc_width = 50.0;
