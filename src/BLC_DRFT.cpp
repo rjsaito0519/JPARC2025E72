@@ -80,8 +80,7 @@ void analyze(TString path, TString particle){
     // +--------------------------+
     // | prepare output root file |
     // +--------------------------+
-    // DCDriftParam_0
-    TString output_path = Form("%s/param/DCDRFT/e72/DCDriftParam_run%05d_%s.root", WORK_DIR.Data(), run_num, particle.Data());
+    TString output_path = Form("%s/param/DCDRFT/e72/DCDriftParam_run%05d_%s.root", ANALYZER_DIR.Data(), run_num, particle.Data());
     if (std::ifstream(output_path.Data())) std::remove(output_path.Data());
     TFile* fout = new TFile(output_path.Data(), "RECREATE");
 
