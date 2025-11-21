@@ -130,7 +130,7 @@ void analyze(TString path, TString particle){
 
         conf.detector = Form("BLC%sb", in_or_out.Data());
         TGraph* gb = ana_helper::make_drift_function(h_blcb_drift[i], c_blc, nth_pad, i);
-        blca_drift.push_back(gb);
+        blcb_drift.push_back(gb);
         nth_pad++;
     }
     c_blc->Print(pdf_path);
