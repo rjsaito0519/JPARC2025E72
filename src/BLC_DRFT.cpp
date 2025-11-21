@@ -21,6 +21,8 @@
 #include <TApplication.h>
 #include <TDatabasePDG.h>
 #include <TParticle.h>
+#include <TDatime.h>
+#include <TNamed.h>
 
 // Custom headers
 #include "config.h"
@@ -79,7 +81,7 @@ void analyze(TString path, TString particle){
     // | prepare output root file |
     // +--------------------------+
     // DCDriftParam_0
-    TString output_path = Form("%s/root/run%05d_BLC%s_TDC_%s.root", OUTPUT_DIR.Data(), run_num, in_or_out.Data(), particle.Data());
+    TString output_path = Form("%s/param/DCDRFT/e72/DCDriftParam_run%05d_%s.root", WORK_DIR.Data(), run_num, particle.Data());
     if (std::ifstream(output_path.Data())) std::remove(output_path.Data());
     TFile* fout = new TFile(output_path.Data(), "RECREATE");
 
@@ -88,11 +90,11 @@ void analyze(TString path, TString particle){
     // +-------------------+    
     // BLC2a_Hit_DriftTime_plane0
     // -- tdc ----------
-    TH1D *h_blca_tdc[conf.num_of_ch.at("blc")];
-    TH1D *h_blcb_tdc[conf.num_of_ch.at("blc")];
+    TH1D *h_blca_drift[conf.num_of_ch.at("blc")];
+    TH1D *h_blcb_drift[conf.num_of_ch.at("blc")];
     for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++ ) {
-        h_blca_tdc[i] = (TH1D*)f->Get(Form("BLC%sa_CTDC_plane%d_%s", in_or_out.Data(), i, particle.Data()));
-        h_blcb_tdc[i] = (TH1D*)f->Get(Form("BLC%sb_CTDC_plane%d_%s", in_or_out.Data(), i, particle.Data()));
+        h_blca_drift[i] = (TH1D*)f->Get(Form("BLC%sa_Hit_DriftTime_plane%d_%s", in_or_out.Data(), i, particle.Data()));
+        h_blcb_drift[i] = (TH1D*)f->Get(Form("BLC%sb_Hit_DriftTime_plane%d_%s", in_or_out.Data(), i, particle.Data()));
     }
  
     // +--------------+
@@ -102,11 +104,12 @@ void analyze(TString path, TString particle){
     Int_t nth_pad = 1;
     Int_t rows = 2, cols = 2;
     Int_t max_pads = rows * cols;
-    TString pdf_path = Form("%s/img/run%05d_BLC%s_TDC_%s.pdf", OUTPUT_DIR.Data(), run_num, in_or_out.Data(), particle.Data());
+    TString pdf_path = Form("%s/img/run%05d_BLC%s_DRIFT_%s.pdf", OUTPUT_DIR.Data(), run_num, in_or_out.Data(), particle.Data());
 
     // -- container -----
-    std::vector<FitResult> blca_tdc;
-    std::vector<FitResult> blcb_tdc;
+    std::vector<TGraph*> blca_drift;
+    std::vector<TGraph*> blcb_drift;
+
 
     auto c_blc = new TCanvas("blc", "", 1500, 1200);
     c_blc->Divide(cols, rows);
@@ -120,12 +123,14 @@ void analyze(TString path, TString particle){
             nth_pad = 1;
         }
 
-        FitResult result = ana_helper::dc_tdc_fit(h_blca_tdc[i], c_blc, nth_pad);
-        blca_tdc.push_back(result);
+        conf.detector = Form("BLC%sa", in_or_out.Data());
+        TGraph* ga = ana_helper::make_drift_function(h_blca_drift[i], c_blc, nth_pad, i);
+        blca_drift.push_back(ga);
         nth_pad++;
 
-        result = ana_helper::dc_tdc_fit(h_blcb_tdc[i], c_blc, nth_pad);
-        blcb_tdc.push_back(result);
+        conf.detector = Form("BLC%sb", in_or_out.Data());
+        TGraph* gb = ana_helper::make_drift_function(h_blcb_drift[i], c_blc, nth_pad, i);
+        blca_drift.push_back(gb);
         nth_pad++;
     }
     c_blc->Print(pdf_path);
@@ -135,29 +140,22 @@ void analyze(TString path, TString particle){
     // +-------+
     // | Write |
     // +-------+
-    TTree* tree = new TTree("tree", "");
-    Int_t ch;
-    std::vector<Double_t> tdc_p0_val; 
-    std::vector<Double_t> tdc_p0_err; 
-    tree->Branch("ch", &ch, "ch/I");
-    tree->Branch("tdc_p0_val", &tdc_p0_val);
-    tree->Branch("tdc_p0_err", &tdc_p0_err);
-    for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++) {
-        ch = i;
-        tdc_p0_val.clear();
-        tdc_p0_err.clear();
-    
-        // -- tdc -----
-        tdc_p0_val.push_back(blca_tdc[i].par[1]);
-        tdc_p0_val.push_back(blcb_tdc[i].par[1]);
-        tdc_p0_err.push_back(blca_tdc[i].err[1]);
-        tdc_p0_err.push_back(blcb_tdc[i].err[1]);
-    
-        tree->Fill();
-    }    
-    
     fout->cd();
-    tree->Write();
+
+    // メタ情報: datetime
+    TDatime now;
+    TString datetime = now.AsString();
+    TNamed dt_named("datetime", datetime.Data());
+    dt_named.Write();
+
+    // メタ情報: reference = 入力ファイル名
+    TNamed ref_named("reference", path.Data());
+    ref_named.Write();
+    
+    for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++) {
+        blca_drift[i]->Write();
+        blcb_drift[i]->Write();
+    }
     fout->Close(); 
 }
 

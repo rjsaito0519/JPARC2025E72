@@ -56,4 +56,71 @@ namespace ana_helper {
 
         return result;
     }
+
+    // ____________________________________________________________________________________________    
+    TGraph* make_drift_function(TH1D *h, TCanvas *c, Int_t n_c, Int_t plane)
+    {
+        Config& conf = Config::getInstance();
+        if (!h) return nullptr;
+        c->cd(n_c);
+    
+        Double_t max_dt = conf.max_drift_time.at(conf.detector.Data()); // ns
+        Double_t max_dl = conf.max_drift_length.at(conf.detector.Data()); // mm
+
+        // 積分範囲を決める
+        Int_t bin_min = h->FindBin(-1.0);    // -1 ns 付近
+        Int_t bin_max = h->FindBin(max_dt);  // max_dt ns 付近
+
+        Double_t entry = h->Integral(bin_min, bin_max);
+        if (entry <= 0) {
+            std::cerr << "Integral is zero for " << h->GetName() << std::endl;
+            return nullptr;
+        }
+
+        std::vector<Double_t> dt;
+        std::vector<Double_t> dl;
+        dt.reserve(bin_max - bin_min + 1);
+        dl.reserve(bin_max - bin_min + 1);
+
+        for (Int_t bin = bin_min; bin <= bin_max; ++bin) {
+            Double_t integral = h->Integral(bin_min, bin);
+            Double_t t = h->GetBinCenter(bin);      // Drift Time
+            Double_t L = max_dl * integral / entry; // Drift Length (max_dl に正規化)
+
+            dt.push_back(t);
+            dl.push_back(L);
+        }
+
+        Int_t npoints = dt.size();
+        if (npoints == 0) {
+            std::cerr << "No points for graph of " << h->GetName() << std::endl;
+            return nullptr;
+        }
+
+        // TGraph のコンストラクタは double* を要求するので data() を渡す
+        TGraph* g = new TGraph(npoints, dt.data(), dl.data());
+
+        // 名前とタイトルを設定
+        TString hname = h->GetName();
+        TString gname = hname;
+        gname.ReplaceAll("DriftTime", "DriftFunction");  // 名前の一部を置き換え
+
+        TString gtitle;
+        gtitle.Form("DriftFunction %s plane%d;Drift Time [ns];Drift Length [mm]", conf.detector.Data(), plane);
+
+        g->SetName(gname);
+        g->SetTitle(gtitle);
+
+        // 軸範囲などのスタイル
+        g->GetXaxis()->SetTitleOffset(1.1);
+        g->GetXaxis()->SetLimits(-0.1 * max_dt, 1.2 * max_dt);
+        g->GetYaxis()->SetRangeUser(-0.1 * max_dl, 1.2 * max_dl);
+        g->SetMarkerStyle(8);
+        g->SetMarkerSize(0.4);
+
+        g->Draw("APC");
+
+        return g;
+    }
+
 }

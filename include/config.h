@@ -30,6 +30,22 @@ public:
         { "blc",  8 },
     };
 
+    // 検出器ごとの MaxDriftTime [ns]
+    std::unordered_map<std::string, Double_t> max_drift_time = {
+        {"BLC1a", 200.0},
+        {"BLC1b", 200.0},
+        {"BLC2a", 200.0},
+        {"BLC2b", 200.0},
+    };
+
+    // 検出器ごとの MaxDriftLength [mm]
+    std::unordered_map<std::string, Double_t> max_drift_length = {
+        {"BLC1a", 4.0},
+        {"BLC1b", 4.0},
+        {"BLC2a", 2.5},
+        {"BLC2b", 2.5},
+    };
+
     std::unordered_map<std::string, std::pair<Double_t, Double_t>> tdc_search_range{
         { "bht", {0.0, 0.0} },
         {  "t0", {0.0, 0.0} },

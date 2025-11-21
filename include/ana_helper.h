@@ -28,6 +28,7 @@
 #include <TProfile.h>
 #include <TRandom3.h>
 #include <TKDE.h>
+#include <TGraph.h> 
 
 #include "config.h"
 
@@ -55,6 +56,7 @@ namespace ana_helper {
 
     // -- dcana -----
     FitResult dc_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
+    TGraph* make_drift_function(TH1D *h, TCanvas *c, Int_t n_c, Int_t plane);
 }
 
 #endif  // ANA_HELPER_
