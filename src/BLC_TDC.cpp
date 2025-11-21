@@ -143,8 +143,8 @@ void analyze(TString path, TString particle){
         tdc_p0_val.clear();
     
         // -- tdc -----
-        tdc_p0_val.push_back(blca_tdc[i].additional[1]);
-        tdc_p0_val.push_back(blcb_tdc[i].additional[1]);
+        tdc_p0_val.push_back(blca_tdc[i].additional[0]);
+        tdc_p0_val.push_back(blcb_tdc[i].additional[0]);
     
         tree->Fill();
     }    
