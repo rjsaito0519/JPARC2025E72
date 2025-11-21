@@ -21,7 +21,7 @@ import shutil
 import conf
 SUB_DIR = "e72"
 for param_type in ["conf", "USER", "HDPRM", "HDPHC", "DCTDC", "DCDRFT"]:
-    target_dir = os.path.join(conf.analyzer_dir, "param", SUB_DIR, param_type)
+    target_dir = os.path.join(conf.analyzer_dir, "param", param_type, SUB_DIR)
     os.makedirs(target_dir, exist_ok=True)
 
 prefix = "dc" if args.dc else "hodo"
