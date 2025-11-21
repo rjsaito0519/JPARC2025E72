@@ -122,7 +122,7 @@ void analyze(TString path, TString particle){
         blca_tdc.push_back(result);
         nth_pad++;
 
-        FitResult result = ana_helper::dc_tdc_fit(h_blcb_tdc[i], c_blc, nth_pad);
+        result = ana_helper::dc_tdc_fit(h_blcb_tdc[i], c_blc, nth_pad);
         blcb_tdc.push_back(result);
         nth_pad++;
     }
