@@ -31,7 +31,7 @@ namespace ana_helper {
         result.ndf        = fit_f->GetNDF();
 
         // 数値的に解を求めるためのRootFinderの設定, t0の値を調べる
-        Double_t target_value_ratio = 0.01;
+        Double_t target_value_ratio = 0.0001;
         Double_t target_value = 2.0*result.par[0] * target_value_ratio;
         ROOT::Math::RootFinder rootFinder(ROOT::Math::RootFinder::kBRENT);
         ROOT::Math::Functor1D erfc_func([=](Double_t x) { return result.par[0]*TMath::Erfc( (x-result.par[1])/result.par[2] ) - target_value; });
@@ -39,6 +39,7 @@ namespace ana_helper {
         Bool_t is_success = rootFinder.Solve();
         Double_t t0 = is_success ? rootFinder.Root() : 0.0;
         result.additional.push_back(t0);
+        std::cout << t0 << ", " << result.par[1] - 2*result.par[2] << std::endl;
 
         // draw
         h->GetXaxis()->SetRangeUser(fit_range_min - tdc_width/2.0, fit_range_max);
