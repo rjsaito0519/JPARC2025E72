@@ -22,11 +22,18 @@ import conf
 prefix = "dc" if args.dc else "hodo"
 set1 = set(args.suffix)
 set2 = set(["0", "Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"])
+set3 = set(["0", "Pi_tdc", "K_tdc", "Pi_drift", "K_drift"])
 
-common_elements = set1.difference(set2)
-if common_elements or len(set1) == 0:
-    print("please input correct suffix: 0, Pi/K_hdprm, Pi/K_t0, Pi/K_hdphc")
-    sys.exit()
+if prefix == "hodo":
+    common_elements = set1.difference(set2)
+    if common_elements or len(set1) == 0:
+        print("please input correct suffix: 0, Pi/K_hdprm, Pi/K_t0, Pi/K_hdphc")
+        sys.exit()
+elif prefix == "dc":
+    common_elements = set1.difference(set3)
+    if common_elements or len(set1) == 0:
+        print("please input correct suffix: 0, Pi/K_tdc, Pi/K_drift")
+        sys.exit()
 
 # -- write conf file  -----------------------------------
 for suffix in args.suffix:
@@ -54,9 +61,9 @@ for suffix in args.suffix:
                     target = f"param/HDPHC/{prefix}/HodoPHCParam_run{args.run_num:0=5}_{suffix_head}"
                     if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                         s_list[1] = target
-            # elif prefix == "dc":
-            #     if len(s_list) != 0 and s_list[0] == "DCTDC:" and suffix in ["Pi_1", "K_1", "Pi_2", "K_2", "Pi_3", "K_3"]:
-            #         s_list[1] = "param/DCTDC/DCTdcParam_run{:0=5}_{}".format(args.run_num, suffix[:suffix.find("_")])
+            elif prefix == "dc":
+                if len(s_list) != 0 and s_list[0] == "DCTDC:" and suffix in ["Pi_tdc", "K_tdc", "Pi_drift", "K_drift"]:
+                    s_list[1] = f"param/DCTDC/{prefix}/DCTdcParam_run{args.run_num:0=5}_{suffix_head}"
             buf.append(s_list)
 
     with open(conf_target_file, mode='w') as f:
@@ -81,11 +88,18 @@ with open(runlist_target_file) as f:
                 buf.append([f"run{args.run_num:0=5}_{suffix}:"])                    
                 if prefix == "hodo":
                     buf.append(["  bin: ./bin/Hodoscope"])
+                    buf.append([f"  conf: ./param/conf/{prefix}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
+                    buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
+                    buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}/{prefix}_run{args.run_num:0=5}_{suffix}.root"))])
                 elif prefix == "dc":
+                    buf.append(["  bin: ./bin/BcInTracking"])
+                    buf.append([f"  conf: ./param/conf/{prefix}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
+                    buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
+                    buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}/{prefix}_in_run{args.run_num:0=5}_{suffix}.root"))])
                     buf.append(["  bin: ./bin/BcOutTracking"])
-                buf.append([f"  conf: ./param/conf/{prefix}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
-                buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
-                buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}/{prefix}_run{args.run_num:0=5}_{suffix}.root"))])
+                    buf.append([f"  conf: ./param/conf/{prefix}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
+                    buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
+                    buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}/{prefix}_out_run{args.run_num:0=5}_{suffix}.root"))])
             break
         else:
             buf.append(s_list)
