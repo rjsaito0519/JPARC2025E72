@@ -58,7 +58,7 @@ if not os.path.isfile(hdphc_target_file):
 dctdc_dir = f"{conf.param_dir}/DCTDC"
 dctdc_target_file = f"{dctdc_dir}/{SUB_DIR}/DCTdcParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(dctdc_target_file):
-    shutil.copy(f"{dctdc_dir}/DCTdcParam_01928", dctdc_target_file)
+    shutil.copy(f"{dctdc_dir}/DCTdcParam_1", dctdc_target_file)
 
 # update param file
 # ---------------------------------------------------------------------------
