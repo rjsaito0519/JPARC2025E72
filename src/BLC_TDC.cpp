@@ -136,20 +136,16 @@ void analyze(TString path, TString particle){
     TTree* tree = new TTree("tree", "");
     Int_t ch;
     std::vector<Double_t> tdc_p0_val; 
-    std::vector<Double_t> tdc_p0_err; 
     tree->Branch("ch", &ch, "ch/I");
     tree->Branch("tdc_p0_val", &tdc_p0_val);
-    tree->Branch("tdc_p0_err", &tdc_p0_err);
     for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++) {
         ch = i;
         tdc_p0_val.clear();
         tdc_p0_err.clear();
     
         // -- tdc -----
-        tdc_p0_val.push_back(blca_tdc[i].par[1]);
-        tdc_p0_val.push_back(blcb_tdc[i].par[1]);
-        tdc_p0_err.push_back(blca_tdc[i].err[1]);
-        tdc_p0_err.push_back(blcb_tdc[i].err[1]);
+        tdc_p0_val.push_back(blca_tdc[i].additional[1]);
+        tdc_p0_val.push_back(blcb_tdc[i].additional[1]);
     
         tree->Fill();
     }    
