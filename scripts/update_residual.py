@@ -2,8 +2,8 @@ import uproot
 import sys
 
 detector_id_list = {
-    "BLC1": 101, # (1a: 101, 1b: 102)
-    "BLC2": 103, # (1a: 103, 1b: 104)
+    "BLC1": None,
+    "BLC2": 1001,
 }
 
 # -- prepare HDPRM data  -----------------------------------
@@ -16,22 +16,24 @@ def make_dictdata(root_file_path):
         detector_id = detector_id_list["BLC1"]
     elif "BLC2" in root_file_path:
         detector_id = detector_id_list["BLC2"]
+        # mu_value = -1.0 * (Mean - ref_off)
 
     if detector_id == -1:
         print("something wrong")
         sys.exit()
 
     data = dict()
+    ref_offset = tree["tdc_p0_val"][0][0]
     for i in range(len(tree["tdc_p0_val"])):
-        # Cid - Plid - WireId
-        ch = tree["ch"][i]
+        # id
+        id = detector_id + tree["ch"][i]
         for WireId in range(32):
             # -- TDC BLCa -----
-            key = f"{detector_id}-{ch:.0f}-{WireId:.0f}"
-            data[key] = [ tree["tdc_p0_val"][i][0], -0.8333333333 ]
+            key = f"{detector_id}"
+            data[key] = [ -1.0*(tree["tdc_p0_val"][i][0] - ref_offset) ]
             # -- TDC BLCb -----
-            key = f"{detector_id+1}-{ch:.0f}-{WireId:.0f}"
-            data[key] = [ tree["tdc_p0_val"][i][1], -0.8333333333 ]
+            key = f"{detector_id+8}"
+            data[key] = [ -1.0*(tree["tdc_p0_val"][i][0] - ref_offset) ]
 
     return data
 # ---------------------------------------------------------------------------
@@ -43,15 +45,8 @@ def update_file(target_file, data):
     with open(target_file) as f:
         for line in f:
             s_list = line.split()
-            # key structure
-            # Cid - Plid - WireId
-            key_length = 3
-            key = s_list[0]
-            for i in range(1, key_length):
-                key += "-"+s_list[i]
-            if key in data.keys():
-                for i in range(len(data[key])):
-                    s_list[i+key_length] = data[key][i]
+            if len(s_list) != 0 and s_list[0] in data.keys():
+                s_list[12] = data[s_list[0]][0]
                 n_update += 1               
             buf.append(s_list)
 
