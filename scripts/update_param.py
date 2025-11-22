@@ -19,7 +19,7 @@ if args.suffix not in ["K", "Pi"]:
     print("suffix should be K or Pi")
     sys.exit()
 
-if args.param_type not in ["hdprm", "t0", "hdphc", "dctdc" "residual"]:
+if args.param_type not in ["hdprm", "t0", "hdphc", "dctdc", "residual"]:
     print("param_type should be hdprm or t0 or hdphc or dctdc or residual")
     sys.exit()
 
