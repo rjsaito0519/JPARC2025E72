@@ -66,8 +66,8 @@ def get_initial_params_phc(CId, PlId, SegId, UorD):
     elif CId == 11:
         if UorD == 0:
             p0 = 0
-            p1 = None
-            p2 = None
+            p1 = 0
+            p2 = 0
             
     # 他のCId (4, 6, 14, 29, 30, 31, 32, 33) は
     # デフォルトの (0.0, 0.0, 0.0) が使われます。
