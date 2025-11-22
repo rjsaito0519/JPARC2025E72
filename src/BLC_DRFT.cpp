@@ -122,13 +122,17 @@ void analyze(TString path, TString particle){
             nth_pad = 1;
         }
 
+        c_blc->cd(nth_pad);
+        h_blca_drift[i]->Draw();
         conf.detector = Form("BLC%sa", in_or_out.Data());
-        TGraph* ga = ana_helper::make_drift_function(h_blca_drift[i], c_blc, nth_pad, i);
+        TGraph* ga = ana_helper::make_drift_function(h_blca_drift[i], c_blc, ++nth_pad, i);
         blca_drift.push_back(ga);
         nth_pad++;
 
+        c_blc->cd(nth_pad);
+        h_blcb_drift[i]->Draw();
         conf.detector = Form("BLC%sb", in_or_out.Data());
-        TGraph* gb = ana_helper::make_drift_function(h_blcb_drift[i], c_blc, nth_pad, i);
+        TGraph* gb = ana_helper::make_drift_function(h_blcb_drift[i], c_blc, ++nth_pad, i);
         blcb_drift.push_back(gb);
         nth_pad++;
     }
