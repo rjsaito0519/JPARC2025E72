@@ -81,8 +81,15 @@ void analyze(TString path, TString particle){
     // | prepare output root file |
     // +--------------------------+
     TString output_path = Form("%s/param/DCDRFT/e72/DCDriftParam_run%05d_%s.root", ANALYZER_DIR.Data(), run_num, particle.Data());
-    if (std::ifstream(output_path.Data())) std::remove(output_path.Data());
-    TFile* fout = new TFile(output_path.Data(), "RECREATE");
+    TFile* fout = TFile::Open(output_path.Data(), "UPDATE");
+    if (!fout || fout->IsZombie()) {
+        delete fout; // just in case
+        fout = TFile::Open(output_path.Data(), "RECREATE");
+        std::cout << "Create new file: " << output_path << std::endl;
+    } else {
+        std::cout << "Update existing file: " << output_path << std::endl;
+    }
+
 
     // +-------------------+
     // | prepare histogram |
@@ -145,21 +152,24 @@ void analyze(TString path, TString particle){
     // +-------+
     fout->cd();
 
-    // メタ情報: datetime
+    // datetime
     TDatime now;
     TString datetime = now.AsString();
-    TNamed dt_named("datetime", datetime.Data());
-    dt_named.Write();
+    TNamed("datetime", datetime.Data()).Write("", TObject::kOverwrite);
 
-    // メタ情報: reference = 入力ファイル名
-    TNamed ref_named("reference", path.Data());
-    ref_named.Write();
-    
-    for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++) {
-        blca_drift[i]->Write();
-        blcb_drift[i]->Write();
+    // reference
+    TNamed(Form("reference%s", in_or_out), input_root_filename).Write("", TObject::kOverwrite);
+
+    // グラフの書き込み
+    for (auto* g : blca_drift) {
+        if (!g) continue;
+        g->Write("", TObject::kOverwrite);
     }
-    fout->Close(); 
+    for (auto* g : blcb_drift) {
+        if (!g) continue;
+        g->Write("", TObject::kOverwrite);
+    }
+    fout->Close();
 }
 
 Int_t main(int argc, char** argv) {
@@ -176,7 +186,6 @@ Int_t main(int argc, char** argv) {
         return 1;
     }
 
-    conf.detector = "t0";
     analyze(path, particle);
     return 0;
 }

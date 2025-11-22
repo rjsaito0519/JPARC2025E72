@@ -147,7 +147,7 @@ Int_t main(int argc, char** argv) {
         return 1;
     }
 
-    conf.detector = "t0";
+    conf.detector = "bh2";
     analyze(path, particle);
     return 0;
 }

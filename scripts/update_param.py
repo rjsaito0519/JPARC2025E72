@@ -111,6 +111,11 @@ elif args.param_type == "hdphc":
 
 
 elif args.param_type == "dctdc":
+    # -- BLC1 -----
+    data = update_dctdc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BLC1_TDC_{args.suffix}.root"))
+    do_succeeded = update_dctdc.update_file(dctdc_target_file, data)
+    report_status(do_succeeded, "BLC1")
+    
     # -- BLC2 -----
     data = update_dctdc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BLC2_TDC_{args.suffix}.root"))
     do_succeeded = update_dctdc.update_file(dctdc_target_file, data)
