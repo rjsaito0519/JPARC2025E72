@@ -73,6 +73,10 @@ for suffix in args.suffix:
                 target = f"param/DCDRFT/{SUB_DIR}/DCDriftParam_run{args.run_num:0=5}_{suffix_head}.root"
                 if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
                     s_list[1] = target
+            if len(s_list) != 0 and s_list[0] == "DCGEO:":
+                target = f"param/DCGEO/{SUB_DIR}/DCGeomParam_run{args.run_num:0=5}_{suffix_head}"
+                if os.path.isfile(os.path.join(conf.analyzer_dir, target)):  
+                    s_list[1] = target
             buf.append(s_list)
 
     with open(conf_target_file, mode='w') as f:
