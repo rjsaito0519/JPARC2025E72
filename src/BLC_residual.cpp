@@ -130,7 +130,7 @@ void analyze(TString path, TString particle){
         h_blca_XT[i]->Draw("colz");
         nth_pad++;
 
-        result = ana_helper::residual_fit(h_blcb_residual[i], c_blc, ++nth_pad);
+        result = ana_helper::residual_fit(h_blcb_residual[i], c_blc, nth_pad);
         blcb_residual.push_back(result);
         nth_pad++;
         c_blc->cd(nth_pad);
