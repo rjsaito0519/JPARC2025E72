@@ -125,13 +125,17 @@ void analyze(TString path, TString particle){
 
         FitResult result = ana_helper::residual_fit(h_blca_residual[i], c_blc, nth_pad);
         blca_residual.push_back(result);
-        c_blc->cd(++nth_pad);
+        nth_pad++;
+        c_blc->cd(nth_pad);
         h_blca_XT[i]->Draw("colz");
+        nth_pad++;
 
         result = ana_helper::residual_fit(h_blcb_residual[i], c_blc, ++nth_pad);
         blcb_residual.push_back(result);
-        c_blc->cd(++nth_pad);
+        nth_pad++;
+        c_blc->cd(nth_pad);
         h_blcb_XT[i]->Draw("colz");
+        nth_pad++;
     }
     c_blc->Print(pdf_path);
     c_blc->Print(pdf_path + "]"); // end
