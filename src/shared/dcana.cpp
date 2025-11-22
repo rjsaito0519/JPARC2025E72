@@ -101,8 +101,7 @@ namespace ana_helper {
         TGraph* g = new TGraph(npoints, dt.data(), dl.data());
 
         // 名前とタイトルを設定
-        TString hname = h->GetName();
-        TString gname = hname;
+        TString gname = Form("%s_Hit_DriftFunction_plane%d", conf.detector.Data(), plane);
         gname.ReplaceAll("DriftTime", "DriftFunction");  // 名前の一部を置き換え
 
         TString gtitle;
