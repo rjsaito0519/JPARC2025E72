@@ -159,7 +159,7 @@ void analyze(TString path, TString particle){
 
     // reference
     TString ref_key = Form("reference_%s", in_or_out.Data());
-    TNamed(ref_key, path.Data()).Write("", TObject::kOverwrite);
+    TNamed(ref_key.Data(), path.Data()).Write("", TObject::kOverwrite);
 
     // グラフの書き込み
     for (auto* g : blca_drift) {
