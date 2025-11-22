@@ -19,8 +19,8 @@ if args.suffix not in ["K", "Pi"]:
     print("suffix should be K or Pi")
     sys.exit()
 
-if args.param_type not in ["hdprm", "t0", "hdphc", "dctdc"]:
-    print("param_type should be hdprm or t0 or hdphc or dctdc")
+if args.param_type not in ["hdprm", "t0", "hdphc", "dctdc" "dcgeo"]:
+    print("param_type should be hdprm or t0 or hdphc or dctdc or dcgeo")
     sys.exit()
 
 import os
@@ -37,6 +37,7 @@ import update_hdprm
 import update_phc
 import phc_conf
 import update_dctdc
+import update_residual
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # prepare param file
@@ -59,6 +60,11 @@ dctdc_dir = f"{conf.param_dir}/DCTDC"
 dctdc_target_file = f"{dctdc_dir}/{SUB_DIR}/DCTdcParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(dctdc_target_file):
     shutil.copy(f"{dctdc_dir}/DCTdcParam_1", dctdc_target_file)
+
+dcgeo_dir = f"{conf.param_dir}/DCGEO"
+dcgeo_target_file = f"{dcgeo_dir}/{SUB_DIR}/DCGeomParam_run{args.run_num:0=5}_{args.suffix}"
+if not os.path.isfile(dcgeo_target_file):
+    shutil.copy(f"{dcgeo_dir}/DCGeomParam_e72_20251120", dcgeo_target_file)
 
 # update param file
 # ---------------------------------------------------------------------------
@@ -120,3 +126,15 @@ elif args.param_type == "dctdc":
     data = update_dctdc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BLC2_TDC_{args.suffix}.root"))
     do_succeeded = update_dctdc.update_file(dctdc_target_file, data)
     report_status(do_succeeded, "BLC2")
+
+elif args.param_type == "dcgeo":
+    # # -- BLC1 -----
+    # data = update_dctdc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BLC1_TDC_{args.suffix}.root"))
+    # do_succeeded = update_dctdc.update_file(dctdc_target_file, data)
+    # report_status(do_succeeded, "BLC1")
+    
+    # -- BLC2 -----
+    data = update_residual.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BLC2_residual_{args.suffix}.root"))
+    do_succeeded = update_residual.update_file(dcgeo_target_file, data)
+    report_status(do_succeeded, "BLC2")
+
