@@ -11,6 +11,7 @@ DETECTOR_CONFIG = {
      3: 15, # CId 3 BH2
      5: 34, # CId 5 HTOF
      8: 8,  # CId 8 CVC
+     11: 8  # CId 11 COBO
 }
 
 # PlIdのリスト (今回は [0] で固定)
@@ -18,7 +19,8 @@ PLID_LIST = [0]
 
 # ★ CIdごとに UorD のリストを定義します。
 UORD_LIST_BY_CID = {
-    "default": [0, 1] 
+    "default": [0, 1],
+    11 : [0]
 }
 
 # Type と nParam の固定値
@@ -60,6 +62,12 @@ def get_initial_params_phc(CId, PlId, SegId, UorD):
             p0 = 2.0
             p1 = 0.0
             p2 = 2.0
+        
+    elif CId == 11:
+        if UorD == 0:
+            p0 = 0
+            p1 = None
+            p2 = None
             
     # 他のCId (4, 6, 14, 29, 30, 31, 32, 33) は
     # デフォルトの (0.0, 0.0, 0.0) が使われます。

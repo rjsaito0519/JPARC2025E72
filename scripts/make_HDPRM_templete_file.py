@@ -17,6 +17,7 @@ DETECTOR_CONFIG = {
      8: 8,  # CId 8 CVC
      9: 1,  # CId 9 SAC3
     10: 5,  # CId 10 SFV
+    11: 8   # CId 11 COBO
 }
 
 # PlIdのリスト (今回は [0] で固定)
@@ -30,6 +31,8 @@ AT_UD_COMBINATIONS_BY_CID = {
      3: [(1, 0), (1, 1), (1, 2), (0, 0), (0, 1)],
 
     10: [(1, 0), (1, 1)],
+
+    11: [(1, 0)],
 }
 
 def get_initial_params(CId, PlId, SegId, AorT, UorD):
