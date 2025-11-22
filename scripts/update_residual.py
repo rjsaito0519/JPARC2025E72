@@ -32,7 +32,7 @@ def make_dictdata(root_file_path):
         data[key] = [ ref_offset - tree["residual_p0_val"][i][0] ]
         # -- TDC BLCb -----
         key = f"{detector_id+i+8}"
-        data[key] = [ ref_offset - tree["residual_p0_val"][i][0] ]
+        data[key] = [ ref_offset - tree["residual_p0_val"][i][1] ]
 
     return data
 # ---------------------------------------------------------------------------
