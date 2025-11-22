@@ -27,13 +27,12 @@ def make_dictdata(root_file_path):
     for i in range(len(tree["residual_p0_val"])):
         # id
         id = detector_id + tree["ch"][i]
-        for WireId in range(32):
-            # -- TDC BLCa -----
-            key = f"{detector_id}"
-            data[key] = [ -1.0*(tree["residual_p0_val"][i][0] - ref_offset) ]
-            # -- TDC BLCb -----
-            key = f"{detector_id+8}"
-            data[key] = [ -1.0*(tree["residual_p0_val"][i][0] - ref_offset) ]
+        # -- TDC BLCa -----
+        key = f"{detector_id}"
+        data[key] = [ -1.0*(tree["residual_p0_val"][i][0] - ref_offset) ]
+        # -- TDC BLCb -----
+        key = f"{detector_id+8}"
+        data[key] = [ -1.0*(tree["residual_p0_val"][i][1] - ref_offset) ]
 
     return data
 # ---------------------------------------------------------------------------
