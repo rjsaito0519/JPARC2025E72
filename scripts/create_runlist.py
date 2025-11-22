@@ -101,15 +101,15 @@ with open(runlist_target_file) as f:
                     buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
                     buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}_run{args.run_num:0=5}_{suffix}.root"))])
                 elif prefix == "dc":
-                    # buf.append(["  bin: ./bin/BcInTracking"])
-                    # buf.append([f"  conf: ./param/conf/{SUB_DIR}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
-                    # buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
-                    # buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}_in_run{args.run_num:0=5}_{suffix}.root"))])
-                    # buf.append([f"run{args.run_num:0=5}_{suffix}_out:"])
-                    buf.append(["  bin: ./bin/BcOutTracking"])
+                    buf.append(["  bin: ./bin/BcInTracking"])
                     buf.append([f"  conf: ./param/conf/{SUB_DIR}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
                     buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
-                    buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}_out_run{args.run_num:0=5}_{suffix}.root"))])
+                    buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}_in_run{args.run_num:0=5}_{suffix}.root"))])
+                    # buf.append([f"run{args.run_num:0=5}_{suffix}_out:"])
+                    # buf.append(["  bin: ./bin/BcOutTracking"])
+                    # buf.append([f"  conf: ./param/conf/{SUB_DIR}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
+                    # buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
+                    # buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}_out_run{args.run_num:0=5}_{suffix}.root"))])
             break
         else:
             buf.append(s_list)
