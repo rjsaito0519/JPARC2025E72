@@ -28,10 +28,10 @@ def make_dictdata(root_file_path):
         # id
         id = detector_id + tree["ch"][i]
         # -- TDC BLCa -----
-        key = f"{detector_id}"
+        key = f"{detector_id+i}"
         data[key] = [ -1.0*(tree["residual_p0_val"][i][0] - ref_offset) ]
         # -- TDC BLCb -----
-        key = f"{detector_id+8}"
+        key = f"{detector_id+i+8}"
         data[key] = [ -1.0*(tree["residual_p0_val"][i][1] - ref_offset) ]
 
     return data
