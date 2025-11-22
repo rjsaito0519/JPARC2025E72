@@ -19,8 +19,8 @@ if args.suffix not in ["K", "Pi"]:
     print("suffix should be K or Pi")
     sys.exit()
 
-if args.param_type not in ["hdprm", "t0", "hdphc", "dctdc" "dcgeo"]:
-    print("param_type should be hdprm or t0 or hdphc or dctdc or dcgeo")
+if args.param_type not in ["hdprm", "t0", "hdphc", "dctdc" "residual"]:
+    print("param_type should be hdprm or t0 or hdphc or dctdc or residual")
     sys.exit()
 
 import os
@@ -127,7 +127,7 @@ elif args.param_type == "dctdc":
     do_succeeded = update_dctdc.update_file(dctdc_target_file, data)
     report_status(do_succeeded, "BLC2")
 
-elif args.param_type == "dcgeo":
+elif args.param_type == "residual":
     # # -- BLC1 -----
     # data = update_dctdc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_BLC1_TDC_{args.suffix}.root"))
     # do_succeeded = update_dctdc.update_file(dctdc_target_file, data)
