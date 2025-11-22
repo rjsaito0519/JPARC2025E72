@@ -57,6 +57,7 @@ namespace ana_helper {
     // -- dcana -----
     FitResult dc_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
     TGraph* make_drift_function(TH1D *h, TCanvas *c, Int_t n_c, Int_t plane);
+    FitResult residual_fit(TH1D *h, TCanvas *c, Int_t n_c); // same as t0 offset fit
 }
 
 #endif  // ANA_HELPER_

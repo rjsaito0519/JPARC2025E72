@@ -158,7 +158,7 @@ void analyze(TString path, TString particle){
     TNamed("datetime", datetime.Data()).Write("", TObject::kOverwrite);
 
     // reference
-    TNamed(Form("reference%s", in_or_out), input_root_filename).Write("", TObject::kOverwrite);
+    TNamed(Form("reference%s", in_or_out), path.Data()).Write("", TObject::kOverwrite);
 
     // グラフの書き込み
     for (auto* g : blca_drift) {

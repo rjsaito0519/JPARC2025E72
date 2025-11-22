@@ -78,7 +78,7 @@ void analyze(TString path, TString particle){
     // +--------------------------+
     // | prepare output root file |
     // +--------------------------+
-    TString output_path = Form("%s/root/run%05d_BLC%s_TDC_%s.root", OUTPUT_DIR.Data(), run_num, in_or_out.Data(), particle.Data());
+    TString output_path = Form("%s/root/run%05d_BLC%s_residual_%s.root", OUTPUT_DIR.Data(), run_num, in_or_out.Data(), particle.Data());
     if (std::ifstream(output_path.Data())) std::remove(output_path.Data());
     TFile* fout = new TFile(output_path.Data(), "RECREATE");
 
@@ -86,11 +86,16 @@ void analyze(TString path, TString particle){
     // | prepare histogram |
     // +-------------------+    
     // -- tdc ----------
-    TH1D *h_blca_tdc[conf.num_of_ch.at("blc")];
-    TH1D *h_blcb_tdc[conf.num_of_ch.at("blc")];
+    // hname = f'{name}_Track_Residual{key}_plane{i}{mh.beamflag_for_param}' '_vs_DriftLength
+    TH1D *h_blca_residual[conf.num_of_ch.at("blc")];
+    TH1D *h_blcb_residual[conf.num_of_ch.at("blc")];
+    TH2D *h_blca_XT[conf.num_of_ch.at("blc")];
+    TH2D *h_blcb_XT[conf.num_of_ch.at("blc")];
     for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++ ) {
-        h_blca_tdc[i] = (TH1D*)f->Get(Form("BLC%sa_CTDC_plane%d_%s", in_or_out.Data(), i, particle.Data()));
-        h_blcb_tdc[i] = (TH1D*)f->Get(Form("BLC%sb_CTDC_plane%d_%s", in_or_out.Data(), i, particle.Data()));
+        h_blca_residual[i] = (TH1D*)f->Get(Form("BLC%sa_Track_Residual_plane%d_%s", in_or_out.Data(), i, particle.Data()));
+        h_blcb_residual[i] = (TH1D*)f->Get(Form("BLC%sb_Track_Residual_plane%d_%s", in_or_out.Data(), i, particle.Data()));
+        h_blca_XT[i] = (TH2D*)f->Get(Form("BLC%sa_Track_Residual_vs_DriftLength_plane%d_%s", in_or_out.Data(), i, particle.Data()));
+        h_blcb_XT[i] = (TH2D*)f->Get(Form("BLC%sb_Track_Residual_vs_DriftLength_plane%d_%s", in_or_out.Data(), i, particle.Data()));
     }
  
     // +--------------+
@@ -100,11 +105,11 @@ void analyze(TString path, TString particle){
     Int_t nth_pad = 1;
     Int_t rows = 2, cols = 2;
     Int_t max_pads = rows * cols;
-    TString pdf_path = Form("%s/img/run%05d_BLC%s_TDC_%s.pdf", OUTPUT_DIR.Data(), run_num, in_or_out.Data(), particle.Data());
+    TString pdf_path = Form("%s/img/run%05d_BLC%s_residual_%s.pdf", OUTPUT_DIR.Data(), run_num, in_or_out.Data(), particle.Data());
 
     // -- container -----
-    std::vector<FitResult> blca_tdc;
-    std::vector<FitResult> blcb_tdc;
+    std::vector<FitResult> blca_residual;
+    std::vector<FitResult> blcb_residual;
 
     auto c_blc = new TCanvas("blc", "", 1500, 1200);
     c_blc->Divide(cols, rows);
@@ -118,13 +123,15 @@ void analyze(TString path, TString particle){
             nth_pad = 1;
         }
 
-        FitResult result = ana_helper::dc_tdc_fit(h_blca_tdc[i], c_blc, nth_pad);
-        blca_tdc.push_back(result);
-        nth_pad++;
+        FitResult result = ana_helper::residual_fit(h_blca_residual[i], c_blc, nth_pad);
+        blca_residual.push_back(result);
+        c_blc->cd(++nth_pad);
+        h_blca_XT[i]->Draw("colz");
 
-        result = ana_helper::dc_tdc_fit(h_blcb_tdc[i], c_blc, nth_pad);
-        blcb_tdc.push_back(result);
-        nth_pad++;
+        result = ana_helper::residual_fit(h_blcb_residual[i], c_blc, ++nth_pad);
+        blcb_residual.push_back(result);
+        c_blc->cd(++nth_pad);
+        h_blcb_XT[i]->Draw("colz");
     }
     c_blc->Print(pdf_path);
     c_blc->Print(pdf_path + "]"); // end
@@ -135,17 +142,23 @@ void analyze(TString path, TString particle){
     // +-------+
     TTree* tree = new TTree("tree", "");
     Int_t ch;
-    std::vector<Double_t> tdc_p0_val; 
+    std::vector<Double_t> residual_p0_val;
+    std::vector<Double_t> residual_p0_err;
     tree->Branch("ch", &ch, "ch/I");
-    tree->Branch("tdc_p0_val", &tdc_p0_val);
+    tree->Branch("residual_p0_val", &residual_p0_val);
+    tree->Branch("residual_p0_err", &residual_p0_err);
     for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++) {
         ch = i;
-        tdc_p0_val.clear();
+        residual_p0_val.clear();
+        residual_p0_err.clear();
     
-        // -- tdc -----
-        tdc_p0_val.push_back(blca_tdc[i].additional[0]);
-        tdc_p0_val.push_back(blcb_tdc[i].additional[0]);
-    
+        // -- residual -----
+        residual_p0_val.push_back(blca_residual[i].par[1]);
+        residual_p0_err.push_back(blca_residual[i].err[1]);
+
+        residual_p0_val.push_back(blcb_residual[i].par[1]);
+        residual_p0_err.push_back(blcb_residual[i].err[1]);
+
         tree->Fill();
     }    
     

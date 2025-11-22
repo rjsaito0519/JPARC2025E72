@@ -122,4 +122,65 @@ namespace ana_helper {
         return g;
     }
 
+    // ____________________________________________________________________________________________
+    FitResult residual_fit(TH1D *h, TCanvas *c, Int_t n_c)
+    {
+        Config& conf = Config::getInstance();
+
+        c->cd(n_c);
+        std::vector<Double_t> par, err;
+        TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
+        FitResult result;
+
+        Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
+        Double_t width    = h->GetStdDev();
+        std::pair<Double_t, Double_t> peak_n_sigma(2.0, 2.0);
+        
+        // -- first fit -----
+        Double_t lower = std::max(peak_pos-peak_n_sigma.first*width,  h->GetXaxis()->GetXmin());
+        Double_t upper = std::min(peak_pos+peak_n_sigma.second*width, h->GetXaxis()->GetXmax());
+        TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", lower, upper);
+        f_prefit->SetParameter(1, peak_pos);
+        f_prefit->SetParameter(2, width*0.9);
+        h->Fit(f_prefit, fit_option.Data(), "", lower, upper);
+        for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
+        delete f_prefit;
+
+        // -- second fit -----
+        lower = std::max(par[1]-peak_n_sigma.first*par[2],  h->GetXaxis()->GetXmin());
+        upper = std::min(par[1]+peak_n_sigma.second*par[2], h->GetXaxis()->GetXmax());
+        TF1 *f_fit = new TF1( Form("gaus_%s", h->GetName()), "gausn", lower, upper);
+        f_fit->SetParameter(0, par[0]);
+        f_fit->SetParameter(1, par[1]);
+        f_fit->SetParameter(2, par[2]*0.9);
+        f_fit->SetLineColor(kOrange);
+        f_fit->SetLineWidth(2);
+        f_fit->SetNpx(1000);
+        h->Fit(f_fit, fit_option.Data(), "", lower, upper);
+
+        // -- fill result -----
+        for (Int_t i = 0, n_par = f_fit->GetNpar(); i < n_par; i++) {
+            result.par.push_back(f_fit->GetParameter(i));
+            result.err.push_back(f_fit->GetParError(i));
+        }
+
+        // -- draw figure -----
+        h->GetXaxis()->SetRangeUser(
+            result.par[1] - 5.0*result.par[2], 
+            result.par[1] + 5.0*result.par[2]
+        );
+        h->Draw();
+        f_fit->Draw("same");
+
+        TLine *line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
+        line->SetLineStyle(2); // 点線に設定
+        line->SetLineColor(kRed); // 色を赤に設定
+        line->Draw("same");
+
+        c->Update();
+
+        return result;
+    }
+
+
 }
