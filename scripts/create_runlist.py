@@ -20,14 +20,14 @@ import os
 import shutil
 import conf
 SUB_DIR = "e72"
-for param_type in ["conf", "USER", "HDPRM", "HDPHC", "DCTDC", "DCDRFT"]:
+for param_type in ["conf", "USER", "HDPRM", "HDPHC", "DCTDC", "DCDRFT", "DCGEO"]:
     target_dir = os.path.join(conf.analyzer_dir, "param", param_type, SUB_DIR)
     os.makedirs(target_dir, exist_ok=True)
 
 prefix = "dc" if args.dc else "hodo"
 set1 = set(args.suffix)
 set2 = set(["0", "Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"])
-set3 = set(["0", "Pi_tdc", "K_tdc", "Pi_drift", "K_drift"])
+set3 = set(["0", "Pi_tdc", "K_tdc", "Pi_drift", "K_drift", "Pi_resi", "K_resi"])
 
 if prefix == "hodo":
     common_elements = set1.difference(set2)
@@ -37,7 +37,7 @@ if prefix == "hodo":
 elif prefix == "dc":
     common_elements = set1.difference(set3)
     if common_elements or len(set1) == 0:
-        print("please input correct suffix: 0, Pi/K_tdc, Pi/K_drift")
+        print("please input correct suffix: 0, Pi/K_tdc, Pi/K_drift, Pi/K_resi")
         sys.exit()
 
 # -- write conf file  -----------------------------------
