@@ -2,6 +2,7 @@
 
 # ---------------------------------------------------------------------------
 import argparse
+from curses.ascii import SUB
 parser = argparse.ArgumentParser(
     prog="set_tdc_window",
     usage="python3 set_tdc_window.py <rootfile_path> <counter_name>",
@@ -27,7 +28,9 @@ filename = os.path.basename(args.rootfile_path)
 index = filename.find("run")
 run_num = int(filename[index+3:index+8])
 
-user_param_dir = os.path.join(conf.analyzer_dir, "param", "USER", "hodo")
+SUB_DIR = "e72"
+
+user_param_dir = os.path.join(conf.analyzer_dir, "param", "USER", SUB_DIR)
 target_file = os.path.join(user_param_dir, f"UserParam_run{run_num:05d}")
 
 if not os.path.isfile(target_file):
@@ -62,6 +65,7 @@ num_of_ch = dict(
     HTOF = 34,
     T1 = 1,
     CVC = 8,
+    SFV = 1
 )
 
 # matplotlibのグラフを動的にする
@@ -256,7 +260,7 @@ elif args.counter_name in ["AC"]:
 
     plt.show()
 
-elif args.counter_name in ["BAC", "SAC"]:
+elif args.counter_name in ["BAC", "SAC", "SAC3", "SFV"]:
     hist_data = file["{}_TDC_seg{}U".format(args.counter_name, num_of_ch[args.counter_name])].to_numpy()
 
     bin_values = hist_data[0]
