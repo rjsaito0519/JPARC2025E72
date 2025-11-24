@@ -265,7 +265,7 @@ namespace ana_helper {
             // -- draw figure -----
             h->GetXaxis()->SetRangeUser(
                 result.par[1] - 10.0*result.par[2], 
-                result.par[4] +  5.0*conf.hdprm_typical_value.par[5]
+                result.par[4] + 10.0*conf.hdprm_typical_value.par[5]
             );
             h->Draw();
             TLatex* commnet = new TLatex();
