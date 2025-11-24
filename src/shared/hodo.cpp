@@ -256,6 +256,12 @@ namespace ana_helper {
             result.par.push_back(h->GetStdDev());
             result.err.push_back(h->GetStdDevError());
 
+            // -- draw figure -----
+            h->GetXaxis()->SetRangeUser(
+                result.par[1] - 10.0*result.par[2], 
+                result.par[4] +  5.0*result.par[2]
+            );
+            h->Draw();
             TLatex* commnet = new TLatex();
             commnet->SetNDC();  // NDC座標（0〜1の正規化）を使う
             commnet->SetTextSize(0.04);
@@ -263,7 +269,6 @@ namespace ana_helper {
         }
 
         f_fit_ped->Draw("same");
-
         TLine *ped_line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
         ped_line->SetLineStyle(2); // 点線に設定
         ped_line->SetLineColor(kRed); // 色を赤に設定
