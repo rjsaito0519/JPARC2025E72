@@ -171,7 +171,7 @@ namespace ana_helper {
             Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
             // Double_t mip_half_width   = 20.0;
             Double_t mip_half_width   = h->GetStdDev();
-            std::pair<Double_t, Double_t> mip_n_sigma(1.6, 2.0);
+            std::pair<Double_t, Double_t> mip_n_sigma(1.7, 2.0);
             h->GetXaxis()->UnZoom();
             
             // -- first fit -----
@@ -265,7 +265,7 @@ namespace ana_helper {
             // -- draw figure -----
             h->GetXaxis()->SetRangeUser(
                 result.par[1] - 10.0*result.par[2], 
-                result.par[4] +  5.0*result.par[2]
+                result.par[4] +  5.0*conf.hdprm_typical_value.par[5]
             );
             h->Draw();
             TLatex* commnet = new TLatex();
