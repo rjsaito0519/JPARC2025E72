@@ -178,7 +178,7 @@ def on_key(event):
 
 file = uproot.open(args.rootfile_path)
 
-if args.counter_name in ["BHT", "T0", "T1", "CVC", "NC", "BH2", "HTOF"]:
+if args.counter_name in ["BHT", "T0", "T1", "CVC", "NC", "BH2", "HTOF", "SAC3", "SFV"]:
     hist_data = file["{}_TDC_seg0U".format(args.counter_name)].to_numpy()
 
     bin_values_u = np.zeros_like(hist_data[0])
@@ -223,44 +223,7 @@ if args.counter_name in ["BHT", "T0", "T1", "CVC", "NC", "BH2", "HTOF"]:
 
     plt.show()
 
-elif args.counter_name in ["AC"]:
-    hist_data = file["{}_TDC_seg0".format(args.counter_name)].to_numpy()
-
-    bin_values = np.zeros_like(hist_data[0])
-    bin_edges = hist_data[1]
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
-    for i in range(num_of_ch[args.counter_name]):
-        hist_data = file["{}_TDC_seg{}".format(args.counter_name, i)].to_numpy()
-        bin_values += hist_data[0]
-        
-
-    fig = plt.figure(figsize=(8, 8))
-    fig.canvas.mpl_connect('button_press_event', on_click)
-    fig.canvas.mpl_connect('key_press_event', on_key)
-    ax = fig.add_subplot(111)
-
-    # プロット
-    ax.hist(bin_centers, bins=bin_edges, weights=bin_values, histtype='step')
-    ax.set_yscale("log")
-
-    if (args.check):
-        tdc_label = "{}_TDC".format(args.counter_name)
-        with open(target_file) as f:
-            for line in f:
-                s_list = line.split()                
-                if len(s_list) != 0:
-                    if s_list[0] == tdc_label:
-                        x_min = float(s_list[1])
-                        x_max = float(s_list[2])
-
-        y_min = 0
-        y_max = np.max(bin_values)
-        ax.fill_betweenx([y_min, y_max], x_min, x_max, color='gray', alpha=0.25)
-
-    plt.show()
-
-elif args.counter_name in ["BAC", "SAC", "SAC3", "SFV"]:
+elif args.counter_name in ["BAC", "SAC"]:
     hist_data = file["{}_TDC_seg{}U".format(args.counter_name, num_of_ch[args.counter_name])].to_numpy()
 
     bin_values = hist_data[0]
@@ -293,19 +256,23 @@ elif args.counter_name in ["BAC", "SAC", "SAC3", "SFV"]:
     plt.show()
 
 elif args.counter_name in ["KVC"]:
-    hist_data = file["{}_TDC_seg{}S".format(args.counter_name, num_of_ch[args.counter_name])].to_numpy()
+    hist_data = file["{}_TDC_seg0S".format(args.counter_name)].to_numpy()
 
-    bin_values = hist_data[0]
+    bin_values = np.zeros_like(hist_data[0])
     bin_edges = hist_data[1]
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
+    for i in range(num_of_ch[args.counter_name]):
+        hist_data = file["{}_TDC_seg{}S".format(args.counter_name, i)].to_numpy()
+        bin_values += hist_data[0]
+        
     fig = plt.figure(figsize=(8, 8))
     fig.canvas.mpl_connect('button_press_event', on_click)
     fig.canvas.mpl_connect('key_press_event', on_key)
     ax = fig.add_subplot(111)
 
     # プロット
-    ax.hist(bin_centers, bins=bin_edges, weights=bin_values, histtype='step')
+    ax.hist(bin_centers, bins=bin_edges, weights=bin_values, histtype='step', color="C0")
     ax.set_yscale("log")
     
     if (args.check):
