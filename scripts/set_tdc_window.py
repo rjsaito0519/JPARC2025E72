@@ -291,3 +291,35 @@ elif args.counter_name in ["BAC", "SAC", "SAC3", "SFV"]:
         ax.fill_betweenx([y_min, y_max], x_min, x_max, color='gray', alpha=0.25)
 
     plt.show()
+
+elif args.counter_name in ["KVC"]:
+    hist_data = file["{}_TDC_seg{}S".format(args.counter_name, num_of_ch[args.counter_name])].to_numpy()
+
+    bin_values = hist_data[0]
+    bin_edges = hist_data[1]
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    fig = plt.figure(figsize=(8, 8))
+    fig.canvas.mpl_connect('button_press_event', on_click)
+    fig.canvas.mpl_connect('key_press_event', on_key)
+    ax = fig.add_subplot(111)
+
+    # プロット
+    ax.hist(bin_centers, bins=bin_edges, weights=bin_values, histtype='step')
+    ax.set_yscale("log")
+    
+    if (args.check):
+        tdc_label = "{}_TDC".format(args.counter_name)
+        with open(target_file) as f:
+            for line in f:
+                s_list = line.split()                
+                if len(s_list) != 0:
+                    if s_list[0] == tdc_label:
+                        x_min = float(s_list[1])
+                        x_max = float(s_list[2])
+
+        y_min = 0
+        y_max = np.max(bin_values)
+        ax.fill_betweenx([y_min, y_max], x_min, x_max, color='gray', alpha=0.25)
+
+    plt.show()
