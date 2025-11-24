@@ -32,16 +32,6 @@
 
 #include "config.h"
 
-// -- fitting result container -----
-struct FitResult {
-    std::vector<Double_t> par;
-    std::vector<Double_t> err;
-    Double_t chi_square;
-    Int_t ndf;
-    Int_t migrad_stats;
-    std::vector<Double_t> additional; // 何か追加で値を返したいときのコンテナ
-};
-
 namespace ana_helper {
     TCanvas* add_tab(TGTab *tab, const char* tabName);
 

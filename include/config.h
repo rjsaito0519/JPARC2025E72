@@ -2,7 +2,25 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#include "ana_helper.h"
+// c++
+#include <vector>
+#include <string>
+#include <unordered_map>
+#include <utility>
+
+// ROOT
+#include "TString.h" 
+#include "Rtypes.h"
+
+// -- fitting result container -----
+struct FitResult {
+    std::vector<Double_t> par;
+    std::vector<Double_t> err;
+    Double_t chi_square;
+    Int_t ndf;
+    Int_t migrad_stats;
+    std::vector<Double_t> additional; // 何か追加で値を返したいときのコンテナ
+};
 
 class Config {
 public:
