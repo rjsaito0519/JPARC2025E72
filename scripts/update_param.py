@@ -3,7 +3,7 @@
 import argparse
 parser = argparse.ArgumentParser(
     prog="update_param",
-    usage="python3 update_param.py <run_num> <suffix> <param_type>", # プログラムの利用方法
+    usage="python3 update_param.py <run_num> <suffix> <param_type> <--dc>", # プログラムの利用方法
     description="", # ヘルプの前に表示
     epilog="end", # ヘルプの後に表示
     add_help=True, # -h/–-helpオプションの追加
@@ -11,6 +11,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument("run_num", type=int, help="Input run number")
 parser.add_argument("suffix", type=str, help="Input suffix")
 parser.add_argument("param_type", type=str, help="Input parameter type")
+parser.add_argument('--ftof', action="store_true", help='Set check to True')
 args = parser.parse_args()
 # ---------------------------------------------------------------------------
 
@@ -83,6 +84,13 @@ if args.param_type == "hdprm":
     # data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_HTOF_HDPRM_{args.suffix}.root"))
     # do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
     # report_status(do_succeeded, "HTOF")
+
+    if (args.ftof):
+        # -- CVC -----
+        data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_CVC_HDPRM_{args.suffix}.root"))
+        do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
+        report_status(do_succeeded, "CVC")
+
 
 elif args.param_type == "t0":
     # -- T0 -----
