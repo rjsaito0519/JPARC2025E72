@@ -2,6 +2,8 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include "ana_helper.h"
+
 class Config {
 public:
     static Config& getInstance() {
