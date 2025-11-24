@@ -64,7 +64,7 @@ void analyze(TString path, TString particle){
     // +--------------------------+
     // | prepare output root file |
     // +--------------------------+
-    TString output_path = Form("%s/root/run%05d_BH2_HDPRM_%s.root", OUTPUT_DIR.Data(), run_num, particle.Data());
+    TString output_path = Form("%s/root/run%05d_CVC_HDPRM_%s.root", OUTPUT_DIR.Data(), run_num, particle.Data());
     if (std::ifstream(output_path.Data())) std::remove(output_path.Data());
     TFile* fout = new TFile(output_path.Data(), "RECREATE");
 
@@ -72,30 +72,30 @@ void analyze(TString path, TString particle){
     // | prepare histogram |
     // +-------------------+    
     // -- tdc ----------
-    TH1D *h_bh2_tdc[2][conf.num_of_ch.at("bh2")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_bh2_tdc[0][i] = (TH1D*)f->Get(Form("BH2_TDC_seg%dU_%s", i, particle.Data()));
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_bh2_tdc[1][i] = (TH1D*)f->Get(Form("BH2_TDC_seg%dD_%s", i, particle.Data()));
+    TH1D *h_cvc_tdc[2][conf.num_of_ch.at("cvc")];
+    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) h_cvc_tdc[0][i] = (TH1D*)f->Get(Form("CVC_TDC_seg%dU_%s", i, particle.Data()));
+    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) h_cvc_tdc[1][i] = (TH1D*)f->Get(Form("CVC_TDC_seg%dD_%s", i, particle.Data()));
     // -- adc ----------
-    TH1D *h_bh2_adc[2][conf.num_of_ch.at("bh2")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_bh2_adc[0][i] = (TH1D*)f->Get(Form("BH2_ADC_seg%dU_%s", i, particle.Data()));
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_bh2_adc[1][i] = (TH1D*)f->Get(Form("BH2_ADC_seg%dD_%s", i, particle.Data()));
+    TH1D *h_cvc_adc[2][conf.num_of_ch.at("cvc")];
+    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) h_cvc_adc[0][i] = (TH1D*)f->Get(Form("CVC_ADC_seg%dU_%s", i, particle.Data()));
+    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) h_cvc_adc[1][i] = (TH1D*)f->Get(Form("CVC_ADC_seg%dD_%s", i, particle.Data()));
 
     // -- set tdc range ----------
-    TH1D *h_sum_tdc = (TH1D*)h_bh2_tdc[0][0]->Clone("h_sum_tdc");
+    TH1D *h_sum_tdc = (TH1D*)h_cvc_tdc[0][0]->Clone("h_sum_tdc");
     h_sum_tdc->Reset(); 
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++) {
-        h_sum_tdc->Add(h_bh2_tdc[0][i]);
-        h_sum_tdc->Add(h_bh2_tdc[1][i]);
+    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++) {
+        h_sum_tdc->Add(h_cvc_tdc[0][i]);
+        h_sum_tdc->Add(h_cvc_tdc[1][i]);
     }
     ana_helper::set_tdc_search_range(h_sum_tdc);
 
     // -- set adc range ----------
     {
-        Int_t seg = 6;
+        Int_t seg = 3;
         auto c_dummy = new TCanvas("dummy", "", 1500, 1200);
-        TString key = Form("bh2-%d-u", seg);
+        TString key = Form("cvc-%d-u", seg);
         conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
-        conf.hdprm_typical_value = ana_helper::adc_fit(h_bh2_adc[0][seg], c_dummy, 1);
+        conf.hdprm_typical_value = ana_helper::adc_fit(h_cvc_adc[0][seg], c_dummy, 1);
         delete c_dummy;
     }
 
@@ -106,7 +106,7 @@ void analyze(TString path, TString particle){
     Int_t nth_pad = 1;
     Int_t rows = 2, cols = 2;
     Int_t max_pads = rows * cols;
-    TString pdf_path = Form("%s/img/run%05d_BH2_HDPRM_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
+    TString pdf_path = Form("%s/img/run%05d_CVC_HDPRM_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
 
     // -- container -----
     std::vector<FitResult> adc_up;
@@ -114,45 +114,45 @@ void analyze(TString path, TString particle){
     std::vector<FitResult> tdc_up;
     std::vector<FitResult> tdc_down;
 
-    auto c_bh2 = new TCanvas("bh2", "", 1500, 1200);
-    c_bh2->Divide(cols, rows);
-    c_bh2->Print(pdf_path + "["); // start
+    auto c_cvc = new TCanvas("cvc", "", 1500, 1200);
+    c_cvc->Divide(cols, rows);
+    c_cvc->Print(pdf_path + "["); // start
     nth_pad = 1;
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++) {
+    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++) {
         if (nth_pad > max_pads) {
-            c_bh2->Print(pdf_path);
-            c_bh2->Clear();
-            c_bh2->Divide(cols, rows);
+            c_cvc->Print(pdf_path);
+            c_cvc->Clear();
+            c_cvc->Divide(cols, rows);
             nth_pad = 1;
         }
 
         FitResult result;
         TString key;
         // -- UP -----
-        result = ana_helper::tdc_fit(h_bh2_tdc[0][i], c_bh2, nth_pad);
+        result = ana_helper::tdc_fit(h_cvc_tdc[0][i], c_cvc, nth_pad);
         tdc_up.push_back(result);
         nth_pad++;
 
-        key = Form("bh2-%d-u", i);
+        key = Form("cvc-%d-u", i);
         conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
-        result = ana_helper::adc_fit(h_bh2_adc[0][i], c_bh2, nth_pad);
+        result = ana_helper::adc_fit(h_cvc_adc[0][i], c_cvc, nth_pad);
         adc_up.push_back(result);
         nth_pad++;
 
         // -- DOWN -----
-        key = Form("bh2-%d-d", i);
+        key = Form("cvc-%d-d", i);
         conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
-        result = ana_helper::tdc_fit(h_bh2_tdc[1][i], c_bh2, nth_pad);
+        result = ana_helper::tdc_fit(h_cvc_tdc[1][i], c_cvc, nth_pad);
         tdc_down.push_back(result);
         nth_pad++;
 
-        result = ana_helper::adc_fit(h_bh2_adc[1][i], c_bh2, nth_pad);
+        result = ana_helper::adc_fit(h_cvc_adc[1][i], c_cvc, nth_pad);
         adc_down.push_back(result);
         nth_pad++;        
     }
-    c_bh2->Print(pdf_path);
-    c_bh2->Print(pdf_path + "]"); // end
-    delete c_bh2;
+    c_cvc->Print(pdf_path);
+    c_cvc->Print(pdf_path + "]"); // end
+    delete c_cvc;
 
     // +-------+
     // | Write |
@@ -169,7 +169,7 @@ void analyze(TString path, TString particle){
     tree->Branch("adc_p1_err", &adc_p1_err);
     tree->Branch("tdc_p0_err", &tdc_p0_err);
     
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++) {
+    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++) {
         ch = i;
         adc_p0_val.clear(); adc_p1_val.clear(); tdc_p0_val.clear();
         adc_p0_err.clear(); adc_p1_err.clear(); tdc_p0_err.clear();
@@ -214,7 +214,7 @@ Int_t main(int argc, char** argv) {
         return 1;
     }
 
-    conf.detector = "bh2";
+    conf.detector = "cvc";
     analyze(path, particle);
     return 0;
 }
