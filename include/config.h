@@ -9,23 +9,25 @@ public:
         return instance;
     }
 
-    const Double_t HRTDC_factor = -0.000939002;
     const Int_t max_tdc_hit = 16;
 
     TString detector = "none";
     Double_t adc_ped_remove_nsigma = 15.0;
-    Double_t hdprm_mip_range_left = -1.0;
+    Double_t hdprm_mip_range_left  = -1.0;
+    FitResult hdprm_typical_value;
 
     const std::pair<Int_t, Int_t> htof_adc_exist_seg = {0, 33};
 
     const std::unordered_map<std::string, Int_t> num_of_ch{
-        { "bht", 63 },
-        {  "t0",  5 },
-        { "BAC",  4 },
-        { "SAC",  8 },
-        { "KVC",  8 },
+        { "bht", 63  },
+        {  "t0",  5  },
+        { "bac",  4  },
+        { "kvc",  8  },
         { "bh2",  15 },
-        { "htof",  34 },
+        { "htof", 34 },
+        { "cvc",   8 },
+        { "sac3",  1 },
+        { "sfv",   1 },
 
         { "blc",  8 },
     };
@@ -51,7 +53,10 @@ public:
         {  "t0", {0.0, 0.0} },
         { "bh2", {0.0, 0.0} },
         { "htof", {0.0, 0.0} },
-        
+        {  "cvc", {0.0, 0.0} },
+        { "sac3", {0.0, 0.0} },
+        {  "sfv", {0.0, 0.0} },
+
         // { "BAC",  4 },
         // { "SAC",  8 },
         // { "KVC",  4 },

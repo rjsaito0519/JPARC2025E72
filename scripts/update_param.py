@@ -79,10 +79,10 @@ if args.param_type == "hdprm":
     do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
     report_status(do_succeeded, "BH2")
 
-    # -- HTOF -----
-    data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_HTOF_HDPRM_{args.suffix}.root"))
-    do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
-    report_status(do_succeeded, "HTOF")
+    # # -- HTOF -----
+    # data = update_hdprm.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_HTOF_HDPRM_{args.suffix}.root"))
+    # do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
+    # report_status(do_succeeded, "HTOF")
 
 elif args.param_type == "t0":
     # -- T0 -----

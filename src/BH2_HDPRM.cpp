@@ -89,6 +89,15 @@ void analyze(TString path, TString particle){
     }
     ana_helper::set_tdc_search_range(h_sum_tdc);
 
+    // -- set adc range ----------
+    {
+        auto c_dummy = new TCanvas("dummy", "", 1500, 1200);
+        TString key = Form("bh2-6-u", 6);
+        conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
+        conf.hdprm_typical_value = ana_helper::adc_fit(h_bh2_adc[0][6], c_dummy, 1);
+        delete c_dummy;
+    }
+
     // +--------------+
     // | fit and plot |
     // +--------------+

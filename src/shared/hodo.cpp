@@ -245,6 +245,12 @@ namespace ana_helper {
                 delete f_fit_mip_g;
             }
         } else {
+            Double_t ped_to_mip = conf.hdprm_typical_value.par[4] - conf.hdprm_typical_value.par[1];
+            h->GetXaxis()->SetRangeUser(
+                mip_range_left, 
+                result.par[1] + ped_to_mip + 3.0*conf.hdprm_typical_value.par[5]
+            );
+
             Double_t err_value = 9999.0;
             // -- fill result -----
             result.par.push_back(evnum_within_range);
