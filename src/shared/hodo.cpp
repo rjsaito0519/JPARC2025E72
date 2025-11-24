@@ -438,7 +438,7 @@ namespace ana_helper {
         h->GetXaxis()->SetRangeUser(
             result.par[1] - 5.0*result.par[2], 
             result.par[1] + 5.0*result.par[2]
-        );hyptpc@gmail.com
+        )
         h->Draw();
         f_fit->Draw("same");
 
