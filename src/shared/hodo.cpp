@@ -122,8 +122,6 @@ namespace ana_helper {
     FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin) {
         Config& conf = Config::getInstance();
 
-        // h = (TH1D*)h->Rebin(n_rebin, h->GetName());
-
         c->cd(n_c);
         gPad->SetLogy(1);
         std::vector<Double_t> par, err;
@@ -164,82 +162,106 @@ namespace ana_helper {
             mip_range_left, 
             h->GetXaxis()->GetXmax()
         );
-        Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
-        // Double_t mip_half_width   = 20.0;
-        Double_t mip_half_width   = h->GetStdDev();
-        std::pair<Double_t, Double_t> mip_n_sigma(1.6, 2.0);
-        h->GetXaxis()->UnZoom();
+        Double_t evnum_within_range = h->Integral(
+            h->FindBin(mip_range_left),
+            h->FindBin(h->GetXaxis()->GetXmax())
+        );
         
-        // -- first fit -----
-        f_prefit->SetRange(mip_pos-mip_half_width, mip_pos+mip_half_width);
-        f_prefit->SetParameter(1, mip_pos);
-        f_prefit->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
-        f_prefit->SetParameter(2, mip_half_width*0.9);
-        h->Fit(f_prefit, "0QEMR", "", mip_range_left, mip_pos+mip_half_width);
-        for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
-        delete f_prefit;
+        if (evnum_within_range > 300.) {
+            Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
+            // Double_t mip_half_width   = 20.0;
+            Double_t mip_half_width   = h->GetStdDev();
+            std::pair<Double_t, Double_t> mip_n_sigma(1.6, 2.0);
+            h->GetXaxis()->UnZoom();
+            
+            // -- first fit -----
+            f_prefit->SetRange(mip_pos-mip_half_width, mip_pos+mip_half_width);
+            f_prefit->SetParameter(1, mip_pos);
+            f_prefit->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
+            f_prefit->SetParameter(2, mip_half_width*0.9);
+            h->Fit(f_prefit, "0QEMR", "", mip_range_left, mip_pos+mip_half_width);
+            for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
+            delete f_prefit;
 
-        // -- second fit -----
-        TF1 *f_fit_mip_g = new TF1( Form("mip_gauss_%s", h->GetName()), "gausn", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
-        f_fit_mip_g->SetParameter(1, par[1]);
-        f_fit_mip_g->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
-        f_fit_mip_g->SetParameter(2, par[2]*0.9);
-        f_fit_mip_g->SetLineColor(kOrange);
-        f_fit_mip_g->SetLineWidth(2.0);
-        h->Fit(f_fit_mip_g, "0QEMR", "", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
-        Double_t chi_square_g = f_fit_mip_g->GetChisquare();
-        Double_t p_value_g = TMath::Prob(chi_square_g, f_fit_mip_g->GetNDF());
+            // -- second fit -----
+            TF1 *f_fit_mip_g = new TF1( Form("mip_gauss_%s", h->GetName()), "gausn", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
+            f_fit_mip_g->SetParameter(1, par[1]);
+            f_fit_mip_g->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
+            f_fit_mip_g->SetParameter(2, par[2]*0.9);
+            f_fit_mip_g->SetLineColor(kOrange);
+            f_fit_mip_g->SetLineWidth(2.0);
+            h->Fit(f_fit_mip_g, "0QEMR", "", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
+            Double_t chi_square_g = f_fit_mip_g->GetChisquare();
+            Double_t p_value_g = TMath::Prob(chi_square_g, f_fit_mip_g->GetNDF());
 
-        TF1 *f_fit_mip_l = new TF1( Form("mip_landau_%s", h->GetName()), "landaun", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
-        f_fit_mip_l->SetParameter(1, par[1]);
-        f_fit_mip_l->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
-        f_fit_mip_l->SetParameter(2, par[2]*0.9);
-        f_fit_mip_l->SetLineColor(kOrange);
-        f_fit_mip_l->SetLineWidth(2.0);
-        h->Fit(f_fit_mip_l, "0QEMR", "", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
-        Double_t chi_square_l = f_fit_mip_l->GetChisquare();
-        Double_t p_value_l = TMath::Prob(chi_square_l, f_fit_mip_l->GetNDF());
+            TF1 *f_fit_mip_l = new TF1( Form("mip_landau_%s", h->GetName()), "landaun", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
+            f_fit_mip_l->SetParameter(1, par[1]);
+            f_fit_mip_l->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
+            f_fit_mip_l->SetParameter(2, par[2]*0.9);
+            f_fit_mip_l->SetLineColor(kOrange);
+            f_fit_mip_l->SetLineWidth(2.0);
+            h->Fit(f_fit_mip_l, "0QEMR", "", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
+            Double_t chi_square_l = f_fit_mip_l->GetChisquare();
+            Double_t p_value_l = TMath::Prob(chi_square_l, f_fit_mip_l->GetNDF());
 
-        // // -- debug ------
-        // std::cout << "gauss:  " << p_value_g << ", " << f_fit_mip_g->GetChisquare() << std::endl;
-        // std::cout << "landau: " << p_value_l << ", " << f_fit_mip_l->GetChisquare() << std::endl;
-        // Bool_t flag = p_value_g >= p_value_l;
-        // std::cout << flag << std::endl;
+            // // -- debug ------
+            // std::cout << "gauss:  " << p_value_g << ", " << f_fit_mip_g->GetChisquare() << std::endl;
+            // std::cout << "landau: " << p_value_l << ", " << f_fit_mip_l->GetChisquare() << std::endl;
+            // Bool_t flag = p_value_g >= p_value_l;
+            // std::cout << flag << std::endl;
 
-        // if (p_value_g >= p_value_l) {
-        if (chi_square_g <= chi_square_l) {
-            for (Int_t i = 0, n_par = f_fit_mip_g->GetNpar(); i < n_par; i++) {
-                result.par.push_back(f_fit_mip_g->GetParameter(i));
-                result.err.push_back(f_fit_mip_g->GetParError(i));
+            // if (p_value_g >= p_value_l) {
+            if (chi_square_g <= chi_square_l) {
+                for (Int_t i = 0, n_par = f_fit_mip_g->GetNpar(); i < n_par; i++) {
+                    result.par.push_back(f_fit_mip_g->GetParameter(i));
+                    result.err.push_back(f_fit_mip_g->GetParError(i));
+                }
+
+                // -- draw -----
+                h->GetXaxis()->SetRangeUser(
+                    result.par[1]-10.0*result.par[2], 
+                    result.par[4]+ 5.0*result.par[5]
+                );
+                h->Draw();
+                f_fit_mip_g->SetNpx(1000);
+                f_fit_mip_g->Draw("same");
+                result.chi_square = chi_square_g;
+                delete f_fit_mip_l;
+            } else {
+                for (Int_t i = 0, n_par = f_fit_mip_l->GetNpar(); i < n_par; i++) {
+                    result.par.push_back(f_fit_mip_l->GetParameter(i));
+                    result.err.push_back(f_fit_mip_l->GetParError(i));
+                }
+
+                // -- draw -----
+                h->GetXaxis()->SetRangeUser(
+                    result.par[1]-10.0*result.par[2], 
+                    result.par[4]+ 5.0*result.par[5]
+                );
+                h->Draw();
+                f_fit_mip_l->SetNpx(1000);
+                f_fit_mip_l->Draw("same");
+                result.chi_square = chi_square_l;
+                delete f_fit_mip_g;
             }
-
-            // -- draw -----
-            h->GetXaxis()->SetRangeUser(
-                result.par[1]-10.0*result.par[2], 
-                result.par[4]+ 5.0*result.par[5]
-            );
-            h->Draw();
-            f_fit_mip_g->SetNpx(1000);
-            f_fit_mip_g->Draw("same");
-            result.chi_square = chi_square_g;
-            delete f_fit_mip_l;
         } else {
-            for (Int_t i = 0, n_par = f_fit_mip_l->GetNpar(); i < n_par; i++) {
-                result.par.push_back(f_fit_mip_l->GetParameter(i));
-                result.err.push_back(f_fit_mip_l->GetParError(i));
-            }
+            Double_t err_value = 9999.0;
+            // -- fill result -----
+            result.par.push_back(evnum_within_range);
+            result.err.push_back(err_value);
 
-            // -- draw -----
-            h->GetXaxis()->SetRangeUser(
-                result.par[1]-10.0*result.par[2], 
-                result.par[4]+ 5.0*result.par[5]
-            );
-            h->Draw();
-            f_fit_mip_l->SetNpx(1000);
-            f_fit_mip_l->Draw("same");
-            result.chi_square = chi_square_l;
-            delete f_fit_mip_g;
+            result.par.push_back(h->GetMean());
+            result.err.push_back(h->GetMeanError());
+            
+            result.par.push_back(h->GetStdDev());
+            result.err.push_back(h->GetStdDevError());
+
+            TLatex* commnet = new TLatex();
+            commnet->SetNDC();  // NDC座標（0〜1の正規化）を使う
+            commnet->SetTextSize(0.04);
+            commnet->DrawLatex(0.7, 0.85, "not fitting");
         }
+
         f_fit_ped->Draw("same");
 
         TLine *ped_line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
@@ -416,7 +438,7 @@ namespace ana_helper {
         h->GetXaxis()->SetRangeUser(
             result.par[1] - 5.0*result.par[2], 
             result.par[1] + 5.0*result.par[2]
-        );
+        );hyptpc@gmail.com
         h->Draw();
         f_fit->Draw("same");
 
