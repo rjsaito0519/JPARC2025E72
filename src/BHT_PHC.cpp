@@ -72,6 +72,7 @@ void analyze(TString path, TString particle){
     // +-------------------+    
     // -- BTOF vs dE ----------
     TH2D *h_bht_btof_vs_de[2][conf.num_of_ch.at("bht")];
+    TH2D *h_bht_cbtof_vs_de[2][conf.num_of_ch.at("bht")];
     for (Int_t i = 0; i < conf.num_of_ch.at("bht"); i++ ) {
         h_bht_btof_vs_de[0][i]  = (TH2D*)f->Get(Form("BHT_seg%dU_BTOF_vs_DeltaE_%s", i, particle.Data()));
         h_bht_btof_vs_de[1][i]  = (TH2D*)f->Get(Form("BHT_seg%dD_BTOF_vs_DeltaE_%s", i, particle.Data()));
