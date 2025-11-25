@@ -97,7 +97,7 @@ void analyze(TString path, TString particle){
     auto c_cvc = new TCanvas("cvc", "", 1500, 1200);
     c_cvc->Divide(cols, rows);
     c_cvc->Print(pdf_path + "["); // start
-    nth_pad = 1;
+    Int_t nth_pad = 1;
     for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++) {
         if (nth_pad > max_pads) {
             c_cvc->Print(pdf_path);
