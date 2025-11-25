@@ -79,13 +79,12 @@ void analyze(TString path, TString particle){
         h_cvc_cftof_vs_de[0][i] = (TH2D*)f->Get(Form("CVC_seg%dU_CFTOF_vs_DeltaE_%s", i, particle.Data()));
         h_cvc_cftof_vs_de[1][i] = (TH2D*)f->Get(Form("CVC_seg%dD_CFTOF_vs_DeltaE_%s", i, particle.Data()));
     }
-    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) 
     
     // +--------------+
     // | fit and plot |
     // +--------------+
     // -- prepare pdf -----
-    // Int_t nth_pad = 1;
+    Int_t nth_pad = 1;
     Int_t rows = 2, cols = 2;
     Int_t max_pads = rows * cols;
     TString pdf_path = Form("%s/img/run%05d_CVC_PHC_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
@@ -97,7 +96,7 @@ void analyze(TString path, TString particle){
     auto c_cvc = new TCanvas("cvc", "", 1500, 1200);
     c_cvc->Divide(cols, rows);
     c_cvc->Print(pdf_path + "["); // start
-    Int_t nth_pad = 1;
+    nth_pad = 1;
     for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++) {
         if (nth_pad > max_pads) {
             c_cvc->Print(pdf_path);
