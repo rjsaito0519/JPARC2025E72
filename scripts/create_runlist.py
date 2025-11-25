@@ -101,18 +101,19 @@ with open(runlist_target_file) as f:
         if len(s_list) != 0 and s_list[0] == "RUN:":
             buf.append(s_list)
             for suffix in args.suffix:
-                buf.append([f"run{args.run_num:0=5}_{suffix}_in:"])
                 if prefix == "hodo":
+                    buf.append([f"run{args.run_num:0=5}_{suffix}_hodo:"])
                     buf.append(["  bin: ./bin/Hodoscope"])
                     buf.append([f"  conf: ./param/conf/{SUB_DIR}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
                     buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
                     buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}_run{args.run_num:0=5}_{suffix}.root"))])
                 elif prefix == "dc":
+                    # buf.append([f"run{args.run_num:0=5}_{suffix}_in:"])
                     # buf.append(["  bin: ./bin/BcInTracking"])
                     # buf.append([f"  conf: ./param/conf/{SUB_DIR}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
                     # buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])
                     # buf.append(["  root: {}".format(os.path.join(conf.output_dir, f"{prefix}_in_run{args.run_num:0=5}_{suffix}.root"))])
-                    # buf.append([f"run{args.run_num:0=5}_{suffix}_out:"])
+                    buf.append([f"run{args.run_num:0=5}_{suffix}_out:"])
                     buf.append(["  bin: ./bin/BcOutTracking"])
                     buf.append([f"  conf: ./param/conf/{SUB_DIR}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"])
                     buf.append([f"  data: ./rawdata/run{args.run_num:0=5}.dat"])

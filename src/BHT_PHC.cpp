@@ -72,9 +72,13 @@ void analyze(TString path, TString particle){
     // +-------------------+    
     // -- BTOF vs dE ----------
     TH2D *h_bht_btof_vs_de[2][conf.num_of_ch.at("bht")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("bht"); i++ ) h_bht_btof_vs_de[0][i] = (TH2D*)f->Get(Form("BHT_seg%dU_BTOF_vs_DeltaE_%s", i, particle.Data()));
-    for (Int_t i = 0; i < conf.num_of_ch.at("bht"); i++ ) h_bht_btof_vs_de[1][i] = (TH2D*)f->Get(Form("BHT_seg%dD_BTOF_vs_DeltaE_%s", i, particle.Data()));
-
+    for (Int_t i = 0; i < conf.num_of_ch.at("bht"); i++ ) {
+        h_bht_btof_vs_de[0][i]  = (TH2D*)f->Get(Form("BHT_seg%dU_BTOF_vs_DeltaE_%s", i, particle.Data()));
+        h_bht_btof_vs_de[1][i]  = (TH2D*)f->Get(Form("BHT_seg%dD_BTOF_vs_DeltaE_%s", i, particle.Data()));
+        h_bht_cbtof_vs_de[0][i] = (TH2D*)f->Get(Form("BHT_seg%dU_CBTOF_vs_DeltaE_%s", i, particle.Data()));
+        h_bht_cbtof_vs_de[1][i] = (TH2D*)f->Get(Form("BHT_seg%dD_CBTOF_vs_DeltaE_%s", i, particle.Data()));
+    }
+    
     // +--------------+
     // | fit and plot |
     // +--------------+
@@ -105,10 +109,16 @@ void analyze(TString path, TString particle){
         result = ana_helper::phc_fit(h_bht_btof_vs_de[0][i], c_bht, nth_pad);
         phc_up.push_back(result);
         nth_pad++;
+        c_bht->cd(nth_pad);
+        h_bht_cbtof_vs_de[0][i]->Draw();
+        nth_pad++;
 
         // -- DOWN -----
         result = ana_helper::phc_fit(h_bht_btof_vs_de[1][i], c_bht, nth_pad);
         phc_down.push_back(result);
+        nth_pad++;
+        c_bht->cd(nth_pad);
+        h_bht_cbtof_vs_de[1][i]->Draw();
         nth_pad++;
     }
     c_bht->Print(pdf_path);

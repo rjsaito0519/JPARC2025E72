@@ -71,10 +71,15 @@ void analyze(TString path, TString particle){
     // | prepare histogram |
     // +-------------------+    
     // -- BTOF vs dE ----------
-    TH2D *h_cvc_btof_vs_de[2][conf.num_of_ch.at("cvc")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) h_cvc_btof_vs_de[0][i] = (TH2D*)f->Get(Form("CVC_seg%dU_FTOF_vs_DeltaE_%s", i, particle.Data()));
-    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) h_cvc_btof_vs_de[1][i] = (TH2D*)f->Get(Form("CVC_seg%dD_FTOF_vs_DeltaE_%s", i, particle.Data()));
-
+    TH2D *h_cvc_ftof_vs_de[2][conf.num_of_ch.at("cvc")];
+    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) {
+        h_cvc_ftof_vs_de[0][i]  = (TH2D*)f->Get(Form("CVC_seg%dU_FTOF_vs_DeltaE_%s", i, particle.Data()));
+        h_cvc_ftof_vs_de[1][i]  = (TH2D*)f->Get(Form("CVC_seg%dD_FTOF_vs_DeltaE_%s", i, particle.Data()));
+        h_cvc_cftof_vs_de[0][i] = (TH2D*)f->Get(Form("CVC_seg%dU_CFTOF_vs_DeltaE_%s", i, particle.Data()));
+        h_cvc_cftof_vs_de[1][i] = (TH2D*)f->Get(Form("CVC_seg%dD_CFTOF_vs_DeltaE_%s", i, particle.Data()));
+    }
+    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) 
+    
     // +--------------+
     // | fit and plot |
     // +--------------+
@@ -102,13 +107,19 @@ void analyze(TString path, TString particle){
 
         FitResult result;
         // -- UP -----
-        result = ana_helper::phc_fit(h_cvc_btof_vs_de[0][i], c_cvc, nth_pad);
+        result = ana_helper::phc_fit(h_cvc_ftof_vs_de[0][i], c_cvc, nth_pad);
         phc_up.push_back(result);
+        nth_pad++;
+        c_cvc->cd(nth_pad);
+        h_cvc_cftof_vs_de[0][i]->Draw();
         nth_pad++;
 
         // -- DOWN -----
-        result = ana_helper::phc_fit(h_cvc_btof_vs_de[1][i], c_cvc, nth_pad);
+        result = ana_helper::phc_fit(h_cvc_ftof_vs_de[1][i], c_cvc, nth_pad);
         phc_down.push_back(result);
+        nth_pad++;
+        c_cvc->cd(nth_pad);
+        h_cvc_cftof_vs_de[1][i]->Draw();
         nth_pad++;
     }
     c_cvc->Print(pdf_path);
