@@ -7,7 +7,8 @@ detector_id_list = {
     "BHT":  1,
     "T0":   2,
     "BH2":  3,
-    "HTOF": 5
+    "HTOF": 5,
+    "CVC":  8
 }
 
 # -- prepare HDPRM data  -----------------------------------
@@ -24,6 +25,8 @@ def make_dictdata(root_file_path, good_ch_range = [-np.inf, np.inf]):
         detector_id = detector_id_list["BH2"]
     elif "HTOF" in root_file_path:
         detector_id = detector_id_list["HTOF"]
+    elif "CVC" in root_file_path:
+        detector_id = detector_id_list["CVC"]
 
     if detector_id == -1:
         print("something wrong")
