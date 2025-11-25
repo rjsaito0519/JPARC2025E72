@@ -123,6 +123,15 @@ elif args.param_type == "hdphc":
     # do_succeeded = update_phc.update_file(hdphc_target_file, data)
     # report_status(do_succeeded, "HTOF")
 
+    if (args.ftof):
+        # -- CVC -----
+        limits = [-np.inf, np.inf]
+        if f"{args.run_num:0=5}_{args.suffix}_cvc" in phc_conf.limits_dict.keys():
+            limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_cvc"]
+        data = update_phc.make_dictdata(os.path.join(script_dir, f"../results/root/run{args.run_num:0=5}_CVC_PHC_{args.suffix}.root"), limits)
+        do_succeeded = update_phc.update_file(hdphc_target_file, data)
+        report_status(do_succeeded, "CVC")
+
 
 elif args.param_type == "dctdc":
     # -- BLC1 -----
