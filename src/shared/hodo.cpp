@@ -171,7 +171,7 @@ namespace ana_helper {
             Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
             // Double_t mip_half_width   = 20.0;
             Double_t mip_half_width   = h->GetStdDev();
-            std::pair<Double_t, Double_t> mip_n_sigma(1.7, 2.0);
+            std::pair<Double_t, Double_t> mip_n_sigma(1.8, 2.2);
             h->GetXaxis()->UnZoom();
             
             // -- first fit -----
