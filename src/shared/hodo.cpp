@@ -186,7 +186,7 @@ namespace ana_helper {
 
             // -- second fit -----
             // TF1 *f_fit_mip_g = new TF1( Form("mip_gauss_%s", h->GetName()), "gausn", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
-            TF1 *f_fit_g = new TF1(
+            TF1 *f_fit_mip_g = new TF1(
                 Form("mip_gauss_%s", h->GetName()), 
                 [](double *x, double *p) {
                     return p[0] * TMath::Gaus(x[0], p[1], p[2], true) + p[3];
@@ -207,7 +207,7 @@ namespace ana_helper {
             Double_t p_value_g = TMath::Prob(chi_square_g, f_fit_mip_g->GetNDF());
 
             // TF1 *f_fit_mip_l = new TF1( Form("mip_landau_%s", h->GetName()), "landaun", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
-            TF1 *f_fit_l = new TF1(
+            TF1 *f_fit_mip_l = new TF1(
                 Form("mip_landau_%s", h->GetName()), 
                 [](double *x, double *p) {
                     return p[0] * TMath::Landau(x[0], p[1], p[2], true) + p[3];
