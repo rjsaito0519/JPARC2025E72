@@ -85,7 +85,7 @@ void analyze(TString path, TString particle){
     // | fit and plot |
     // +--------------+
     // -- prepare pdf -----
-    Int_t nth_pad = 1;
+    // Int_t nth_pad = 1;
     Int_t rows = 2, cols = 2;
     Int_t max_pads = rows * cols;
     TString pdf_path = Form("%s/img/run%05d_CVC_PHC_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
