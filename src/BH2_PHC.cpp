@@ -112,7 +112,7 @@ void analyze(TString path, TString particle){
         nth_pad++;
         c_bh2->cd(nth_pad);
         h_bh2_cbtof_vs_de[0][i]->Draw();
-        nth_pad++:;
+        nth_pad++;
 
         // -- DOWN -----
         result = ana_helper::phc_fit(h_bh2_btof_vs_de[1][i], c_bh2, nth_pad);
