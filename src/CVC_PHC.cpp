@@ -72,8 +72,8 @@ void analyze(TString path, TString particle){
     // +-------------------+    
     // -- BTOF vs dE ----------
     TH2D *h_cvc_btof_vs_de[2][conf.num_of_ch.at("cvc")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) h_cvc_btof_vs_de[0][i] = (TH2D*)f->Get(Form("T0_seg%dU_FTOF_vs_DeltaE_%s", i, particle.Data()));
-    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) h_cvc_btof_vs_de[1][i] = (TH2D*)f->Get(Form("T0_seg%dD_FTOF_vs_DeltaE_%s", i, particle.Data()));
+    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) h_cvc_btof_vs_de[0][i] = (TH2D*)f->Get(Form("CVC_seg%dU_FTOF_vs_DeltaE_%s", i, particle.Data()));
+    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) h_cvc_btof_vs_de[1][i] = (TH2D*)f->Get(Form("CVC_seg%dD_FTOF_vs_DeltaE_%s", i, particle.Data()));
 
     // +--------------+
     // | fit and plot |
