@@ -74,6 +74,12 @@ void analyze(TString path, TString particle){
     TH1D *h_t0_offset[conf.num_of_ch.at("bh2")];
     for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_t0_offset[i] = (TH1D*)f->Get(Form("T0_seg%d_TimeOffset_%s", i, particle.Data()));
 
+    // -- set tdc range ----------
+    TH1D *h_sum_tdc = (TH1D*)h_t0_offset[0]->Clone("h_sum_tdc");
+    h_sum_tdc->Reset(); 
+    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++) h_sum_tdc->Add(h_t0_offset[i]);
+    ana_helper::set_tdc_search_range(h_sum_tdc);
+
     // +--------------+
     // | fit and plot |
     // +--------------+

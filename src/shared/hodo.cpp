@@ -409,6 +409,10 @@ namespace ana_helper {
         Config& conf = Config::getInstance();
 
         h = (TH1D*)h->Rebin(3, h->GetName());
+        h->GetXaxis()->SetRangeUser(
+            conf.tdc_search_range[conf.detector.Data()].first, 
+            conf.tdc_search_range[conf.detector.Data()].second
+        );
 
         c->cd(n_c);
         std::vector<Double_t> par, err;
