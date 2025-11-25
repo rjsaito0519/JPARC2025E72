@@ -185,42 +185,20 @@ namespace ana_helper {
             delete f_prefit;
 
             // -- second fit -----
-            // TF1 *f_fit_mip_g = new TF1( Form("mip_gauss_%s", h->GetName()), "gausn", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
-            TF1 *f_fit_mip_g = new TF1(
-                Form("mip_gauss_%s", h->GetName()), 
-                [](double *x, double *p) {
-                    return p[0] * TMath::Gaus(x[0], p[1], p[2], true) + p[3];
-                },
-                par[1]-mip_n_sigma.first*par[2],
-                par[1]+mip_n_sigma.second*par[2],
-                4
-            );
+            TF1 *f_fit_mip_g = new TF1( Form("mip_gauss_%s", h->GetName()), "gausn", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
             f_fit_mip_g->SetParameter(1, par[1]);
             f_fit_mip_g->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
             f_fit_mip_g->SetParameter(2, par[2]*0.9);
-            f_fit_mip_g->SetParameter(3, 1.0);
-            f_fit_mip_g->SetParLimits(3, 0.0, 100000.0);
             f_fit_mip_g->SetLineColor(kOrange);
             f_fit_mip_g->SetLineWidth(2.0);
             h->Fit(f_fit_mip_g, "0QEMR", "", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
             Double_t chi_square_g = f_fit_mip_g->GetChisquare();
             Double_t p_value_g = TMath::Prob(chi_square_g, f_fit_mip_g->GetNDF());
 
-            // TF1 *f_fit_mip_l = new TF1( Form("mip_landau_%s", h->GetName()), "landaun", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
-            TF1 *f_fit_mip_l = new TF1(
-                Form("mip_landau_%s", h->GetName()), 
-                [](double *x, double *p) {
-                    return p[0] * TMath::Landau(x[0], p[1], p[2], true) + p[3];
-                },
-                par[1]-mip_n_sigma.first*par[2],
-                par[1]+mip_n_sigma.second*par[2],
-                4
-            );
+            TF1 *f_fit_mip_l = new TF1( Form("mip_landau_%s", h->GetName()), "landaun", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
             f_fit_mip_l->SetParameter(1, par[1]);
             f_fit_mip_l->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
             f_fit_mip_l->SetParameter(2, par[2]*0.9);
-            f_fit_mip_l->SetParameter(3, 1.0);
-            f_fit_mip_l->SetParLimits(3, 0.0, 100000.0);
             f_fit_mip_l->SetLineColor(kOrange);
             f_fit_mip_l->SetLineWidth(2.0);
             h->Fit(f_fit_mip_l, "0QEMR", "", par[1]-mip_n_sigma.first*par[2], par[1]+mip_n_sigma.second*par[2]);
