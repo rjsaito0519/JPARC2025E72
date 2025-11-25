@@ -408,7 +408,7 @@ namespace ana_helper {
     FitResult t0_offset_fit(TH1D *h, TCanvas *c, Int_t n_c) {
         Config& conf = Config::getInstance();
 
-        h = (TH1D*)h->Rebin(2, h->GetName());
+        h = (TH1D*)h->Rebin(3, h->GetName());
 
         c->cd(n_c);
         std::vector<Double_t> par, err;
