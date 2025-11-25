@@ -410,48 +410,78 @@ namespace ana_helper {
 
         c->cd(n_c);
         std::vector<Double_t> par, err;
-        TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
+        Double_t evnum_within_range = h->Integral(
+            h->FindBin(h->GetXaxis()->GetXmin()),
+            h->FindBin(h->GetXaxis()->GetXmax())
+        );
+        TString fit_option = evnum_within_range > 200.0 ? "0QEMR" : "0QEMRL";
         FitResult result;
 
-        Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
-        Double_t width    = h->GetStdDev();
-        std::pair<Double_t, Double_t> peak_n_sigma(2.0, 2.0);
-        
-        // -- first fit -----
-        Double_t lower = std::max(peak_pos-peak_n_sigma.first*width,  h->GetXaxis()->GetXmin());
-        Double_t upper = std::min(peak_pos+peak_n_sigma.second*width, h->GetXaxis()->GetXmax());
-        TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", lower, upper);
-        f_prefit->SetParameter(1, peak_pos);
-        f_prefit->SetParameter(2, width*0.9);
-        h->Fit(f_prefit, fit_option.Data(), "", lower, upper);
-        for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
-        delete f_prefit;
+        if (evnum_within_range > 200.0) {
 
-        // -- second fit -----
-        lower = std::max(par[1]-peak_n_sigma.first*par[2],  h->GetXaxis()->GetXmin());
-        upper = std::min(par[1]+peak_n_sigma.second*par[2], h->GetXaxis()->GetXmax());
-        TF1 *f_fit = new TF1( Form("gaus_%s", h->GetName()), "gausn", lower, upper);
-        f_fit->SetParameter(0, par[0]);
-        f_fit->SetParameter(1, par[1]);
-        f_fit->SetParameter(2, par[2]*0.9);
-        f_fit->SetLineColor(kOrange);
-        f_fit->SetLineWidth(2);
-        f_fit->SetNpx(1000);
-        h->Fit(f_fit, fit_option.Data(), "", lower, upper);
+            Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
+            Double_t width    = h->GetStdDev();
+            std::pair<Double_t, Double_t> peak_n_sigma(2.0, 2.0);
+            
+            // -- first fit -----
+            Double_t lower = std::max(peak_pos-peak_n_sigma.first*width,  h->GetXaxis()->GetXmin());
+            Double_t upper = std::min(peak_pos+peak_n_sigma.second*width, h->GetXaxis()->GetXmax());
+            TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", lower, upper);
+            f_prefit->SetParameter(1, peak_pos);
+            f_prefit->SetParameter(2, width*0.9);
+            h->Fit(f_prefit, fit_option.Data(), "", lower, upper);
+            for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
+            delete f_prefit;
 
-        // -- fill result -----
-        for (Int_t i = 0, n_par = f_fit->GetNpar(); i < n_par; i++) {
-            result.par.push_back(f_fit->GetParameter(i));
-            result.err.push_back(f_fit->GetParError(i));
+            // -- second fit -----
+            lower = std::max(par[1]-peak_n_sigma.first*par[2],  h->GetXaxis()->GetXmin());
+            upper = std::min(par[1]+peak_n_sigma.second*par[2], h->GetXaxis()->GetXmax());
+            TF1 *f_fit = new TF1( Form("gaus_%s", h->GetName()), "gausn", lower, upper);
+            f_fit->SetParameter(0, par[0]);
+            f_fit->SetParameter(1, par[1]);
+            f_fit->SetParameter(2, par[2]*0.9);
+            f_fit->SetLineColor(kOrange);
+            f_fit->SetLineWidth(2);
+            f_fit->SetNpx(1000);
+            h->Fit(f_fit, fit_option.Data(), "", lower, upper);
+
+            // -- fill result -----
+            for (Int_t i = 0, n_par = f_fit->GetNpar(); i < n_par; i++) {
+                result.par.push_back(f_fit->GetParameter(i));
+                result.err.push_back(f_fit->GetParError(i));
+            }
+
+            // -- draw figure -----
+            h->GetXaxis()->SetRangeUser(
+                result.par[1] - 5.0*result.par[2], 
+                result.par[1] + 5.0*result.par[2]
+            );
+            h->Draw();
+            f_fit->Draw("same");
+
+        } else {
+            Double_t err_value = 9999.0;
+            // -- fill result -----
+            result.par.push_back(evnum_within_range);
+            result.err.push_back(err_value);
+
+            result.par.push_back(h->GetMean());
+            result.err.push_back(h->GetMeanError());
+            
+            result.par.push_back(h->GetStdDev());
+            result.err.push_back(h->GetStdDevError());
+
+            // -- draw figure -----
+            h->GetXaxis()->SetRangeUser(
+                result.par[1] - 15.0*result.par[2], 
+                result.par[1] + 15.0*result.par[2]
+            );
+            h->Draw();
+            TLatex* commnet = new TLatex();
+            commnet->SetNDC();  // NDC座標（0〜1の正規化）を使う
+            commnet->SetTextSize(0.04);
+            commnet->DrawLatex(0.7, 0.85, "not fitting");
         }
-
-        // -- draw figure -----
-        h->GetXaxis()->SetRangeUser(
-            result.par[1] - 5.0*result.par[2], 
-            result.par[1] + 5.0*result.par[2]
-        );
-        h->Draw();
-        f_fit->Draw("same");
 
         TLine *line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
         line->SetLineStyle(2); // 点線に設定

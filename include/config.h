@@ -84,10 +84,11 @@ public:
     };
 
     std::unordered_map<std::string, std::pair<Double_t, Double_t>> phc_time_window{
-        { "bht", {-4.0, 2.0} },
-        {  "t0", {-2.5, 1.5} },
-        { "bh2", {-2.0, 1.0} },
+        { "bht",  {-4.0, 2.0} },
+        {  "t0",  {-2.5, 1.5} },
+        { "bh2",  {-2.0, 1.0} },
         { "htof", {-2.0, 1.0} },
+        { "cvc",  {-4.0, 2.0} },
         
         // { "BAC",  4 },
         // { "SAC",  8 },

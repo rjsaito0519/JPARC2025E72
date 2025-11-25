@@ -3,7 +3,7 @@
 import argparse
 parser = argparse.ArgumentParser(
     prog="update_param",
-    usage="python3 update_param.py <run_num> <suffix> <param_type> <--dc>", # プログラムの利用方法
+    usage="python3 update_param.py <run_num> <suffix> <param_type> <--ftof>", # プログラムの利用方法
     description="", # ヘルプの前に表示
     epilog="end", # ヘルプの後に表示
     add_help=True, # -h/–-helpオプションの追加
