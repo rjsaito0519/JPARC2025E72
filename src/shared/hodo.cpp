@@ -168,7 +168,7 @@ namespace ana_helper {
             h->FindBin(h->GetXaxis()->GetXmax())
         );
         
-        if (evnum_within_range > 500.) {
+        if (evnum_within_range > 500. || conf.hdprm_typical_value.par.empty()) {
             Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
             // Double_t mip_half_width   = 20.0;
             Double_t mip_half_width   = h->GetStdDev();
