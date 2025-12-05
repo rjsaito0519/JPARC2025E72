@@ -36,15 +36,49 @@ public:
     Double_t hdprm_mip_range_left  = -1.0;
     FitResult hdprm_typical_value;
 
+    Double_t btof_threshold = -3.0;
+
+    Double_t kvc2_pos_z = -672.1167;
+    Double_t htof_pos_z = -493.363;
+    Double_t bh2_pos_z = -554.872;
+    Double_t t0_pos_z  = -1086.55;
+    Double_t bac_pos_z  = -1041.63;
+    Double_t cvc_pos_z  = 13918.5;
+
+    // ADCのbin設定
+    const Int_t adc_bin_num = 4096;
+    Int_t adjust_adc_bin_num = 4096; // for adjustment
+    const Double_t adc_min = 0.0;
+    const Double_t adc_max = 4096.0;
+
+    // TDCのbin設定
+    Int_t tdc_bin_num = 65536;
+    Int_t adjust_tdc_bin_num = 65536; // for adjustment
+    Double_t tdc_min = 0.0;
+    Double_t tdc_max = 2097152.0;
+
+    // Time
+    Int_t time_bin_num = 1000;
+    Int_t adjust_time_bin_num = 1000; // for adjustment
+    Double_t time_min = -10.0;
+    Double_t time_max =  90.0;
+
+    // NPEのbin設定
+    Int_t npe_bin_num = 2100;
+    Int_t adjust_npe_bin_num = 280;
+    Double_t npe_min = -10.;
+    Double_t npe_max = 410.;
+
     const std::pair<Int_t, Int_t> htof_adc_exist_seg = {0, 33};
 
     const std::unordered_map<std::string, Int_t> num_of_ch{
-        { "bht", 63  },
-        {  "t0",  5  },
-        { "bac",  4  },
-        { "kvc",  8  },
+        { "bht",  63 },
+        {  "t0",   5 },
         { "bh2",  15 },
+        { "bac",   4 },
         { "htof", 34 },
+        { "kvc",   8 },
+        { " t1",   1 },
         { "cvc",   8 },
         { "sac3",  1 },
         { "sfv",   1 },
