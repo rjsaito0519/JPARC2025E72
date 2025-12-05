@@ -32,7 +32,7 @@ SUB_DIR = "e72"
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 # user_param_dir = os.path.join(conf.analyzer_dir, "param", "USER", SUB_DIR)
-user_param_dir = os.path.join(script_dir, "..", "param", "USER", SUB_DIR)
+user_param_dir = os.path.join(script_dir, "param", "USER", SUB_DIR)
 
 target_file = os.path.join(user_param_dir, f"UserParam_run{run_num:05d}")
 
