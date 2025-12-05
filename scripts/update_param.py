@@ -66,7 +66,7 @@ if not os.path.isfile(dctdc_target_file):
 dcgeo_dir = f"{conf.param_dir}/DCGEO"
 dcgeo_target_file = f"{dcgeo_dir}/{SUB_DIR}/DCGeomParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(dcgeo_target_file):
-    shutil.copy(f"{dcgeo_dir}/DCGeomParam_e72_20251120", dcgeo_target_file)
+    shutil.copy(f"{dcgeo_dir}/DCGeomParam_e72_20251126", dcgeo_target_file)
 
 # update param file
 # ---------------------------------------------------------------------------
