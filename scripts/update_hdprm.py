@@ -41,17 +41,32 @@ def make_dictdata(root_file_path, is_t0_offset = False):
         for i in range(len(tree["ch"])):
             # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
             ch = tree["ch"][i]
-            for UorD in [0, 1]:
-                # -- ADC -----
-                if "adc_p0_val" in tree.keys():
-                    key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
-                    data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
+            exception = [
+                detector_id_list["BAC"],
+                detector_id_list["KVC"],
+            ]
+            if detector_id not in exception:
+                for UorD in [0, 1]:
+                    if UorD == 1 and detector_id in [detector_id_list["T1"], detector_id_list["SAC3"], detector_id_list["SFV"]]:
+                        continue
+                    # -- ADC -----
+                    if "adc_p0_val" in tree.keys():
+                        key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
+                        data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
 
-                # -- TDC -----
-                if "tdc_p0_val" in tree.keys():
-                    if detector_id == detector_id_list["BAC"]:
-                    key = f"{detector_id}-0-{ch:.0f}-1-{UorD:.0f}"
-                    data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ] 
+                    # -- TDC -----
+                    if "tdc_p0_val" in tree.keys():
+                        key = f"{detector_id}-0-{ch:.0f}-1-{UorD:.0f}"
+                        data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ]
+            else:
+                if detector_id == detector_id_list["BAC"]:
+                    if "tdc_p0_val" in tree.keys():
+                        key = f"{detector_id}-0-4-1-0"
+                        data[key] = [ tree["tdc_p0_val"][0][0], -0.0009765625 ]
+                elif detector_id == detector_id_list["KVC"]:
+                    if "tdc_p0_val" in tree.keys():
+                        key = f"{detector_id}-0-{ch:.0f}-1-4"
+                        data[key] = [ tree["tdc_p0_val"][i][0], -0.0009765625 ]
 
     return data
 # ---------------------------------------------------------------------------
