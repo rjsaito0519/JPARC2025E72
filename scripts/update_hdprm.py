@@ -49,6 +49,7 @@ def make_dictdata(root_file_path, is_t0_offset = False):
 
                 # -- TDC -----
                 if "tdc_p0_val" in tree.keys():
+                    if detector_id == detector_id_list["BAC"]:
                     key = f"{detector_id}-0-{ch:.0f}-1-{UorD:.0f}"
                     data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ] 
 
