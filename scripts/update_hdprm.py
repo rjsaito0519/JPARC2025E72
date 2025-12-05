@@ -5,7 +5,7 @@ detector_id_list = {
     "BHT":  1,
     "T0":   2,
     "BH2":  3,
-    "BH2":  4,
+    "BAC":  4,
     "HTOF": 5,
     "KVC":  6,
     "T1":   7, 
@@ -38,18 +38,19 @@ def make_dictdata(root_file_path, is_t0_offset = False):
             key = f"{detector_id}-0-{ch:.0f}-1-2"
             data[key] = [ tree["offset_p0_val"][i][0], 1.0 ]
     else:
-        print("adc_p0_val" in tree.keys())
         for i in range(len(tree["ch"])):
             # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
             ch = tree["ch"][i]
             for UorD in [0, 1]:
                 # -- ADC -----
-                key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
-                data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
+                if "adc_p0_val" in tree.keys():
+                    key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
+                    data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
 
                 # -- TDC -----
-                key = f"{detector_id}-0-{ch:.0f}-1-{UorD:.0f}"
-                data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ] 
+                if "tdc_p0_val" in tree.keys():
+                    key = f"{detector_id}-0-{ch:.0f}-1-{UorD:.0f}"
+                    data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ] 
 
     return data
 # ---------------------------------------------------------------------------
