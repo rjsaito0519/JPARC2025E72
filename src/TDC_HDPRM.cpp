@@ -76,8 +76,14 @@ void analyze(TString path, TString counter, TString particle){
     // -- tdc ----------
     TH1D *h_tdc[2][conf.num_of_ch.at(counter.Data())];
     for (Int_t i = 0; i < conf.num_of_ch.at(counter.Data()); i++ ) {
-        h_tdc[0][i] = (TH1D*)f->Get(Form("%s_TDC_seg%dU_%s", counter_upper.Data(), i, particle.Data()));
-        h_tdc[1][i] = (TH1D*)f->Get(Form("%s_TDC_seg%dD_%s", counter_upper.Data(), i, particle.Data()));
+        if (counter == "bac") {
+            h_tdc[0][i] = (TH1D*)f->Get(Form("%s_TDC_seg4U_%s", counter_upper.Data(), particle.Data()));
+        } else if (counter == "kvc") {
+            h_tdc[0][i] = (TH1D*)f->Get(Form("%s_TDC_seg%dS_%s", counter_upper.Data(), i, particle.Data()));
+        } else {
+            h_tdc[0][i] = (TH1D*)f->Get(Form("%s_TDC_seg%dU_%s", counter_upper.Data(), i, particle.Data()));
+            h_tdc[1][i] = (TH1D*)f->Get(Form("%s_TDC_seg%dD_%s", counter_upper.Data(), i, particle.Data()));
+        }
     }
 
     // -- set tdc range ----------
@@ -121,7 +127,7 @@ void analyze(TString path, TString counter, TString particle){
         tdc_up.push_back(result);
         nth_pad++;
 
-        if (counter != "t1" && counter != "sac3" && counter != "sfv") {
+        if (counter != "bac" && counter != "kvc" && counter != "t1" && counter != "sac3" && counter != "sfv") {
             // -- DOWN -----
             result = ana_helper::tdc_fit(h_tdc[1][i], c_tdc, nth_pad);
             tdc_down.push_back(result);
