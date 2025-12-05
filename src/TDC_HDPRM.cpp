@@ -157,7 +157,7 @@ void analyze(TString path, TString counter, TString particle){
         // -- tdc -----
         tdc_p0_val.push_back(tdc_up[i].par[1]);
         tdc_p0_err.push_back(tdc_up[i].err[1]);
-        if (counter != "t1" && counter != "sac3" && counter != "sfv") {
+        if (counter != "bac" && counter != "kvc" && counter != "t1" && counter != "sac3" && counter != "sfv") {
             tdc_p0_val.push_back(tdc_down[i].par[1]);
             tdc_p0_err.push_back(tdc_down[i].err[1]);
         }
