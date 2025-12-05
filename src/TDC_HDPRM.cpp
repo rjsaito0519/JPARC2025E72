@@ -91,7 +91,7 @@ void analyze(TString path, TString counter, TString particle){
     h_sum_tdc->Reset(); 
     for (Int_t i = 0; i < conf.num_of_ch.at(counter.Data()); i++) {
         h_sum_tdc->Add(h_tdc[0][i]);
-        h_sum_tdc->Add(h_tdc[1][i]);
+        if (counter != "bac" && counter != "kvc") h_sum_tdc->Add(h_tdc[1][i]);
     }
     ana_helper::set_tdc_search_range(h_sum_tdc);
 
