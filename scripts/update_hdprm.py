@@ -5,8 +5,13 @@ detector_id_list = {
     "BHT":  1,
     "T0":   2,
     "BH2":  3,
+    "BH2":  4,
     "HTOF": 5,
-    "CVC":  8
+    "KVC":  6,
+    "T1":   7, 
+    "CVC":  8,
+    "SAC3": 9,
+    "SFV": 10,
 }
 
 # -- prepare HDPRM data  -----------------------------------
@@ -15,16 +20,10 @@ def make_dictdata(root_file_path, is_t0_offset = False):
     file = uproot.open(root_file_path)
     tree = file["tree"].arrays(library="np")
     detector_id = -1
-    if "BHT" in root_file_path:
-        detector_id = detector_id_list["BHT"]
-    elif "T0" in root_file_path:
-        detector_id = detector_id_list["T0"]
-    elif "BH2" in root_file_path:
-        detector_id = detector_id_list["BH2"]
-    elif "HTOF" in root_file_path:
-        detector_id = detector_id_list["HTOF"]
-    elif "CVC" in root_file_path:
-        detector_id = detector_id_list["CVC"]
+    for key, det_id in detector_id_list.items():
+        if key in root_file_path:
+            detector_id = det_id
+            break
 
     if detector_id == -1:
         print("something wrong")
@@ -39,7 +38,8 @@ def make_dictdata(root_file_path, is_t0_offset = False):
             key = f"{detector_id}-0-{ch:.0f}-1-2"
             data[key] = [ tree["offset_p0_val"][i][0], 1.0 ]
     else:
-        for i in range(len(tree["adc_p0_val"])):
+        print("adc_p0_val" in tree.keys())
+        for i in range(len(tree["ch"])):
             # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
             ch = tree["ch"][i]
             for UorD in [0, 1]:
