@@ -29,12 +29,13 @@ if args.param_type not in ["hdprm", "t0", "hdphc", "dctdc", "residual"]:
 import os
 import shutil
 import numpy as np
+from termcolor import colored
 
 def report_status(do_succeeded, counter_name):
     if do_succeeded:
-        print(f"\033[92m✅ {counter_name} {args.param_type} successfully updated\033[0m")
+        print(colored(f"[OK]   {counter_name} successfully updated", "green"))
     else:
-        print(f"\033[91m❌ Failed to update {counter_name} {args.param_type}\033[0m")
+        print(colored(f"[FAIL] {counter_name} update failed", "red"))
 
 import update_hdprm
 import update_phc
@@ -71,26 +72,40 @@ if not os.path.isfile(dcgeo_target_file):
 # update param file
 # ---------------------------------------------------------------------------
 if args.param_type == "hdprm":
-    # -- BHT -----
-    data = update_hdprm.make_dictdata(os.path.join(conf.data_dir, f"root/run{args.run_num:0=5}_BHT_HDPRM_{args.suffix}.root"))
-    do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
-    report_status(do_succeeded, "BHT")
+    detectors = ["BHT", "BH2", "BAC", "HTOF", "KVC", "T1", "CVC", "SAC3", "SFV"]
+    for det in detectors:
+        root_file = os.path.join(
+            conf.data_dir,
+            f"root/run{args.run_num:0=5}_{det}_HDPRM_{args.suffix}.root"
+        )
+        if not os.path.exists(root_file):
+            print(colored(f"[SKIP] {det}: file not found → {root_file}", "yellow"))
+            continue
 
-    # -- BH2 -----
-    data = update_hdprm.make_dictdata(os.path.join(conf.data_dir, f"root/run{args.run_num:0=5}_BH2_HDPRM_{args.suffix}.root"))
-    do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
-    report_status(do_succeeded, "BH2")
+        data = update_hdprm.make_dictdata(root_file)
+        do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
+        report_status(do_succeeded, det)
+
+    # # -- BHT -----
+    # data = update_hdprm.make_dictdata(os.path.join(conf.data_dir, f"root/run{args.run_num:0=5}_BHT_HDPRM_{args.suffix}.root"))
+    # do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
+    # report_status(do_succeeded, "BHT")
+
+    # # -- BH2 -----
+    # data = update_hdprm.make_dictdata(os.path.join(conf.data_dir, f"root/run{args.run_num:0=5}_BH2_HDPRM_{args.suffix}.root"))
+    # do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
+    # report_status(do_succeeded, "BH2")
 
     # # -- HTOF -----
     # data = update_hdprm.make_dictdata(os.path.join(conf.data_dir, f"root/run{args.run_num:0=5}_HTOF_HDPRM_{args.suffix}.root"))
     # do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
     # report_status(do_succeeded, "HTOF")
 
-    if (args.ftof):
-        # -- CVC -----
-        data = update_hdprm.make_dictdata(os.path.join(conf.data_dir, f"root/run{args.run_num:0=5}_CVC_HDPRM_{args.suffix}.root"))
-        do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
-        report_status(do_succeeded, "CVC")
+    # if (args.ftof):
+    #     # -- CVC -----
+    #     data = update_hdprm.make_dictdata(os.path.join(conf.data_dir, f"root/run{args.run_num:0=5}_CVC_HDPRM_{args.suffix}.root"))
+    #     do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
+    #     report_status(do_succeeded, "CVC")
 
 
 elif args.param_type == "t0":
