@@ -1,21 +1,20 @@
 // hdprm_fit_tool.C
-// Histの左右レンジを指定して、その範囲でフィットするインタラクティブツール
+// Hist の左右レンジを指定して、その範囲でフィットするインタラクティブツール
 //
 // 使い方例:
 //
 // root -l
 // .L hdprm_fit_tool.C+
 //
-// hdprm::set_path(".../run00001_HTOF_HDPRM_Pi.root"); // 入力ROOT
+// set_path(".../run00001_HTOF_HDPRM_Pi.root"); // 入力ROOT
 // // 粒子はデフォルト "Pi" なので省略可
 //
-// hdprm::set_counter("htof-u-0"); // det-ud-seg or det-seg-ud
-// // hdprm::set_counter("htof-0-u");
-// // hdprm::set_counter("bh2-u-1");
+// set_counter("htof-u-0");  // det-ud-seg or det-seg-ud
+// // set_counter("htof-0-u");
+// // set_counter("bh2-u-1");
 //
-// hdprm::set_range(420, 650);
-// hdprm::fit("auto"); // "gaus", "landau", "auto"
-
+// set_range(420, 650);
+// fit("auto"); // "gaus", "landau", "auto"
 
 #include <iostream>
 #include <cstdio>
@@ -35,39 +34,43 @@
 namespace hdprm {
 
 struct State {
-    TString path;
-    TString particle;
-    TString counter;
-    TString histName;
-    Double_t range_left;
-    Double_t range_right;
-    Int_t    rebin;
+    TString path;        // 入力 ROOT ファイル
+    TString particle;    // 粒子名（デフォルト "Pi"）
+    TString counter;     // "htof-u-0" / "htof-0-u" / "bh2-u-1" など
+    TString histName;    // 実際のヒスト名
+    Double_t range_left;  // フィット左端
+    Double_t range_right; // フィット右端
+    Int_t    rebin;       // Rebin ファクタ
 };
 
 static State    g;
 static bool     gInit   = false;
-static TFile*   hdFile  = nullptr;   // ★ rename
+static TFile*   hdFile  = nullptr;   // ROOT の gFile マクロと衝突しないように
 static TCanvas* gCanvas = nullptr;
 
-//-----------------------------------------------
+//--------------------------------------------------
+// 初期化
+//--------------------------------------------------
 void ensure_init()
 {
     if (gInit) return;
     g.path        = "";
-    g.particle    = "Pi";   // ★ default
+    g.particle    = "Pi";   // デフォルト粒子名
     g.counter     = "";
     g.histName    = "";
     g.range_left  = 0.0;
     g.range_right = 0.0;
     g.rebin       = 1;
-    gInit = true;
+    gInit         = true;
 }
 
-//-----------------------------------------------
+//--------------------------------------------------
+// カウンタキー (det, ud, seg)
+//--------------------------------------------------
 struct DetectorKey {
-    TString det;
-    TString ud;
-    int     seg;
+    TString det;   // "htof", "bh2", ...
+    TString ud;    // "u", "d", "s"
+    int     seg;   // segment number
     bool    valid;
 };
 
@@ -83,22 +86,23 @@ DetectorKey parse_detector_key(const TString& counter)
     char ud[32];
     int seg;
 
-    // pattern1: det-ud-seg
+    // pattern 1: det-ud-seg  (例: htof-u-0, bh2-d-1)
     if (std::sscanf(counter.Data(), "%[^-]-%[^-]-%d", det, ud, &seg) == 3) {
-        res.det = det;
-        res.ud  = ud;
-        res.seg = seg;
+        res.det   = det;
+        res.ud    = ud;
+        res.seg   = seg;
         res.ud.ToLower();
         res.valid = true;
         return res;
     }
+
+    // pattern 2: det-seg-ud  (例: htof-0-u)
     char ud2[32];
-    int seg2;
-    // pattern2: det-seg-ud
+    int  seg2;
     if (std::sscanf(counter.Data(), "%[^-]-%d-%[^-]", det, &seg2, ud2) == 3) {
-        res.det = det;
-        res.ud  = ud2;
-        res.seg = seg2;
+        res.det   = det;
+        res.ud    = ud2;
+        res.seg   = seg2;
         res.ud.ToLower();
         res.valid = true;
         return res;
@@ -109,27 +113,35 @@ DetectorKey parse_detector_key(const TString& counter)
     return res;
 }
 
-//-----------------------------------------------
+//--------------------------------------------------
+// detector/ud/seg -> ADC ヒスト名
+//   必要ならここを自分の環境に合わせて修正
+//--------------------------------------------------
 TString counter_to_hist_adc(const TString& counter, const TString& particle)
 {
     DetectorKey k = parse_detector_key(counter);
     if (!k.valid) return "";
 
     TString ud = k.ud;
-    ud.ToUpper(); // U/D/S
+    ud.ToUpper(); // "u" -> "U"
 
     if (k.det == "htof") {
+        // 例: HTOF_ADC_seg%dU_%s
         return Form("HTOF_ADC_seg%d%s_%s", k.seg, ud.Data(), particle.Data());
     }
     else if (k.det == "bh2") {
+        // 例: BH2_ADC_seg%dU_%s
         return Form("BH2_ADC_seg%d%s_%s", k.seg, ud.Data(), particle.Data());
     }
     else {
+        // その他は汎用形式 "<DET>_ADC_seg%dX_%s" と仮定
         return Form("%s_ADC_seg%d%s_%s", k.det.Data(), k.seg, ud.Data(), particle.Data());
     }
 }
 
-//-----------------------------------------------
+//--------------------------------------------------
+// 設定系
+//--------------------------------------------------
 void set_path(const char* path)
 {
     ensure_init();
@@ -149,6 +161,7 @@ void set_path(const char* path)
     }
 }
 
+// 粒子名を設定（デフォルト "Pi"）
 void set_particle(const char* particle)
 {
     ensure_init();
@@ -156,6 +169,7 @@ void set_particle(const char* particle)
     std::cout << "[hdprm] set_particle: " << g.particle << std::endl;
 }
 
+// カウンタ名設定 ("htof-u-0", "htof-0-u", "bh2-u-1", ...)
 void set_counter(const char* counter)
 {
     ensure_init();
@@ -195,7 +209,9 @@ void set_rebin(Int_t r)
     std::cout << "[hdprm] set_rebin: " << g.rebin << std::endl;
 }
 
-//-----------------------------------------------
+//--------------------------------------------------
+// 指定範囲内でのピーク位置を探す
+//--------------------------------------------------
 Double_t find_peak_x(TH1D* h, Double_t xleft, Double_t xright)
 {
     Int_t bin_min = h->FindBin(xleft);
@@ -214,17 +230,20 @@ Double_t find_peak_x(TH1D* h, Double_t xleft, Double_t xright)
     return h->GetBinCenter(max_bin);
 }
 
-//-----------------------------------------------
+//--------------------------------------------------
+// フィット本体
+//   model = "gaus", "landau", "auto"
+//--------------------------------------------------
 void fit(const char* model = "gaus", Bool_t logy = kTRUE)
 {
     ensure_init();
 
     if (!hdFile) {
-        std::cerr << "Error: file not opened.\n";
+        std::cerr << "Error: file not opened. Call set_path() first." << std::endl;
         return;
     }
     if (g.histName == "") {
-        std::cerr << "Error: histName not set.\n";
+        std::cerr << "Error: histName not set. Call set_counter() first." << std::endl;
         return;
     }
 
@@ -234,6 +253,7 @@ void fit(const char* model = "gaus", Bool_t logy = kTRUE)
         return;
     }
 
+    // Rebin 用 clone
     TH1D* h = (TH1D*)h_orig->Clone(Form("%s_reb", h_orig->GetName()));
     if (g.rebin > 1) {
         h = (TH1D*)h->Rebin(g.rebin, h->GetName());
@@ -245,7 +265,7 @@ void fit(const char* model = "gaus", Bool_t logy = kTRUE)
     Double_t fit_left  = (g.range_left  > xmin) ? g.range_left  : xmin;
     Double_t fit_right = (g.range_right > fit_left) ? g.range_right : xmax;
 
-    // Peak
+    // 指定範囲内でピーク位置探索 (初期値用 & 可視化用)
     Double_t peakX = find_peak_x(h, fit_left, fit_right);
     Double_t width_guess = (fit_right - fit_left) / 6.0;
     if (width_guess <= 0) width_guess = h->GetStdDev();
@@ -258,18 +278,26 @@ void fit(const char* model = "gaus", Bool_t logy = kTRUE)
     if (logy) gPad->SetLogy(1);
     else      gPad->SetLogy(0);
 
-    // Draw
+    // Draw hist
     h->GetXaxis()->SetRangeUser(fit_left - 0.2*(fit_right-fit_left),
                                 fit_right + 0.2*(fit_right-fit_left));
     h->Draw();
 
+    // ★ Peak marker (赤い点線)
+    TLine *peakLine = new TLine(peakX, 0, peakX, h->GetMaximum());
+    peakLine->SetLineColor(kRed);
+    peakLine->SetLineStyle(2);
+    peakLine->SetLineWidth(2);
+    peakLine->Draw("same");
+
     // Fit funcs
-    TString m(model); m.ToLower();
+    TString m(model);
+    m.ToLower();
 
-    TF1* f_gaus = new TF1("f_user_gaus", "gaus", fit_left, fit_right);
-    f_gaus->SetParameters(h->GetMaximum(), peakX, width_guess);
-
+    TF1* f_gaus   = new TF1("f_user_gaus",   "gaus",   fit_left, fit_right);
     TF1* f_landau = new TF1("f_user_landau", "landaun", fit_left, fit_right);
+
+    f_gaus->SetParameters(h->GetMaximum(), peakX, width_guess);
     f_landau->SetParameters(h->GetMaximum(), peakX, width_guess);
 
     TF1* f_best = nullptr;
@@ -297,22 +325,23 @@ void fit(const char* model = "gaus", Bool_t logy = kTRUE)
         f_best = (val_g <= val_l ? f_gaus : f_landau);
     }
     else {
-        std::cerr << "Error: model = " << model << " invalid.\n";
+        std::cerr << "Error: unknown model '" << model
+                  << "', use 'gaus', 'landau', or 'auto'." << std::endl;
         return;
     }
 
-    // Box
+    // フィット範囲塗りつぶし
     Double_t ymax = h->GetMaximum();
     TBox* box = new TBox(fit_left, 0, fit_right, ymax);
     box->SetFillStyle(3004);
     box->SetFillColor(kOrange);
     box->Draw("same");
 
-    // Draw fit
+    // フィット関数
     f_best->SetLineWidth(2);
     f_best->Draw("same");
 
-    // Label
+    // ラベル
     TLatex latex;
     latex.SetNDC();
     latex.SetTextSize(0.04);
@@ -323,22 +352,37 @@ void fit(const char* model = "gaus", Bool_t logy = kTRUE)
 
     gCanvas->Update();
 
-    // Output
+    // 結果出力
     Double_t chi2  = f_best->GetChisquare();
     Double_t ndf   = f_best->GetNDF();
+    Double_t p0    = f_best->GetParameter(0);
     Double_t p1    = f_best->GetParameter(1);
+    Double_t p2    = f_best->GetParameter(2);
+    Double_t e0    = f_best->GetParError(0);
     Double_t e1    = f_best->GetParError(1);
+    Double_t e2    = f_best->GetParError(2);
 
-    std::cout << "========================================\n";
-    std::cout << " counter   : " << g.counter << "\n";
-    std::cout << " histName  : " << g.histName << "\n";
-    std::cout << " particle  : " << g.particle << "\n";
-    std::cout << " model     : " << m << "\n";
-    std::cout << " fit range : [" << fit_left << ", " << fit_right << "]\n";
+    std::cout << "========================================" << std::endl;
+    std::cout << " counter   : " << g.counter << std::endl;
+    std::cout << " histName  : " << g.histName << std::endl;
+    std::cout << " particle  : " << g.particle << std::endl;
+    std::cout << " model     : " << m << std::endl;
+    std::cout << " fit range : [" << fit_left << ", " << fit_right << "]" << std::endl;
     std::cout << " chi2/ndf  : " << chi2 << " / " << ndf
-              << " = " << ( (ndf>0)?chi2/ndf:0 ) << "\n";
-    std::cout << " p1 (peak) : " << p1 << " ± " << e1 << "\n";
-    std::cout << "========================================\n";
+              << " = " << ( (ndf>0)?chi2/ndf:0 ) << std::endl;
+    std::cout << " p0 (amp)  : " << p0 << " ± " << e0 << std::endl;
+    if (m == "gaus") {
+        std::cout << " p1 (mean) : " << p1 << " ± " << e1 << std::endl;
+        std::cout << " p2 (sigma): " << p2 << " ± " << e2 << std::endl;
+    } else {
+        std::cout << " p1 (MPV)  : " << p1 << " ± " << e1 << std::endl;
+        std::cout << " p2 (width): " << p2 << " ± " << e2 << std::endl;
+    }
+    std::cout << Form("set_range(%.1f, %.1f)", p1-1.8*p2, p1+2.2*p2) << std::endl;
+    std::cout << "========================================" << std::endl;
 }
 
 } // namespace hdprm
+
+// これで毎回 hdprm:: を書かなくてよくなる
+using namespace hdprm;
