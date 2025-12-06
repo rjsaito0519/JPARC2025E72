@@ -10,7 +10,8 @@ DETECTOR_CONFIG = {
      1: 63, # CId 1 BHT
      3: 15, # CId 3 BH2
      5: 34, # CId 5 HTOF
-     8: 8,  # CId 8 CVC
+     7:  1, # CId 7 T1
+     8:  8, # CId 8 CVC
      11: 8  # CId 11 COBO
 }
 
@@ -20,11 +21,11 @@ PLID_LIST = [0]
 # ★ CIdごとに UorD のリストを定義します。
 UORD_LIST_BY_CID = {
     "default": [0, 1],
+     7 : [0],
     11 : [0]
 }
 
 # Type と nParam の固定値
-DEFAULT_TYPE = 1
 DEFAULT_NPARAM = 3
 
 def get_initial_params_phc(CId, PlId, SegId, UorD):
@@ -38,42 +39,21 @@ def get_initial_params_phc(CId, PlId, SegId, UorD):
     p0 = 0.0
     p1 = 0.0
     p2 = 0.0
+    phc_type = 1
 
     # --- CId ごとに初期値を設定 ---
-    
-    # CId=1 (HODO) の適当な初期値
-    if CId == 1:
-        if UorD == 0:
-            p0 = 3.0
-            p1 = 0.1
-            p2 = 3.0
-        elif UorD == 1:
-            p0 = 5.0
-            p1 = -0.5
-            p2 = 4.0
-
-    # CId=2 (BPD) の適当な初期値
-    elif CId == 2:
-        if UorD == 0:
-            p0 = 1.5
-            p1 = 0.1
-            p2 = 1.5
-        elif UorD == 1:
-            p0 = 2.0
-            p1 = 0.0
-            p2 = 2.0
-        
-    elif CId == 11:
-        if UorD == 0:
-            p0 = 0
-            p1 = 0
-            p2 = 0
+            
+    if CId == 11:
+        phc_type = 0
+        p0 = 0
+        p1 = 0
+        p2 = 0
             
     # 他のCId (4, 6, 14, 29, 30, 31, 32, 33) は
     # デフォルトの (0.0, 0.0, 0.0) が使われます。
 
     # p0, p1, p2 をタプルで返す
-    return p0, p1, p2
+    return phc_type, p0, p1, p2
 
 # --- スクリプト本体 ---
 
@@ -119,12 +99,12 @@ def main():
                         for SegId in range(seg_count):
                             
                             # 3. 初期値を取得
-                            p0, p1, p2 = get_initial_params_phc(CId, PlId, SegId, UorD)
+                            phc_type, p0, p1, p2 = get_initial_params_phc(CId, PlId, SegId, UorD)
                             
                             # 4. 行をフォーマット
                             line = format_line_phc(
                                 CId, PlId, SegId, UorD, 
-                                DEFAULT_TYPE, DEFAULT_NPARAM, 
+                                phc_type, DEFAULT_NPARAM, 
                                 p0, p1, p2
                             )
                             
