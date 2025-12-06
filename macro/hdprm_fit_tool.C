@@ -246,7 +246,7 @@ Double_t find_peak_x(TH1D* h, Double_t xleft, Double_t xright)
 //   ・結果から次回用レンジを更新
 //   ・p1, p2 を State に保存（収束判定用）
 //--------------------------------------------------
-void fit(const char* model = "gaus", Bool_t logy = kTRUE)
+void fit(const char* model = "auto", Bool_t logy = kTRUE)
 {
     ensure_init();
 
