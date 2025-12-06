@@ -239,6 +239,7 @@ Int_t main(int argc, char** argv) {
     }
 
     conf.detector = "htof";
+    conf.hdprm_mip_half_width_ratio = 0.1;
     conf.adc_ped_remove_nsigma = 15.0;
     analyze(path, particle);
     return 0;

@@ -179,7 +179,7 @@ namespace ana_helper {
             f_prefit->SetRange(mip_pos-mip_half_width, mip_pos+mip_half_width);
             f_prefit->SetParameter(1, mip_pos);
             f_prefit->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
-            f_prefit->SetParameter(2, mip_half_width*0.9);
+            f_prefit->SetParameter(2, mip_half_width*conf.hdprm_mip_half_width_ratio);
             h->Fit(f_prefit, "0QEMR", "", mip_range_left, mip_pos+mip_half_width);
             for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
             delete f_prefit;
