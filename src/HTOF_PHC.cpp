@@ -71,10 +71,15 @@ void analyze(TString path, TString particle){
     // | prepare histogram |
     // +-------------------+    
     // -- BTOF vs dE ----------
-    TH2D *h_htof_btof_vs_de[2][conf.num_of_ch.at("htof")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++ ) h_htof_btof_vs_de[0][i] = (TH2D*)f->Get(Form("HTOF_seg%dU_CTOF_vs_DeltaE_%s", i, particle.Data()));
-    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++ ) h_htof_btof_vs_de[1][i] = (TH2D*)f->Get(Form("HTOF_seg%dD_CTOF_vs_DeltaE_%s", i, particle.Data()));
-
+    TH2D *h_htof_tof_vs_de[2][conf.num_of_ch.at("htof")];
+    TH2D *h_htof_ctof_vs_de[2][conf.num_of_ch.at("htof")];
+    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++ ) {
+        h_htof_tof_vs_de[0][i]  = (TH2D*)f->Get(Form("HTOF_seg%dU_TOF_vs_DeltaE_%s", i, particle.Data()));
+        h_htof_tof_vs_de[1][i]  = (TH2D*)f->Get(Form("HTOF_seg%dD_TOF_vs_DeltaE_%s", i, particle.Data()));
+        h_htof_ctof_vs_de[0][i] = (TH2D*)f->Get(Form("HTOF_seg%dU_CTOF_vs_DeltaE_%s", i, particle.Data()));
+        h_htof_ctof_vs_de[1][i] = (TH2D*)f->Get(Form("HTOF_seg%dD_CTOF_vs_DeltaE_%s", i, particle.Data()));
+    }
+    
     // +--------------+
     // | fit and plot |
     // +--------------+
@@ -102,13 +107,19 @@ void analyze(TString path, TString particle){
 
         FitResult result;
         // -- UP -----
-        result = ana_helper::phc_fit(h_htof_btof_vs_de[0][i], c_htof, nth_pad);
+        result = ana_helper::phc_fit(h_htof_tof_vs_de[0][i], c_htof, nth_pad);
         phc_up.push_back(result);
+        nth_pad++;
+        c_htof->cd(nth_pad);
+        h_htof_ctof_vs_de[0][i]->Draw();
         nth_pad++;
 
         // -- DOWN -----
-        result = ana_helper::phc_fit(h_htof_btof_vs_de[1][i], c_htof, nth_pad);
+        result = ana_helper::phc_fit(h_htof_tof_vs_de[1][i], c_htof, nth_pad);
         phc_down.push_back(result);
+        nth_pad++;
+        c_htof->cd(nth_pad);
+        h_htof_ctof_vs_de[1][i]->Draw();
         nth_pad++;
     }
     c_htof->Print(pdf_path);
