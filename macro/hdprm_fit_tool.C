@@ -14,7 +14,8 @@
 // // set_counter("bh2-u-1");
 //
 // set_range(420, 650);
-// fit("auto"); // "gaus", "landau", "auto"
+// fit_iter(3, "auto");   // 自動レンジ更新付きで最大3回まで回す
+// // fit("auto");        // 1回だけ回す場合
 
 #include <iostream>
 #include <cstdio>
@@ -41,6 +42,11 @@ struct State {
     Double_t range_left;  // フィット左端
     Double_t range_right; // フィット右端
     Int_t    rebin;       // Rebin ファクタ
+
+    // 直近の fit 結果（収束判定用）
+    Double_t last_p1;
+    Double_t last_p2;
+    Bool_t   has_last_fit;
 };
 
 static State    g;
@@ -61,6 +67,9 @@ void ensure_init()
     g.range_left  = 0.0;
     g.range_right = 0.0;
     g.rebin       = 1;
+    g.last_p1     = 0.0;
+    g.last_p2     = 0.0;
+    g.has_last_fit = kFALSE;
     gInit         = true;
 }
 
@@ -233,6 +242,9 @@ Double_t find_peak_x(TH1D* h, Double_t xleft, Double_t xright)
 //--------------------------------------------------
 // フィット本体
 //   model = "gaus", "landau", "auto"
+//   ・1回だけフィット
+//   ・結果から次回用レンジを更新
+//   ・p1, p2 を State に保存（収束判定用）
 //--------------------------------------------------
 void fit(const char* model = "gaus", Bool_t logy = kTRUE)
 {
@@ -283,7 +295,7 @@ void fit(const char* model = "gaus", Bool_t logy = kTRUE)
                                 fit_right + 0.2*(fit_right-fit_left));
     h->Draw();
 
-    // ★ Peak marker (赤い点線)
+    // Peak marker (赤い点線)
     TLine *peakLine = new TLine(peakX, 0, peakX, h->GetMaximum());
     peakLine->SetLineColor(kRed);
     peakLine->SetLineStyle(2);
@@ -383,16 +395,89 @@ void fit(const char* model = "gaus", Bool_t logy = kTRUE)
         std::cout << " p1 (MPV)  : " << p1 << " ± " << e1 << std::endl;
         std::cout << " p2 (width): " << p2 << " ± " << e2 << std::endl;
     }
+
+    // ---- 次のイテレーション用にレンジを自動更新 ----
+    Double_t new_left  = p1 - 1.8 * p2;
+    Double_t new_right = p1 + 2.2 * p2;
+
+    // ヒストの範囲をはみ出さないようにクリップ
+    Double_t axis_min = h->GetXaxis()->GetXmin();
+    Double_t axis_max = h->GetXaxis()->GetXmax();
+    if (new_left  < axis_min) new_left  = axis_min;
+    if (new_right > axis_max) new_right = axis_max;
+
+    // グローバル状態を更新
+    g.range_left  = new_left;
+    g.range_right = new_right;
+
+    // 直近の p1, p2 を保存（fit_iter の収束判定用）
+    g.last_p1 = p1;
+    g.last_p2 = p2;
+    g.has_last_fit = kTRUE;
+
+    // ログ＆コピペ用出力
     std::cout << Form("{ %.1f, %.1f, %.1f, %d }", p1-1.8*p2, p1+2.2*p2, p1, m=="landau") << std::endl;
-    std::cout << Form("set_range(%.1f, %.1f); fit(\"auto\")", p1-1.8*p2, p1+2.2*p2) << std::endl;
+    std::cout << Form("set_range(%.1f, %.1f); fit(\"%s\")",
+                      new_left, new_right, m.Data()) << std::endl;
+
     std::cout << "========================================" << std::endl;
+}
+
+//--------------------------------------------------
+// イテレーション版 fit
+//   n_iter: 最大イテレーション回数
+//   model : "gaus", "landau", "auto"
+//   logy  : yログ表示
+//   内部で:
+//     - 毎回 fit() を呼ぶ
+//     - p1, p2 の変化が十分小さくなったら早期終了
+//--------------------------------------------------
+void fit_iter(Int_t n_iter = 3, const char* model = "auto", Bool_t logy = kTRUE)
+{
+    ensure_init();
+
+    const Double_t thr_p1 = 0.1;  // 収束判定閾値 (p1 の絶対変化)
+    const Double_t thr_p2 = 0.1;  // 収束判定閾値 (p2 の絶対変化)
+
+    Double_t prev_p1 = 0.0;
+    Double_t prev_p2 = 0.0;
+    Bool_t   has_prev = kFALSE;
+
+    for (Int_t i = 0; i < n_iter; ++i) {
+        std::cout << "---------- iteration "
+                  << (i+1) << " / " << n_iter
+                  << " ----------" << std::endl;
+
+        // 1回分フィット（内部で g.last_p1, g.last_p2 が更新される）
+        fit(model, logy);
+
+        if (!g.has_last_fit) {
+            std::cout << "[fit_iter] no valid fit result, stopping." << std::endl;
+            break;
+        }
+
+        if (has_prev) {
+            Double_t dp1 = TMath::Abs(g.last_p1 - prev_p1);
+            Double_t dp2 = TMath::Abs(g.last_p2 - prev_p2);
+
+            std::cout << Form("[fit_iter] delta p1 = %.4f, delta p2 = %.4f",
+                              dp1, dp2) << std::endl;
+
+            if (dp1 < thr_p1 && dp2 < thr_p2) {
+                std::cout << "[fit_iter] converged, stopping at iteration "
+                          << (i+1) << std::endl;
+                break;
+            }
+        }
+
+        prev_p1 = g.last_p1;
+        prev_p2 = g.last_p2;
+        has_prev = kTRUE;
+    }
 }
 
 } // namespace hdprm
 
-// --- namespace hdprm {...} の後に追加 ----
-
-// alias wrapper
 inline void set_path   (const char* p){ hdprm::set_path(p); }
 inline void set_particle(const char* p){ hdprm::set_particle(p);}
 inline void set_counter(const char* p){ hdprm::set_counter(p);}
@@ -401,3 +486,4 @@ inline void set_range_right(double x){ hdprm::set_range_right(x);}
 inline void set_range(double l,double r){ hdprm::set_range(l,r); }
 inline void set_rebin(int r){ hdprm::set_rebin(r); }
 inline void fit(const char* m="gaus", bool l=true){ hdprm::fit(m,l); }
+inline void fit_iter(int n=3, const char* m="auto", bool l=true){ hdprm::fit_iter(n,m,l); }
