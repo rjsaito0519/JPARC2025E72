@@ -432,7 +432,7 @@ void fit(const char* model = "auto", Bool_t logy = kTRUE)
 //     - 毎回 fit() を呼ぶ
 //     - p1, p2 の変化が十分小さくなったら早期終了
 //--------------------------------------------------
-void fit_iter(Int_t n_iter = 10, const char* model = "auto", Bool_t logy = kTRUE)
+void fit_iter(Int_t n_iter = 5, const char* model = "auto", Bool_t logy = kTRUE)
 {
     ensure_init();
 
@@ -486,4 +486,4 @@ inline void set_range_right(double x){ hdprm::set_range_right(x);}
 inline void set_range(double l,double r){ hdprm::set_range(l,r); }
 inline void set_rebin(int r){ hdprm::set_rebin(r); }
 inline void fit(const char* m="auto", bool l=true){ hdprm::fit(m,l); }
-inline void fit_iter(int n=10, const char* m="auto", bool l=true){ hdprm::fit_iter(n,m,l); }
+inline void fit_iter(int n=5, const char* m="auto", bool l=true){ hdprm::fit_iter(n,m,l); }
