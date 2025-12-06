@@ -14,15 +14,30 @@ detector_id_list = {
     "SFV": 10,
 }
 
+detector_n_ud_list = {
+    "BHT":  2,
+    "T0":   2,
+    "BH2":  2,
+    "BAC":  -1,
+    "HTOF": 3,
+    "KVC":  -1,
+    "T1":   1, 
+    "CVC":  2,
+    "SAC3": 1,
+    "SFV":  1,
+}
+
 # -- prepare HDPRM data  -----------------------------------
 def make_dictdata(root_file_path, is_t0_offset = False):
 
     file = uproot.open(root_file_path)
     tree = file["tree"].arrays(library="np")
     detector_id = -1
+    n_ud = -1
     for key, det_id in detector_id_list.items():
         if key in root_file_path:
             detector_id = det_id
+            n_ud = detector_n_ud_list[key]
             break
 
     if detector_id == -1:
@@ -41,14 +56,8 @@ def make_dictdata(root_file_path, is_t0_offset = False):
         for i in range(len(tree["ch"])):
             # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
             ch = tree["ch"][i]
-            exception = [
-                detector_id_list["BAC"],
-                detector_id_list["KVC"],
-            ]
-            if detector_id not in exception:
-                for UorD in [0, 1]:
-                    if UorD == 1 and detector_id in [detector_id_list["T1"], detector_id_list["SAC3"], detector_id_list["SFV"]]:
-                        continue
+            if n_ud != -1:
+                for UorD in range(n_ud):
                     # -- ADC -----
                     if "adc_p0_val" in tree.keys():
                         key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"

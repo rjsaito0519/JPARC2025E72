@@ -72,37 +72,49 @@ void analyze(TString path, TString particle){
     // | prepare histogram |
     // +-------------------+    
     // -- tdc ----------
-    TH1D *h_htof_tdc[2][conf.num_of_ch.at("htof")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++ ) h_htof_tdc[0][i] = (TH1D*)f->Get(Form("HTOF_TDC_seg%dU_%s", i, particle.Data()));
-    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++ ) h_htof_tdc[1][i] = (TH1D*)f->Get(Form("HTOF_TDC_seg%dD_%s", i, particle.Data()));
+    TH1D *h_htof_tdc[3][conf.num_of_ch.at("htof")];
+    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++ ) {
+        h_htof_tdc[0][i] = (TH1D*)f->Get(Form("HTOF_TDC_seg%dU_%s", i, particle.Data()));
+        h_htof_tdc[1][i] = (TH1D*)f->Get(Form("HTOF_TDC_seg%dD_%s", i, particle.Data()));
+        h_htof_tdc[2][i] = (TH1D*)f->Get(Form("HTOF_TDC_seg%dS_%s", i, particle.Data()));
+    }
+
     // -- adc ----------
-    TH1D *h_htof_adc[2][conf.num_of_ch.at("htof")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++ ) h_htof_adc[0][i] = (TH1D*)f->Get(Form("HTOF_ADC_seg%dU_%s", i, particle.Data()));
-    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++ ) h_htof_adc[1][i] = (TH1D*)f->Get(Form("HTOF_ADC_seg%dD_%s", i, particle.Data()));
+    TH1D *h_htof_adc[3][conf.num_of_ch.at("htof")];
+    for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++ ) {
+        h_htof_adc[0][i] = (TH1D*)f->Get(Form("HTOF_ADC_seg%dU_%s", i, particle.Data()));
+        h_htof_adc[1][i] = (TH1D*)f->Get(Form("HTOF_ADC_seg%dD_%s", i, particle.Data()));
+        h_htof_adc[2][i] = (TH1D*)f->Get(Form("HTOF_ADC_seg%dS_%s", i, particle.Data()));
+    }
 
     // -- set tdc range ----------
-    TH1D *h_sum_tdc = (TH1D*)h_htof_tdc[0][0]->Clone("h_sum_tdc");
-    h_sum_tdc->Reset(); 
+    TH1D *h_sum_tdc[2];
+    h_sum_tdc[0] = (TH1D*)h_htof_tdc[0][0]->Clone("h_sum_tdc_indiv");
+    h_sum_tdc[0]->Reset();
+    h_sum_tdc[1] = (TH1D*)h_htof_tdc[2][0]->Clone("h_sum_tdc_sum");
+    h_sum_tdc[1]->Reset();
     for (Int_t i = 0; i < conf.num_of_ch.at("htof"); i++) {
-        h_sum_tdc->Add(h_htof_tdc[0][i]);
-        h_sum_tdc->Add(h_htof_tdc[1][i]);
+        h_sum_tdc[0]->Add(h_htof_tdc[0][i]);
+        h_sum_tdc[0]->Add(h_htof_tdc[1][i]);
+        h_sum_tdc[1]->Add(h_htof_tdc[2][i]);
     }
-    ana_helper::set_tdc_search_range(h_sum_tdc);
 
     // +--------------+
     // | fit and plot |
     // +--------------+
     // -- prepare pdf -----
     Int_t nth_pad = 1;
-    Int_t rows = 2, cols = 2;
+    Int_t rows = 3, cols = 2;
     Int_t max_pads = rows * cols;
     TString pdf_path = Form("%s/img/run%05d_HTOF_HDPRM_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
 
     // -- container -----
     std::vector<FitResult> adc_up;
     std::vector<FitResult> adc_down;
+    std::vector<FitResult> adc_sum;
     std::vector<FitResult> tdc_up;
     std::vector<FitResult> tdc_down;
+    std::vector<FitResult> tdc_sum;
 
     auto c_htof = new TCanvas("htof", "", 1500, 1200);
     c_htof->Divide(cols, rows);
@@ -118,6 +130,7 @@ void analyze(TString path, TString particle){
 
         FitResult result;
         TString key;
+        ana_helper::set_tdc_search_range(h_sum_tdc[0]);
         // -- UP -----
         result = ana_helper::tdc_fit(h_htof_tdc[0][i], c_htof, nth_pad);
         tdc_up.push_back(result);
@@ -139,6 +152,18 @@ void analyze(TString path, TString particle){
         result = ana_helper::adc_fit(h_htof_adc[1][i], c_htof, nth_pad);
         adc_down.push_back(result);
         nth_pad++;        
+
+        ana_helper::set_tdc_search_range(h_sum_tdc[1]);
+        // -- SUM -----
+        result = ana_helper::tdc_fit(h_htof_tdc[2][i], c_htof, nth_pad);
+        tdc_sum.push_back(result);
+        nth_pad++;
+
+        key = Form("htof-%d-s", i);
+        conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
+        result = ana_helper::adc_fit(h_htof_adc[2][i], c_htof, nth_pad);
+        adc_sum.push_back(result);
+        nth_pad++;
     }
     c_htof->Print(pdf_path);
     c_htof->Print(pdf_path + "]"); // end
@@ -167,20 +192,26 @@ void analyze(TString path, TString particle){
         // -- pedestal -----
         adc_p0_val.push_back(adc_up[i-conf.htof_adc_exist_seg.first].par[1]);
         adc_p0_val.push_back(adc_down[i-conf.htof_adc_exist_seg.first].par[1]);
+        adc_p0_val.push_back(adc_sum[i-conf.htof_adc_exist_seg.first].par[1]);
         adc_p0_err.push_back(adc_up[i-conf.htof_adc_exist_seg.first].err[1]);
         adc_p0_err.push_back(adc_down[i-conf.htof_adc_exist_seg.first].err[1]);
+        adc_p0_err.push_back(adc_sum[i-conf.htof_adc_exist_seg.first].err[1]);
     
         // -- mip -----
         adc_p1_val.push_back(adc_up[i-conf.htof_adc_exist_seg.first].par[4]);
         adc_p1_val.push_back(adc_down[i-conf.htof_adc_exist_seg.first].par[4]);
+        adc_p1_val.push_back(adc_sum[i-conf.htof_adc_exist_seg.first].par[4]);
         adc_p1_err.push_back(adc_up[i-conf.htof_adc_exist_seg.first].err[4]);
         adc_p1_err.push_back(adc_down[i-conf.htof_adc_exist_seg.first].err[4]);
+        adc_p1_err.push_back(adc_sum[i-conf.htof_adc_exist_seg.first].err[4]);
 
         // -- tdc -----
         tdc_p0_val.push_back(tdc_up[i-conf.htof_adc_exist_seg.first].par[1]);
         tdc_p0_val.push_back(tdc_down[i-conf.htof_adc_exist_seg.first].par[1]);
+        tdc_p0_val.push_back(tdc_sum[i-conf.htof_adc_exist_seg.first].par[1]);
         tdc_p0_err.push_back(tdc_up[i-conf.htof_adc_exist_seg.first].err[1]);
         tdc_p0_err.push_back(tdc_down[i-conf.htof_adc_exist_seg.first].err[1]);
+        tdc_p0_err.push_back(tdc_sum[i-conf.htof_adc_exist_seg.first].err[1]);
     
         tree->Fill();
     }
