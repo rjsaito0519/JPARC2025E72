@@ -485,5 +485,5 @@ inline void set_range_left(double x){ hdprm::set_range_left(x); }
 inline void set_range_right(double x){ hdprm::set_range_right(x);}
 inline void set_range(double l,double r){ hdprm::set_range(l,r); }
 inline void set_rebin(int r){ hdprm::set_rebin(r); }
-inline void fit(const char* m="gaus", bool l=true){ hdprm::fit(m,l); }
-inline void fit_iter(int n=3, const char* m="auto", bool l=true){ hdprm::fit_iter(n,m,l); }
+inline void fit(const char* m="auto", bool l=true){ hdprm::fit(m,l); }
+inline void fit_iter(int n=10, const char* m="auto", bool l=true){ hdprm::fit_iter(n,m,l); }
