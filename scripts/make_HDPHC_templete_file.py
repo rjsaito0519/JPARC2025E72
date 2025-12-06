@@ -42,16 +42,11 @@ def get_initial_params_phc(CId, PlId, SegId, UorD):
     phc_type = 1
 
     # --- CId ごとに初期値を設定 ---
-            
-    if CId == 11:
+    if CId == 7:
         phc_type = 0
-        p0 = 0
-        p1 = 0
-        p2 = 0
+    elif CId == 11:
+        phc_type = 0
             
-    # 他のCId (4, 6, 14, 29, 30, 31, 32, 33) は
-    # デフォルトの (0.0, 0.0, 0.0) が使われます。
-
     # p0, p1, p2 をタプルで返す
     return phc_type, p0, p1, p2
 
