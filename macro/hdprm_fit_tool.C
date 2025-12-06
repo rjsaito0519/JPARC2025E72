@@ -432,7 +432,7 @@ void fit(const char* model = "gaus", Bool_t logy = kTRUE)
 //     - 毎回 fit() を呼ぶ
 //     - p1, p2 の変化が十分小さくなったら早期終了
 //--------------------------------------------------
-void fit_iter(Int_t n_iter = 3, const char* model = "auto", Bool_t logy = kTRUE)
+void fit_iter(Int_t n_iter = 10, const char* model = "auto", Bool_t logy = kTRUE)
 {
     ensure_init();
 
