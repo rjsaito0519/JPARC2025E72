@@ -384,5 +384,14 @@ void fit(const char* model = "gaus", Bool_t logy = kTRUE)
 
 } // namespace hdprm
 
-// これで毎回 hdprm:: を書かなくてよくなる
-using namespace hdprm;
+// --- namespace hdprm {...} の後に追加 ----
+
+// alias wrapper
+inline void set_path   (const char* p){ hdprm::set_path(p); }
+inline void set_particle(const char* p){ hdprm::set_particle(p);}
+inline void set_counter(const char* p){ hdprm::set_counter(p);}
+inline void set_range_left(double x){ hdprm::set_range_left(x); }
+inline void set_range_right(double x){ hdprm::set_range_right(x);}
+inline void set_range(double l,double r){ hdprm::set_range(l,r); }
+inline void set_rebin(int r){ hdprm::set_rebin(r); }
+inline void fit(const char* m="gaus", bool l=true){ hdprm::fit(m,l); }
