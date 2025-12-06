@@ -138,6 +138,7 @@ void analyze(TString path, TString particle){
 
         key = Form("htof-%d-u", i);
         conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
+        std::cout << conf.hdprm_mip_range_left << std::endl;
         result = ana_helper::adc_fit(h_htof_adc[0][i], c_htof, nth_pad);
         adc_up.push_back(result);
         nth_pad++;
@@ -149,6 +150,7 @@ void analyze(TString path, TString particle){
 
         key = Form("htof-%d-d", i);
         conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
+        std::cout << conf.hdprm_mip_range_left << std::endl;
         result = ana_helper::adc_fit(h_htof_adc[1][i], c_htof, nth_pad);
         adc_down.push_back(result);
         nth_pad++;        
@@ -161,6 +163,7 @@ void analyze(TString path, TString particle){
 
         key = Form("htof-%d-s", i);
         conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
+        std::cout << conf.hdprm_mip_range_left << std::endl;
         result = ana_helper::adc_fit(h_htof_adc[2][i], c_htof, nth_pad);
         adc_sum.push_back(result);
         nth_pad++;
