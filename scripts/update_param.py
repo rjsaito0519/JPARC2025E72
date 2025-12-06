@@ -93,39 +93,22 @@ elif args.param_type == "t0":
     report_status(do_succeeded, "BH2")
 
 elif args.param_type == "hdphc":
-    # -- BHT -----
-    limits = [-np.inf, np.inf]
-    if f"{args.run_num:0=5}_{args.suffix}_bht" in phc_conf.limits_dict.keys():
-        limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_bht"]
-    data = update_phc.make_dictdata(os.path.join(conf.data_dir, f"root/run{args.run_num:0=5}_BHT_PHC_{args.suffix}.root"), limits)
-    do_succeeded = update_phc.update_file(hdphc_target_file, data)
-    report_status(do_succeeded, "BHT")
+    detectors = ["BHT", "BH2", "HTOF", "CVC"]
+    for det in detectors:
+        root_file = os.path.join(
+            conf.data_dir,
+            f"root/run{args.run_num:0=5}_{det}_PHC_{args.suffix}.root"
+        )
+        if not os.path.exists(root_file):
+            print(colored(f"[SKIP] {det}: file not found", "yellow"))
+            continue
 
-    # -- BH2 -----
-    limits = [-np.inf, np.inf]
-    if f"{args.run_num:0=5}_{args.suffix}_bh2" in phc_conf.limits_dict.keys():
-        limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_bh2"]
-    data = update_phc.make_dictdata(os.path.join(conf.data_dir, f"root/run{args.run_num:0=5}_BH2_PHC_{args.suffix}.root"), limits)
-    do_succeeded = update_phc.update_file(hdphc_target_file, data)
-    report_status(do_succeeded, "BH2")
-
-    # # -- HTOF -----
-    # limits = [-np.inf, np.inf]
-    # if f"{args.run_num:0=5}_{args.suffix}_htof" in phc_conf.limits_dict.keys():
-    #     limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_htof"]
-    # data = update_phc.make_dictdata(os.path.join(conf.data_dir, f"root/run{args.run_num:0=5}_HTOF_PHC_{args.suffix}.root"), limits)
-    # do_succeeded = update_phc.update_file(hdphc_target_file, data)
-    # report_status(do_succeeded, "HTOF")
-
-    if (args.ftof):
-        # -- CVC -----
         limits = [-np.inf, np.inf]
-        if f"{args.run_num:0=5}_{args.suffix}_cvc" in phc_conf.limits_dict.keys():
-            limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_cvc"]
-        data = update_phc.make_dictdata(os.path.join(conf.data_dir, f"root/run{args.run_num:0=5}_CVC_PHC_{args.suffix}.root"), limits)
+        if f"{args.run_num:0=5}_{args.suffix}_{det.lower()}" in phc_conf.limits_dict.keys():
+            limits = phc_conf.limits_dict[f"{args.run_num:0=5}_{args.suffix}_{det.lower()}"]
+        data = update_phc.make_dictdata(root_file, limits)
         do_succeeded = update_phc.update_file(hdphc_target_file, data)
-        report_status(do_succeeded, "CVC")
-
+        report_status(do_succeeded, det)
 
 elif args.param_type == "dctdc":
     # # -- BLC1 -----
