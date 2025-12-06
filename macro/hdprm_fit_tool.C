@@ -384,7 +384,7 @@ void fit(const char* model = "gaus", Bool_t logy = kTRUE)
         std::cout << " p2 (width): " << p2 << " ± " << e2 << std::endl;
     }
     std::cout << Form("{ %.1f, %.1f, %.1f, %d }", p1-1.8*p2, p1+2.2*p2, p1, m=="landau") << std::endl;
-    std::cout << Form("set_range(%.1f, %.1f); fit(`auto`)", p1-1.8*p2, p1+2.2*p2) << std::endl;
+    std::cout << Form("set_range(%.1f, %.1f); fit(\"auto\")", p1-1.8*p2, p1+2.2*p2) << std::endl;
     std::cout << "========================================" << std::endl;
 }
 
