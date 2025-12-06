@@ -322,6 +322,11 @@ void fit(const char* model = "gaus", Bool_t logy = kTRUE)
         Double_t val_g = (ndf_g>0 ? chi2_g/ndf_g : 1e9);
         Double_t val_l = (ndf_l>0 ? chi2_l/ndf_l : 1e9);
 
+        if (val_g <= val_l) {
+            m = "gaus";
+        } else {
+            m = "landau";
+        }
         f_best = (val_g <= val_l ? f_gaus : f_landau);
     }
     else {
@@ -378,7 +383,8 @@ void fit(const char* model = "gaus", Bool_t logy = kTRUE)
         std::cout << " p1 (MPV)  : " << p1 << " ± " << e1 << std::endl;
         std::cout << " p2 (width): " << p2 << " ± " << e2 << std::endl;
     }
-    std::cout << Form("set_range(%.1f, %.1f)", p1-1.8*p2, p1+2.2*p2) << std::endl;
+    std::cout << Form("{ %.1f, %.1f, %.1f, %d }", p1-1.8*p2, p1+2.2*p2, p1, m=="landau") << std::endl;
+    std::cout << Form("set_range(%.1f, %.1f); fit(`auto`)", p1-1.8*p2, p1+2.2*p2) << std::endl;
     std::cout << "========================================" << std::endl;
 }
 
