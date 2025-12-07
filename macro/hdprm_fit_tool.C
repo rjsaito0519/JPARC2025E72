@@ -467,4 +467,65 @@ void fit(const char* model = "auto", Bool_t logy = kTRUE)
 //   model : "gaus", "landau", "auto"
 //   logy  : yログ表示
 //   内部で:
-//     - 毎回 fit()
+//     - 毎回 fit() を呼ぶ
+//     - p1, p2 の変化が十分小さくなったら早期終了
+//--------------------------------------------------
+void fit_iter(Int_t n_iter = 5, const char* model = "auto", Bool_t logy = kTRUE)
+{
+    ensure_init();
+
+    const Double_t thr_p1 = 0.1;  // 収束判定閾値 (p1 の絶対変化)
+    const Double_t thr_p2 = 0.1;  // 収束判定閾値 (p2 の絶対変化)
+
+    Double_t prev_p1 = 0.0;
+    Double_t prev_p2 = 0.0;
+    Bool_t   has_prev = kFALSE;
+
+    for (Int_t i = 0; i < n_iter; ++i) {
+        std::cout << "---------- iteration "
+                  << (i+1) << " / " << n_iter
+                  << " ----------" << std::endl;
+
+        // 1回分フィット（内部で g.last_p1, g.last_p2 が更新される）
+        fit(model, logy);
+
+        if (!g.has_last_fit) {
+            std::cout << "[fit_iter] no valid fit result, stopping." << std::endl;
+            break;
+        }
+
+        if (has_prev) {
+            Double_t dp1 = TMath::Abs(g.last_p1 - prev_p1);
+            Double_t dp2 = TMath::Abs(g.last_p2 - prev_p2);
+
+            std::cout << Form("[fit_iter] delta p1 = %.4f, delta p2 = %.4f",
+                              dp1, dp2) << std::endl;
+
+            if (dp1 < thr_p1 && dp2 < thr_p2) {
+                std::cout << "[fit_iter] converged, stopping at iteration "
+                          << (i+1) << std::endl;
+                break;
+            }
+        }
+
+        prev_p1 = g.last_p1;
+        prev_p2 = g.last_p2;
+        has_prev = kTRUE;
+    }
+}
+
+} // namespace hdprm
+
+// 名前空間なしで直接呼べるラッパー
+inline void set_path   (const char* p){ hdprm::set_path(p); }
+inline void set_particle(const char* p){ hdprm::set_particle(p); }
+inline void set_counter(const char* p){ hdprm::set_counter(p); }
+inline void set_range_left(double x){ hdprm::set_range_left(x); }
+inline void set_range_right(double x){ hdprm::set_range_right(x); }
+inline void set_range(double l,double r){ hdprm::set_range(l,r); }
+inline void set_rebin(int r){ hdprm::set_rebin(r); }
+inline void fit(const char* m="auto", bool l=true){ hdprm::fit(m,l); }
+inline void fit_iter(int n=5, const char* m="auto", bool l=true){ hdprm::fit_iter(n,m,l); }
+inline void lock_left(bool on=true){ hdprm::lock_left(on); }
+inline void lock_right(bool on=true){ hdprm::lock_right(on); }
+inline void unlock_all(){ hdprm::unlock_all(); }
