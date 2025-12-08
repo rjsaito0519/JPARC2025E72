@@ -349,19 +349,19 @@ void fit(const char* model = "auto", Bool_t logy = kTRUE)
     TF1* f_best = nullptr;
 
     if (m == "gaus") {
-        h->Fit(f_gaus, "QEMR");
+        h->Fit(f_gaus, "0QEMR");
         f_best = f_gaus;
     }
     else if (m == "landau") {
-        h->Fit(f_landau, "QEMR");
+        h->Fit(f_landau, "0QEMR");
         f_best = f_landau;
     }
     else if (m == "auto") {
-        h->Fit(f_gaus, "QEMR");
+        h->Fit(f_gaus, "0QEMR");
         Double_t chi2_g = f_gaus->GetChisquare();
         Double_t ndf_g  = f_gaus->GetNDF();
 
-        h->Fit(f_landau, "QEMR");
+        h->Fit(f_landau, "0QEMR");
         Double_t chi2_l = f_landau->GetChisquare();
         Double_t ndf_l  = f_landau->GetNDF();
 
