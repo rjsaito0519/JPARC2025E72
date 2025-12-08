@@ -104,7 +104,7 @@ void analyze(TString path, TString particle){
     // +--------------+
     // -- prepare pdf -----
     Int_t nth_pad = 1;
-    Int_t rows = 3, cols = 2;
+    Int_t rows = 3, cols = 3;
     Int_t max_pads = rows * cols;
     TString pdf_path = Form("%s/img/run%05d_HTOF_HDPRM_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
 
