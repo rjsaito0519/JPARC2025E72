@@ -31,6 +31,7 @@
 #include <TGraph.h> 
 
 #include "config.h"
+#include "params.h"
 
 // raw と trig をペアで管理する構造体
 struct HistPair {
