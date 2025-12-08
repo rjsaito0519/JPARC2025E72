@@ -292,6 +292,115 @@ namespace ana_helper {
     }
 
     // ____________________________________________________________________________________________
+    FitResult htof_adc_fit(TH1D *h, TCanvas *c, Int_t n_c, TString key, Int_t n_rebin) {
+        Config& conf = Config::getInstance();
+        h = (TH1D*)h->Rebin(n_rebin, h->GetName());
+
+        c->cd(n_c);
+        gPad->SetLogy(1);
+        std::vector<Double_t> par, err;
+
+        // -- pedestal -----
+        Double_t ped_pos        = h->GetBinCenter(h->GetMaximumBin());
+        Double_t ped_half_width = 5.0;
+        std::pair<Double_t, Double_t> ped_n_sigma(2.0, 2.0);
+
+        // -- first fit -----
+        TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", ped_pos-ped_half_width, ped_pos+ped_half_width);
+        f_prefit->SetParameter(1, ped_pos);
+        f_prefit->SetParameter(2, ped_half_width);
+        h->Fit(f_prefit, "0QEMR", "", ped_pos-ped_half_width, ped_pos+ped_half_width);
+        for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
+
+        // -- second fit -----
+        TF1 *f_fit_ped = new TF1( Form("ped_%s", h->GetName()), "gausn", par[1]-ped_n_sigma.first*par[2], par[1]+ped_n_sigma.second*par[2]);
+        f_fit_ped->SetParameter(0, par[0]);
+        f_fit_ped->SetParameter(1, par[1]);
+        f_fit_ped->SetParameter(2, par[2]*0.9);
+        f_fit_ped->SetLineColor(kOrange);
+        f_fit_ped->SetLineWidth(2);
+        f_fit_ped->SetNpx(1000);
+        h->Fit(f_fit_ped, "0QEMR", "", par[1]-ped_n_sigma.first*par[2], par[1]+ped_n_sigma.second*par[2]);
+
+        FitResult result;
+        for (Int_t i = 0, n_par = f_fit_ped->GetNpar(); i < n_par; i++) {
+            result.par.push_back(f_fit_ped->GetParameter(i));
+            result.err.push_back(f_fit_ped->GetParError(i));
+        }
+
+
+        // -- mip -----
+        par.clear(); err.clear();
+        std::vector<Double_t> fit_param = param::hdprm_params.at(key.Data());
+
+        // -- mip fit -----
+        if (fit_param[3] == 0.) // Gaussian fit
+        {
+            TF1 *f_fit_mip_g = new TF1( Form("mip_gauss_%s", h->GetName()), "gausn", fit_param[0], fit_param[1]);
+            f_fit_mip_g->SetParameter(1, fit_param[2]);
+            f_fit_mip_g->SetParameter(2, (fit_param[0] - fit_param[1]) / 6.0);
+            f_fit_mip_g->SetLineColor(kOrange);
+            f_fit_mip_g->SetLineWidth(2.0);
+            h->Fit(f_fit_mip_g, "0QEMR", "", fit_param[0], fit_param[1]);
+            Double_t chi_square_g = f_fit_mip_g->GetChisquare();
+
+            for (Int_t i = 0, n_par = f_fit_mip_g->GetNpar(); i < n_par; i++) {
+                result.par.push_back(f_fit_mip_g->GetParameter(i));
+                result.err.push_back(f_fit_mip_g->GetParError(i));
+            }
+
+            // -- draw -----
+            h->GetXaxis()->SetRangeUser(
+                result.par[1]-10.0*result.par[2], 
+                result.par[4]+ 5.0*result.par[5]
+            );
+            h->Draw();
+            f_fit_mip_g->SetNpx(1000);
+            f_fit_mip_g->Draw("same");
+            result.chi_square = chi_square_g;
+       
+        } else { // Landau fitting
+            TF1 *f_fit_mip_l = new TF1( Form("mip_landau_%s", h->GetName()), "landaun", fit_param[0], fit_param[1]);
+            f_fit_mip_l->SetParameter(1, fit_param[2]);
+            f_fit_mip_l->SetParameter(2, (fit_param[0] - fit_param[1]) / 6.0);
+            f_fit_mip_l->SetLineColor(kOrange);
+            f_fit_mip_l->SetLineWidth(2.0);
+            h->Fit(f_fit_mip_l, "0QEMR", "", fit_param[0], fit_param[1]);
+            Double_t chi_square_l = f_fit_mip_l->GetChisquare();
+
+            for (Int_t i = 0, n_par = f_fit_mip_l->GetNpar(); i < n_par; i++) {
+                result.par.push_back(f_fit_mip_l->GetParameter(i));
+                result.err.push_back(f_fit_mip_l->GetParError(i));
+            }
+
+            // -- draw -----
+            h->GetXaxis()->SetRangeUser(
+                result.par[1]-10.0*result.par[2], 
+                result.par[4]+ 5.0*result.par[5]
+            );
+            h->Draw();
+            f_fit_mip_l->SetNpx(1000);
+            f_fit_mip_l->Draw("same");
+            result.chi_square = chi_square_l;
+        }
+
+        f_fit_ped->Draw("same");
+        TLine *ped_line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
+        ped_line->SetLineStyle(2); // 点線に設定
+        ped_line->SetLineColor(kRed); // 色を赤に設定
+        ped_line->Draw("same");
+        TLine *mip_line = new TLine(result.par[4], 0, result.par[4], h->GetMaximum());
+        mip_line->SetLineStyle(2); // 点線に設定
+        mip_line->SetLineColor(kRed); // 色を赤に設定
+        mip_line->Draw("same");
+
+        c->Update();
+
+        return result;
+    }
+
+
+    // ____________________________________________________________________________________________
     FitResult bht_tot_fit(TH1D *h, TCanvas *c, Int_t n_c) {
         Config& conf = Config::getInstance();
 
