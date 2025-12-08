@@ -370,8 +370,10 @@ void fit(const char* model = "auto", Bool_t logy = kTRUE)
 
         if (val_g <= val_l) {
             m = "gaus";
+            f_landau = nullptr; 
         } else {
             m = "landau";
+            f_gaus = nullptr;
         }
         f_best = (val_g <= val_l ? f_gaus : f_landau);
     }
