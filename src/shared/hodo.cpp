@@ -361,7 +361,7 @@ namespace ana_helper {
             f_fit_mip_g->Draw("same");
             result.chi_square = chi_square_g;
 
-            c->cd(nth_pad+1);
+            c->cd(n_c+1);
             h->GetXaxis()->SetRangeUser(
                 result.par[4] - 5.0*result.par[5],
                 result.par[4] + 5.0*result.par[5]
@@ -396,7 +396,7 @@ namespace ana_helper {
             f_fit_mip_l->Draw("same");
             result.chi_square = chi_square_l;
 
-            c->cd(nth_pad+1);
+            c->cd(n_c+1);
             h->GetXaxis()->SetRangeUser(
                 result.par[4] - 5.0*result.par[5],
                 result.par[4] + 5.0*result.par[5]
@@ -407,7 +407,7 @@ namespace ana_helper {
         }
 
         
-        c->cd(nth_pad);
+        c->cd(n_c);
         f_fit_ped->Draw("same");
         TLine *ped_line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
         ped_line->SetLineStyle(2); // 点線に設定
