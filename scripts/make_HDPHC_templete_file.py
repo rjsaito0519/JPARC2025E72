@@ -89,7 +89,7 @@ def main():
             # 2. 設定に基づいてループ処理
             # CIdでループ
             for CId, seg_count in DETECTOR_CONFIG.items():
-                f.write(f"# {DETECTOR_NAME[CId]}\n")
+                f.write(f"#{DETECTOR_NAME[CId]}\n")
                 # PlIdでループ
                 for PlId in PLID_LIST:
                     
