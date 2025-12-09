@@ -363,7 +363,6 @@ namespace ana_helper {
 
             c->cd(n_c+1)->SetLogy(1);
             TH1D* h_clone = (TH1D*)h->Clone(Form("%s_Clone", h->GetName()));
-            h_clone->Draw("same");
             h_clone->GetXaxis()->SetRangeUser(
                 fit_param[0] - range_width/2.0,
                 fit_param[1] + range_width/2.0
@@ -372,7 +371,6 @@ namespace ana_helper {
             f_fit_mip_g->SetNpx(1000);
             f_fit_mip_g->Draw("same");
 
-       
         } else { // Landau fitting
             TF1 *f_fit_mip_l = new TF1( Form("mip_landau_%s", h->GetName()), "landaun", fit_param[0], fit_param[1]);
             f_fit_mip_l->SetParameter(1, fit_param[2]);
@@ -400,7 +398,6 @@ namespace ana_helper {
 
             c->cd(n_c+1)->SetLogy(1);
             TH1D* h_clone = (TH1D*)h->Clone(Form("%s_Clone", h->GetName()));
-            h_clone->Draw("same");
             h_clone->GetXaxis()->SetRangeUser(
                 fit_param[0] - range_width/2.0,
                 fit_param[1] + range_width/2.0
