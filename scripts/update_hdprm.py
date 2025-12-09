@@ -64,6 +64,7 @@ def make_dictdata(root_file_path, good_ch_range = [-np.inf, np.inf], is_t0_offse
                     factor[UorD].append(mip/calib_mip)
 
         factor = [ np.mean(x) if len(x)>0 else 1 for x in factor ]
+        print(factor)
 
     data = dict()
     if is_t0_offset:
