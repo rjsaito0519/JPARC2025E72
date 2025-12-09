@@ -329,13 +329,6 @@ void fit(const char* model = "auto", Bool_t logy = kTRUE)
                                 fit_right + 0.2*(fit_right-fit_left));
     h->Draw();
 
-    // Peak marker (赤い点線)
-    TLine *peakLine = new TLine(peakX, 0, peakX, h->GetMaximum());
-    peakLine->SetLineColor(kRed);
-    peakLine->SetLineStyle(2);
-    peakLine->SetLineWidth(2);
-    peakLine->Draw("same");
-
     // Fit funcs
     TString m(model);
     m.ToLower();
@@ -414,6 +407,13 @@ void fit(const char* model = "auto", Bool_t logy = kTRUE)
     Double_t e0    = f_best->GetParError(0);
     Double_t e1    = f_best->GetParError(1);
     Double_t e2    = f_best->GetParError(2);
+
+    // Peak marker (赤い点線)
+    TLine *peakLine = new TLine(p1, 0, p1, h->GetMaximum());
+    peakLine->SetLineColor(kRed);
+    peakLine->SetLineStyle(2);
+    peakLine->SetLineWidth(2);
+    peakLine->Draw("same");
 
     std::cout << "========================================" << std::endl;
     std::cout << " counter   : " << g.counter << std::endl;
