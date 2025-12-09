@@ -407,16 +407,17 @@ namespace ana_helper {
             f_fit_mip_l->Draw("same");
         }
 
-        
+        TLine *mip_line = new TLine(result.par[4], 0, result.par[4], h->GetMaximum());
+        mip_line->SetLineStyle(2); // 点線に設定
+        mip_line->SetLineColor(kRed); // 色を赤に設定
+        mip_line->Draw("same");
+
         c->cd(n_c);
         f_fit_ped->Draw("same");
         TLine *ped_line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
         ped_line->SetLineStyle(2); // 点線に設定
         ped_line->SetLineColor(kRed); // 色を赤に設定
         ped_line->Draw("same");
-        TLine *mip_line = new TLine(result.par[4], 0, result.par[4], h->GetMaximum());
-        mip_line->SetLineStyle(2); // 点線に設定
-        mip_line->SetLineColor(kRed); // 色を赤に設定
         mip_line->Draw("same");
 
         c->Update();
