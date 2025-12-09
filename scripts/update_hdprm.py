@@ -63,7 +63,7 @@ def make_dictdata(root_file_path, good_ch_range = [-np.inf, np.inf], is_t0_offse
                     calib_mip = calib_tree["adc_p1_val"][i][UorD] - calib_tree["adc_p0_val"][i][UorD]
                     factor[UorD].append(mip/calib_mip)
 
-        factor = [np.mean(x) for x in factor]
+        factor = [ np.mean(x) if len(x)>0 else 1 for x in factor ]
 
     data = dict()
     if is_t0_offset:
