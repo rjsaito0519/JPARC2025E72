@@ -332,7 +332,7 @@ namespace ana_helper {
         // -- mip -----
         par.clear(); err.clear();
         std::vector<Double_t> fit_param = param::hdprm_params.at(key.Data());
-        Double_t range_width = (fit_param[0] - fit_param[1]);
+        Double_t range_width = (fit_param[1] - fit_param[0]);
 
         // -- mip fit -----
         if (fit_param[3] == 0.) // Gaussian fit
@@ -340,7 +340,7 @@ namespace ana_helper {
             TF1 *f_fit_mip_g = new TF1( Form("mip_gauss_%s", h->GetName()), "gausn", fit_param[0], fit_param[1]);
             f_fit_mip_g->SetParameter(1, fit_param[2]);
             f_fit_mip_g->SetParLimits(1, fit_param[0], fit_param[1]);
-            f_fit_mip_g->SetParameter(2,  range_width/6.0);
+            f_fit_mip_g->SetParameter(2, range_width/6.0);
             f_fit_mip_g->SetLineColor(kOrange);
             f_fit_mip_g->SetLineWidth(2.0);
             h->Fit(f_fit_mip_g, "0QEMR", "", fit_param[0], fit_param[1]);
