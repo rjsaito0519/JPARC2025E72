@@ -362,11 +362,13 @@ namespace ana_helper {
             result.chi_square = chi_square_g;
 
             c->cd(n_c+1)->SetLogy(1);
-            h->GetXaxis()->SetRangeUser(
-                fit_param[0] - range_width/10.0,
-                fit_param[1] + range_width/10.0
+            TH1D* h_clone = (TH1D*)h->Clone(Form("%s_Clone", h->GetName()));
+            h_clone->Draw("same");
+            h_clone->GetXaxis()->SetRangeUser(
+                fit_param[0] - range_width/2.0,
+                fit_param[1] + range_width/2.0
             );
-            h->Draw();
+            h_clone->Draw();
             f_fit_mip_g->SetNpx(1000);
             f_fit_mip_g->Draw("same");
 
@@ -397,11 +399,13 @@ namespace ana_helper {
             result.chi_square = chi_square_l;
 
             c->cd(n_c+1)->SetLogy(1);
-            h->GetXaxis()->SetRangeUser(
-                fit_param[0] - range_width/10.0,
-                fit_param[1] + range_width/10.0
+            TH1D* h_clone = (TH1D*)h->Clone(Form("%s_Clone", h->GetName()));
+            h_clone->Draw("same");
+            h_clone->GetXaxis()->SetRangeUser(
+                fit_param[0] - range_width/2.0,
+                fit_param[1] + range_width/2.0
             );
-            h->Draw();
+            h_clone->Draw();
             f_fit_mip_l->SetNpx(1000);
             f_fit_mip_l->Draw("same");
         }
