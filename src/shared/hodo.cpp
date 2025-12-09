@@ -388,8 +388,8 @@ namespace ana_helper {
 
             // -- draw -----
             h->GetXaxis()->SetRangeUser(
-                fit_param[0] - range_width/10.0,
-                fit_param[1] + range_width/10.0
+                result.par[1]-10.0*result.par[2], 
+                result.par[4]+ 5.0*result.par[5]
             );
             h->Draw();
             f_fit_mip_l->SetNpx(1000);
@@ -398,8 +398,8 @@ namespace ana_helper {
 
             c->cd(n_c+1)->SetLogy(1);
             h->GetXaxis()->SetRangeUser(
-                fit_param[0],
-                fit_param[1]
+                fit_param[0] - range_width/10.0,
+                fit_param[1] + range_width/10.0
             );
             h->Draw();
             f_fit_mip_l->SetNpx(1000);
