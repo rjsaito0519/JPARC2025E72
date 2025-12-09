@@ -339,11 +339,11 @@ namespace ana_helper {
         {
             TF1 *f_fit_mip_g = new TF1( Form("mip_gauss_%s", h->GetName()), "gausn", fit_param[0], fit_param[1]);
             f_fit_mip_g->SetParameter(1, fit_param[2]);
-            f_fit_mip_g->SetParLimits(
-                1, 
-                fit_param[2] - range_width/5.0 > fit_param[0] ? fit_param[2] - range_width/5.0 : fit_param[0], 
-                fit_param[2] + range_width/5.0 < fit_param[1] ? fit_param[2] + range_width/5.0 : fit_param[1]
-            );
+            // f_fit_mip_g->SetParLimits(
+            //     1, 
+            //     fit_param[2] - range_width/5.0 > fit_param[0] ? fit_param[2] - range_width/5.0 : fit_param[0], 
+            //     fit_param[2] + range_width/5.0 < fit_param[1] ? fit_param[2] + range_width/5.0 : fit_param[1]
+            // );
             f_fit_mip_g->SetParameter(2, range_width/6.0);
             f_fit_mip_g->SetLineColor(kOrange);
             f_fit_mip_g->SetLineWidth(2.0);
@@ -378,11 +378,11 @@ namespace ana_helper {
         } else { // Landau fitting
             TF1 *f_fit_mip_l = new TF1( Form("mip_landau_%s", h->GetName()), "landaun", fit_param[0], fit_param[1]);
             f_fit_mip_l->SetParameter(1, fit_param[2]);
-            f_fit_mip_l->SetParLimits(
-                1, 
-                fit_param[2] - range_width/5.0 > fit_param[0] ? fit_param[2] - range_width/5.0 : fit_param[0], 
-                fit_param[2] + range_width/5.0 < fit_param[1] ? fit_param[2] + range_width/5.0 : fit_param[1]
-            );
+            // f_fit_mip_l->SetParLimits(
+            //     1, 
+            //     fit_param[2] - range_width/5.0 > fit_param[0] ? fit_param[2] - range_width/5.0 : fit_param[0], 
+            //     fit_param[2] + range_width/5.0 < fit_param[1] ? fit_param[2] + range_width/5.0 : fit_param[1]
+            // );
             f_fit_mip_l->SetParameter(2, range_width/6.0);
             f_fit_mip_l->SetLineColor(kOrange);
             f_fit_mip_l->SetLineWidth(2.0);
