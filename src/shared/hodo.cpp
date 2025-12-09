@@ -419,6 +419,7 @@ namespace ana_helper {
         mip_line->Draw("same");
 
         c->Update();
+        n_c++;
 
         return result;
     }
