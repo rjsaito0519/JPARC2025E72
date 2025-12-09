@@ -20,6 +20,19 @@ DETECTOR_CONFIG = {
     11: 8   # CId 11 COBO
 }
 
+DETECTOR_NAME = {
+     1: "BHT", # CId 1 BHT
+     3: "BH2", # CId 3 BH2
+     4: "BAC",  # CId 4 BAC
+     5: "HTOF", # CId 5 HTOF
+     6: "KVC",  # CId 6 KVC
+     7: "T1",  # CId 7 T1
+     8: "CVC",  # CId 8 CVC
+     9: "SAC3",  # CId 9 SAC3
+    10: "SFV",  # CId 10 SFV
+    11: "COBO"   # CId 11 COBO
+}
+
 # PlIdのリスト (今回は [0] で固定)
 PLID_LIST = [0]
 
@@ -100,7 +113,8 @@ def main():
             # 2. 設定に基づいてループ処理
             # CIdでループ
             for CId, seg_count in DETECTOR_CONFIG.items():
-                
+                f.write(f"{DETECTOR_NAME[CId]}\n")
+
                 # PlIdでループ
                 for PlId in PLID_LIST:
                     
