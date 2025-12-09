@@ -69,6 +69,7 @@ def update_file(target_file, data):
         for line in f:
             s_list = line.split()
             if s_list[0] == "#":
+                buf.append(s_list)
                 continue
             # key structure
             # CId - PlId - SegId - UorD(0:u, 1:d)

@@ -44,9 +44,7 @@ def update_file(target_file, data):
     with open(target_file) as f:
         for line in f:
             s_list = line.split()
-            if s_list[0] == "#":
-                continue
-            if len(s_list) != 0 and s_list[0] in data.keys():
+            if len(s_list) != 0 and s_list[0] != "#" and s_list[0] in data.keys():
                 s_list[12] = data[s_list[0]][0]
                 n_update += 1               
             buf.append(s_list)
