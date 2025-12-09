@@ -1,5 +1,7 @@
+from re import U
 import uproot
 import sys
+import numpy as np
 
 detector_id_list = {
     "BHT":  1,
@@ -19,7 +21,7 @@ detector_n_ud_list = {
     "T0":   2,
     "BH2":  2,
     "BAC":  -1,
-    "HTOF": 3,
+    "HTOF": -1,
     "KVC":  -1,
     "T1":   1, 
     "CVC":  2,
@@ -28,7 +30,7 @@ detector_n_ud_list = {
 }
 
 # -- prepare HDPRM data  -----------------------------------
-def make_dictdata(root_file_path, is_t0_offset = False):
+def make_dictdata(root_file_path, good_ch_range = [-np.inf, np.inf], is_t0_offset = False):
 
     file = uproot.open(root_file_path)
     tree = file["tree"].arrays(library="np")
@@ -43,6 +45,25 @@ def make_dictdata(root_file_path, is_t0_offset = False):
     if detector_id == -1:
         print("something wrong")
         sys.exit()
+
+    if detector_id == detector_id_list["HTOF"] and "adc_p0_val" in tree.keys():
+        import os
+        import conf
+        calib_root_file_path = os.path.join(
+            conf.data_dir,
+            f"root/run02603_HTOF_HDPRM_Pi.root"
+        )
+        calib_tree = uproot.open(calib_root_file_path)["tree"].arrays(library="np")
+        factor = [[], [], []]
+        for UorD in range(3):
+            for i in range(len(tree["ch"])):
+                ch = tree["ch"][i]
+                if good_ch_range[0] <= ch <= good_ch_range[1]:
+                    mip = tree["adc_p1_val"][i][UorD] - tree["adc_p0_val"][i][UorD]
+                    calib_mip = calib_tree["adc_p1_val"][i][UorD] - calib_tree["adc_p0_val"][i][UorD]
+                    factor[UorD].append(mip/calib_mip)
+
+        factor = [np.mean(x) for x in factor]
 
     data = dict()
     if is_t0_offset:
@@ -76,6 +97,21 @@ def make_dictdata(root_file_path, is_t0_offset = False):
                     if "tdc_p0_val" in tree.keys():
                         key = f"{detector_id}-0-{ch:.0f}-1-4"
                         data[key] = [ tree["tdc_p0_val"][i][0], -0.0009765625 ]
+                elif detector_id == detector_id_list["HTOF"]:
+                    for UorD in range(3):
+                        # -- ADC -----
+                        if good_ch_range[0] <= ch <= good_ch_range[1]:
+                            key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
+                            data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
+                        else:
+                            key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
+                            calib_mip = calib_tree["adc_p1_val"][i][UorD] - calib_tree["adc_p0_val"][i][UorD]
+                            data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p0_val"][i][UorD] + calib_mip*factor[UorD] ]
+                                
+                        # -- TDC -----
+                        if "tdc_p0_val" in tree.keys():
+                            key = f"{detector_id}-0-{ch:.0f}-1-{UorD:.0f}"
+                            data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ]
 
     return data
 # ---------------------------------------------------------------------------
