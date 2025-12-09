@@ -361,10 +361,10 @@ namespace ana_helper {
             f_fit_mip_g->Draw("same");
             result.chi_square = chi_square_g;
 
-            c->cd(n_c+1);
+            c->cd(n_c+1)->SetLogy(1);
             h->GetXaxis()->SetRangeUser(
-                result.par[4] - 5.0*result.par[5],
-                result.par[4] + 5.0*result.par[5]
+                fit_param[0] - range_width/10.0,
+                fit_param[1] + range_width/10.0
             );
             h->Draw();
             f_fit_mip_g->SetNpx(1000);
@@ -388,18 +388,18 @@ namespace ana_helper {
 
             // -- draw -----
             h->GetXaxis()->SetRangeUser(
-                result.par[1]-10.0*result.par[2], 
-                result.par[4]+ 5.0*result.par[5]
+                fit_param[0] - range_width/10.0,
+                fit_param[1] + range_width/10.0
             );
             h->Draw();
             f_fit_mip_l->SetNpx(1000);
             f_fit_mip_l->Draw("same");
             result.chi_square = chi_square_l;
 
-            c->cd(n_c+1);
+            c->cd(n_c+1)->SetLogy(1);
             h->GetXaxis()->SetRangeUser(
-                result.par[4] - 5.0*result.par[5],
-                result.par[4] + 5.0*result.par[5]
+                fit_param[0],
+                fit_param[1]
             );
             h->Draw();
             f_fit_mip_l->SetNpx(1000);
