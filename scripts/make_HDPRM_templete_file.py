@@ -16,7 +16,7 @@ DETECTOR_CONFIG = {
      7: 1,  # CId 7 T1
      8: 8,  # CId 8 CVC
      9: 1,  # CId 9 SAC3
-    10: 5,  # CId 10 SFV
+    10: 6,  # CId 10 SFV
     11: 8   # CId 11 COBO
 }
 
