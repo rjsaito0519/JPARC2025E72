@@ -364,8 +364,8 @@ namespace ana_helper {
             c->cd(n_c+1)->SetLogy(1);
             TH1D* h_clone = (TH1D*)h->Clone(Form("%s_Clone", h->GetName()));
             h_clone->GetXaxis()->SetRangeUser(
-                fit_param[0] - range_width/2.0,
-                fit_param[1] + range_width/2.0
+                fit_param[0] - range_width/5.0,
+                fit_param[1] + range_width/5.0
             );
             h_clone->Draw();
             f_fit_mip_g->SetNpx(1000);
@@ -399,8 +399,8 @@ namespace ana_helper {
             c->cd(n_c+1)->SetLogy(1);
             TH1D* h_clone = (TH1D*)h->Clone(Form("%s_Clone", h->GetName()));
             h_clone->GetXaxis()->SetRangeUser(
-                fit_param[0] - range_width/2.0,
-                fit_param[1] + range_width/2.0
+                fit_param[0] - range_width/5.0,
+                fit_param[1] + range_width/5.0
             );
             h_clone->Draw();
             f_fit_mip_l->SetNpx(1000);
