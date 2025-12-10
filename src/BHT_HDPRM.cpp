@@ -87,6 +87,7 @@ void analyze(TString path, TString particle){
         h_sum_tdc->Add(h_bht_tdc[0][i]);
         h_sum_tdc->Add(h_bht_tdc[1][i]);
     }
+    h_sum_tdc = (TH1D*)h_sum_tdc->Rebin(10, h_sum_tdc->GetName());
     ana_helper::set_tdc_search_range(h_sum_tdc);
 
 
