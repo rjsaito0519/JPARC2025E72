@@ -17,7 +17,7 @@ namespace ana_helper {
         Double_t fit_center = f_prefit->GetParameter(1);
         Double_t fit_sigma  = f_prefit->GetParameter(2);
  
-        Double_t range_n_sigma = 15.0;
+        Double_t range_n_sigma = 5.0;
         conf.tdc_search_range[conf.detector.Data()].first  = fit_center - range_n_sigma*fit_sigma;
         conf.tdc_search_range[conf.detector.Data()].second = fit_center + range_n_sigma*fit_sigma;
         
