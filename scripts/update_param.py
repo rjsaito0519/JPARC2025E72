@@ -73,7 +73,7 @@ if not os.path.isfile(dcgeo_target_file):
 # update param file
 # ---------------------------------------------------------------------------
 if args.param_type == "hdprm":
-    detectors = ["BHT", "BH2", "BAC", "HTOF", "KVC", "T1", "CVC", "SAC3", "SFV"]
+    detectors = ["BHT", "T0"]
     for det in detectors:
         root_file = os.path.join(
             conf.data_dir,
@@ -94,10 +94,10 @@ elif args.param_type == "t0":
     # -- T0 -----
     data = update_hdprm.make_dictdata(os.path.join(conf.data_dir, f"root/run{args.run_num:0=5}_T0_Offset_{args.suffix}.root"), [-np.inf, np.inf], is_t0_offset = True)
     do_succeeded = update_hdprm.update_file(hdprm_target_file, data)
-    report_status(do_succeeded, "BH2")
+    report_status(do_succeeded, "T0")
 
 elif args.param_type == "hdphc":
-    detectors = ["BHT", "BH2", "HTOF", "CVC"]
+    detectors = ["BHT", "T0"]
     for det in detectors:
         root_file = os.path.join(
             conf.data_dir,

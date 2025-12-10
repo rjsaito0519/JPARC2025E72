@@ -68,7 +68,7 @@ def make_dictdata(root_file_path, good_ch_range = [-np.inf, np.inf], is_t0_offse
 
     data = dict()
     if is_t0_offset:
-        detector_id = detector_id_list["BH2"]
+        detector_id = detector_id_list["T0"]
         for i in range(len(tree["offset_p0_val"])):
             # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
             ch = tree["ch"][i]
