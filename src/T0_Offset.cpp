@@ -71,13 +71,13 @@ void analyze(TString path, TString particle){
     // | prepare histogram |
     // +-------------------+    
     // -- tdc ----------
-    TH1D *h_t0_offset[conf.num_of_ch.at("bh2")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_t0_offset[i] = (TH1D*)f->Get(Form("T0_seg%d_TimeOffset_%s", i, particle.Data()));
+    TH1D *h_t0_offset[conf.num_of_ch.at("t0")];
+    for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++ ) h_t0_offset[i] = (TH1D*)f->Get(Form("T0_seg%d_TimeOffset_%s", i, particle.Data()));
 
     // -- set tdc range ----------
     TH1D *h_sum_tdc = (TH1D*)h_t0_offset[0]->Clone("h_sum_tdc");
     h_sum_tdc->Reset(); 
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++) h_sum_tdc->Add(h_t0_offset[i]);
+    for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++) h_sum_tdc->Add(h_t0_offset[i]);
     ana_helper::set_tdc_search_range(h_sum_tdc);
 
     // +--------------+
@@ -96,7 +96,7 @@ void analyze(TString path, TString particle){
     c_t0->Divide(cols, rows);
     c_t0->Print(pdf_path + "["); // start
     nth_pad = 1;
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++) {
+    for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++) {
         if (nth_pad > max_pads) {
             c_t0->Print(pdf_path);
             c_t0->Clear();
@@ -123,7 +123,7 @@ void analyze(TString path, TString particle){
     tree->Branch("offset_p0_val", &offset_p0_val);
     tree->Branch("offset_p0_err", &offset_p0_err);
     
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++) {
+    for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++) {
         ch = i;
         offset_p0_val.clear();
         offset_p0_err.clear();
@@ -153,7 +153,7 @@ Int_t main(int argc, char** argv) {
         return 1;
     }
 
-    conf.detector = "bh2";
+    conf.detector = "t0";
     analyze(path, particle);
     return 0;
 }

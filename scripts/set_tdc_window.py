@@ -64,7 +64,7 @@ num_of_ch = dict(
     BAC = 4,
     SAC3 = 1,
     KVC = 8,
-    BH2 = 15,
+    BH2 = 1,
     HTOF = 34,
     T1 = 1,
     CVC = 8,
@@ -258,7 +258,7 @@ elif args.counter_name in ["BAC", "SAC"]:
 
     plt.show()
 
-elif args.counter_name in ["KVC"]:
+elif args.counter_name in ["KVC", "KVC1"]:
     hist_data = file["{}_TDC_seg0S".format(args.counter_name)].to_numpy()
 
     bin_values = np.zeros_like(hist_data[0])

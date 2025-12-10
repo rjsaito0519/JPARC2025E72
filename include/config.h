@@ -75,11 +75,11 @@ public:
     const std::unordered_map<std::string, Int_t> num_of_ch{
         { "bht",  63 },
         {  "t0",   5 },
-        { "bh2",  15 },
+        { "bh2",   1 },
         // { "bac",   4 },
         { "bac",   1 }, // for analysis
         { "htof", 34 },
-        { "kvc",   8 },
+        { "kvc",   4 },
         {  "t1",   1 },
         { "cvc",   8 },
         { "sac3",  1 },
