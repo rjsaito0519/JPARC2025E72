@@ -3,4 +3,4 @@
 VAR=`date`
 git add .
 git commit -m "$VAR"
-git push origin main
+git push origin 2025Feb
