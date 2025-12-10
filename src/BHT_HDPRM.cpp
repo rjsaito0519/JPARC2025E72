@@ -136,6 +136,14 @@ void analyze(TString path, TString particle){
         adc_down.push_back(result);
         nth_pad++;
     }
+
+    c_bht->Print(pdf_path);
+    c_bht->Clear();
+    c_bht->Divide(cols, rows);
+    nth_pad = 1;
+    c_bht->cd(1);
+    h_sum_tdc->Draw();
+
     c_bht->Print(pdf_path);
     c_bht->Print(pdf_path + "]"); // end
     delete c_bht;

@@ -13,11 +13,11 @@ namespace ana_helper {
         TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         f_prefit->SetParameter(1, peak_pos);
         f_prefit->SetParameter(2, stdev*0.5);
-        h->Fit(f_prefit, "0QEMR", "", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
+        h->Fit(f_prefit, "QEMR", "", peak_pos-peak_n_sigma.first*stdev, peak_pos+peak_n_sigma.second*stdev);
         Double_t fit_center = f_prefit->GetParameter(1);
         Double_t fit_sigma  = f_prefit->GetParameter(2);
  
-        Double_t range_n_sigma = 5.0;
+        Double_t range_n_sigma = 15.0;
         conf.tdc_search_range[conf.detector.Data()].first  = fit_center - range_n_sigma*fit_sigma;
         conf.tdc_search_range[conf.detector.Data()].second = fit_center + range_n_sigma*fit_sigma;
         
@@ -38,7 +38,6 @@ namespace ana_helper {
             conf.tdc_search_range[conf.detector.Data()].first, 
             conf.tdc_search_range[conf.detector.Data()].second
         );
-        std::cout << conf.tdc_search_range[conf.detector.Data()].first << ", " << conf.tdc_search_range[conf.detector.Data()].second << std::endl;
 
         Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
         Double_t width    = (conf.tdc_search_range[conf.detector.Data()].second - conf.tdc_search_range[conf.detector.Data()].first) / 3.0;
