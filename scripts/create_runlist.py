@@ -46,10 +46,7 @@ for suffix in args.suffix:
     conf_dir = os.path.join(conf.analyzer_dir, "param", "conf")
     conf_target_file = f"{conf_dir}/{SUB_DIR}/analyzer_run{args.run_num:0=5}_{prefix}_{suffix_head}.conf"
     if not os.path.isfile(conf_target_file):
-        if ( args.run_num < 2568):
-            shutil.copy(os.path.join(conf_dir, "analyzer_e72_example1.conf"), conf_target_file)
-        else:
-            shutil.copy(os.path.join(conf_dir, "analyzer_e72_example2.conf"), conf_target_file)
+        shutil.copy(os.path.join(conf_dir, "analyzer_e72_20250307.conf"), conf_target_file)
 
     buf = []
     with open(conf_target_file) as f:
@@ -58,7 +55,7 @@ for suffix in args.suffix:
             if len(s_list) != 0 and s_list[0] == "USER:":
                 target = f"param/USER/{SUB_DIR}/UserParam_run{args.run_num:0=5}"
                 if not os.path.isfile(os.path.join(conf.analyzer_dir, target)):
-                    shutil.copy(os.path.join(conf.analyzer_dir, "param/USER/UserParam_e72_20251104"), os.path.join(conf.analyzer_dir, target))
+                    shutil.copy(os.path.join(conf.analyzer_dir, "param/USER/UserParam_e72_20250307"), os.path.join(conf.analyzer_dir, target))
                 s_list[1] = target
             if len(s_list) != 0 and s_list[0] == "HDPRM:":
                 target = f"param/HDPRM/{SUB_DIR}/HodoParam_run{args.run_num:0=5}_{suffix_head}"
