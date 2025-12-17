@@ -95,8 +95,8 @@ void analyze(Int_t run_num){
         for (Int_t i = 0, n_i = (*cobo_raw_seg).size(); i < n_i; i++) {
             Int_t index = static_cast<Int_t>((*cobo_raw_seg)[i]);
             if (0 <= index && index < conf.num_of_ch.at("cobo")) {
-                for (Int_t j = 1, n_j = (*cobo_tfc)[i].size(); j < n_j; j++) {
-                    Double_t diff = (*cobo_tfc)[i][j] - (*cobo_tfc)[i][j-1];
+                for (Int_t j = 1, n_j = (*cobo_tdc)[i].size(); j < n_j; j++) {
+                    Double_t diff = (*cobo_tdc)[i][j] - (*cobo_tdc)[i][j-1];
                     cobo_diff[index].push_back( diff );
                     h_cobo[index]->Fill( diff ); 
                 }
