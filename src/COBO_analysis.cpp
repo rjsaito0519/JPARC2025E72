@@ -172,9 +172,6 @@ Int_t main(int argc, char** argv) {
     }
     Int_t run_num = std::atoi(argv[1]);
 
-    TApplication *theApp = new TApplication("App", &argc, argv);    
     analyze(run_num);
-    theApp->Run();
-
     return 0;
 }
