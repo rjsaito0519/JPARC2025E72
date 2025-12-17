@@ -97,7 +97,6 @@ void analyze(Int_t run_num){
             if (0 <= index && index < conf.num_of_ch.at("cobo")) {
                 for (Int_t j = 1, n_j = (*cobo_tdc)[i].size(); j < n_j; j++) {
                     Double_t diff = (*cobo_tdc)[i][j-1] - (*cobo_tdc)[i][j];
-                    std::cout << diff << std::endl;
                     cobo_diff[index].push_back( diff );
                     h_cobo[index]->Fill( diff ); 
                 }
