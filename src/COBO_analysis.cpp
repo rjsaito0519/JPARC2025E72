@@ -112,7 +112,7 @@ void analyze(Int_t run_num){
     Int_t nth_pad = 1;
     Int_t rows = 2, cols = 2;
     Int_t max_pads = rows * cols;
-    TString pdf_path = Form("%s/img/run%05d_COBO_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
+    TString pdf_path = Form("%s/img/run%05d_COBO.pdf", OUTPUT_DIR.Data(), run_num);
 
     auto c_cobo = new TCanvas("", "", 1500, 1200);
     c_cobo->Divide(cols, rows);
@@ -133,6 +133,13 @@ void analyze(Int_t run_num){
     c_cobo->Print(pdf_path);
     c_cobo->Print(pdf_path + "]"); // end
     delete c_cobo;
+
+    // +--------------------------+
+    // | prepare output root file |
+    // +--------------------------+
+    TString output_path = Form("%s/root/run%05d_COBO_diff.root", OUTPUT_DIR.Data(), run_num);
+    if (std::ifstream(output_path.Data())) std::remove(output_path.Data());
+    TFile* fout = new TFile(output_path.Data(), "RECREATE");
 
     // +-------+
     // | Write |
