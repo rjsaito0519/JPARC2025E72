@@ -83,7 +83,10 @@ void analyze(Int_t run_num){
     // +------------------+
     // | Fill event (1st) |
     // +------------------+
-    std::vector<std::vector<Double_t>> cobo_diff(std::vector<Double_t>{}, conf.num_of_ch.at("cobo")); 
+    std::vector<std::vector<Double_t>> cobo_diff(
+        conf.num_of_ch.at("cobo")
+    );
+
 
     Int_t evnum = 0;
     reader_hodo.Restart();
@@ -143,7 +146,7 @@ void analyze(Int_t run_num){
     for (Int_t i = 0; i < conf.num_of_ch.at("cobo"); i++) {
         ch = i;
         diff = cobo_diff[i];
-            
+
         tree->Fill();
     }
     
