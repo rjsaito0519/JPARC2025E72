@@ -83,7 +83,7 @@ void analyze(Int_t run_num){
         {
             TString name  = Form("COBO_tdc_diff_%d_%d", run_num, ch + 1);
             TString title = Form("run%05d COBO (diff) ch%d;TDC [ch];", run_num, ch + 1);
-            h_cobo_tdc[ch] = new TH1D(name, title, 500, 81500.0, 82000.0);
+            h_cobo_tdc[ch] = new TH1D(name, title, 1000, 81500.0, 82500.0);
         }
     }
     auto *h_cobo_1st_hit = new TH1D(
@@ -181,9 +181,12 @@ void analyze(Int_t run_num){
     for (Int_t i = 0; i < conf.num_of_ch.at("cobo"); i++) {
         ch = i;
         diff = cobo_diff[i];
-
         tree->Fill();
+
+        h_cobo_tdc[i]->Write();
+        h_cobo_time[i]->Write();        
     }
+    h_cobo_1st_hit->Write();
     
     fout->cd();
     tree->Write();
