@@ -76,7 +76,7 @@ void analyze(Int_t run_num){
     for (Int_t ch = 0; ch < conf.num_of_ch.at("cobo"); ch++) {
         TString name  = Form("COBO_tdc_diff_%d_%d", run_num, ch + 1);
         TString title = Form("run%05d COBO (TDC-diff) ch%d;TDC;", run_num, ch + 1);
-        h_cobo[ch] = new TH1D(name, title, 25000, 50000, 100000);
+        h_cobo[ch] = new TH1D(name, title, 3000, 80000, 83000);
     }
 
 
