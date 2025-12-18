@@ -76,7 +76,7 @@ void analyze(Int_t run_num){
     for (Int_t ch = 0; ch < conf.num_of_ch.at("cobo"); ch++) {
         TString name  = Form("COBO_tdc_diff_%d_%d", run_num, ch + 1);
         TString title = Form("run%05d COBO (TDC-diff) ch%d;TDC;", run_num, ch + 1);
-        h_cobo[ch] = new TH1D(name, title, 3000, 80000, 83000);
+        h_cobo[ch] = new TH1D(name, title, 200, 79.0, 81.0);
     }
 
 
@@ -98,7 +98,7 @@ void analyze(Int_t run_num){
                 for (Int_t j = 1, n_j = (*cobo_tdc)[i].size(); j < n_j; j++) {
                     Double_t diff = (*cobo_tdc)[i][j-1] - (*cobo_tdc)[i][j];
                     cobo_diff[index].push_back( diff );
-                    h_cobo[index]->Fill( diff ); 
+                    h_cobo[index]->Fill( diff*9.765625e-04 ); 
                 }
             }
         }
