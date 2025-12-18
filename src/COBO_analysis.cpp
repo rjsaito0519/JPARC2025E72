@@ -72,12 +72,25 @@ void analyze(Int_t run_num){
     // | prepare histogram |
     // +-------------------+
     // -- COBO -----    
-    TH1D *h_cobo[conf.num_of_ch.at("cobo")];
+    TH1D *h_cobo_time[conf.num_of_ch.at("cobo")];
+    TH1D *h_cobo_tdc[conf.num_of_ch.at("cobo")];
     for (Int_t ch = 0; ch < conf.num_of_ch.at("cobo"); ch++) {
-        TString name  = Form("COBO_tdc_diff_%d_%d", run_num, ch + 1);
-        TString title = Form("run%05d COBO (TDC-diff) ch%d;TDC;", run_num, ch + 1);
-        h_cobo[ch] = new TH1D(name, title, 200, 79.0, 81.0);
+        {
+            TString name  = Form("COBO_time_diff_%d_%d", run_num, ch + 1);
+            TString title = Form("run%05d COBO (diff) ch%d;Time [ns];", run_num, ch + 1);
+            h_cobo_time[ch] = new TH1D(name, title, 100, 79.5, 80.5);
+        }
+        {
+            TString name  = Form("COBO_tdc_diff_%d_%d", run_num, ch + 1);
+            TString title = Form("run%05d COBO (diff) ch%d;TDC [ch];", run_num, ch + 1);
+            h_cobo_tdc[ch] = new TH1D(name, title, 500, 81500.0, 82000.0);
+        }
     }
+    auto *h_cobo_1st_hit = new TH1D(
+        Form("COBO_1st_hit_%d", run_num),
+        Form("run%05d COBO 1st hit;TDC [ch];", run_num),
+        1000, 1.E6, 2.E6
+    );
 
 
     // +------------------+
@@ -95,10 +108,12 @@ void analyze(Int_t run_num){
         for (Int_t i = 0, n_i = (*cobo_raw_seg).size(); i < n_i; i++) {
             Int_t index = static_cast<Int_t>((*cobo_raw_seg)[i]);
             if (0 <= index && index < conf.num_of_ch.at("cobo")) {
+                if ((*cobo_tdc)[i][0]) h_cobo_1st_hit->Fill((*cobo_tdc)[i][0]);
                 for (Int_t j = 1, n_j = (*cobo_tdc)[i].size(); j < n_j; j++) {
                     Double_t diff = (*cobo_tdc)[i][j-1] - (*cobo_tdc)[i][j];
                     cobo_diff[index].push_back( diff );
-                    h_cobo[index]->Fill( diff*9.765625e-04 ); 
+                    h_cobo_tdc[index]->Fill( diff );
+                    h_cobo_time[index]->Fill( diff*9.765625e-04 );
                 }
             }
         }
@@ -126,10 +141,23 @@ void analyze(Int_t run_num){
             nth_pad = 1;
         }
 
-        c_cobo->cd(nth_pad);
-        h_cobo[i]->Draw();
+        c_cobo->cd(nth_pad)->SetLogy(1);
+        h_cobo_tdc[i]->Draw();
+        nth_pad++;
+
+        c_cobo->cd(nth_pad)->SetLogy(1);
+        h_cobo_time[i]->Draw();
         nth_pad++;
     }
+    if (nth_pad > max_pads) {
+        c_cobo->Print(pdf_path);
+        c_cobo->Clear();
+        c_cobo->Divide(cols, rows);
+        nth_pad = 1;
+    }
+    c_cobo->cd(nth_pad)->SetLogy(1);
+    h_cobo_1st_hit->Draw();
+
     c_cobo->Print(pdf_path);
     c_cobo->Print(pdf_path + "]"); // end
     delete c_cobo;
