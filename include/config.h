@@ -89,6 +89,14 @@ public:
         { "blc",  8 },
     };
 
+    const std::unordered_map<std::string, Int_t> num_of_UorD{
+        { "bht", 2 },
+        {  "t0", 2 },
+        { "bac", 1 },
+        { "kvc", 4 },
+        // { "bh2",  1 },
+    };
+
     // 検出器ごとの MaxDriftTime [ns]
     std::unordered_map<std::string, Double_t> max_drift_time = {
         {"BLC1a", 200.0},
