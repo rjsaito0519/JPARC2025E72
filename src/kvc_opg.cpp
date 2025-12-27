@@ -340,10 +340,10 @@ Int_t main(int argc, char** argv) {
                 std::vector<Int_t> kvc_info = ana_helper::get_kvc_info(run_num);
                 tmp_run_num = run_num; tmp_seg = ch;  tmp_ch = UorD; // naming is confusing, be carefull
                 hv      = kvc_info[0];
-                board_a = kvc_info[1];
-                board_b = kvc_info[2];
-                board_c = kvc_info[3];
-                board_d = kvc_info[4];
+                board_a = kvc_info[5];
+                board_b = kvc_info[6];
+                board_c = kvc_info[7];
+                board_d = kvc_info[8];
                 std::vector<std::vector<Double_t>> result_container = analyze(run_num, ch, UorD, c, nth_pad);
                 result_val.assign(result_container[0].begin(), result_container[0].end() - 1);
                 result_err.assign(result_container[1].begin(), result_container[1].end() - 1);

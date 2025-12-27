@@ -108,7 +108,7 @@ void analyze(Int_t run_num){
         for (Int_t i = 0, n_i = (*cobo_raw_seg).size(); i < n_i; i++) {
             Int_t index = static_cast<Int_t>((*cobo_raw_seg)[i]);
             if (0 <= index && index < conf.num_of_ch.at("cobo")) {
-                if ((*cobo_tdc)[i][0]) h_cobo_1st_hit->Fill((*cobo_tdc)[i][0]);
+                if ((*cobo_tdc)[i][1]) h_cobo_1st_hit->Fill((*cobo_tdc)[i][1]);
                 for (Int_t j = 1, n_j = (*cobo_tdc)[i].size(); j < n_j; j++) {
                     Double_t diff = (*cobo_tdc)[i][j-1] - (*cobo_tdc)[i][j];
                     cobo_diff[index].push_back( diff );
