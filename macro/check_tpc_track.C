@@ -25,6 +25,7 @@
 #include <TVector3.h>
 #include <TSystem.h>
 #include <vector>
+#include <map>
 #include <iostream>
 #include "../include/TPCPadHelper.hh"
 
@@ -160,6 +161,9 @@ load_event(Long64_t entry = -1)
     return;
   }
   
+  // Restart the reader to allow creating new TTreeReaderValue objects
+  gMacroReader->Restart();
+  
   // Create TTreeReaderValue objects BEFORE calling SetEntry()
   TTreeReaderValue<UInt_t> runnum(*gMacroReader, "run_number");
   TTreeReaderValue<UInt_t> evnum(*gMacroReader, "event_number");
@@ -240,8 +244,8 @@ event(Long64_t evnum = -1)
   load_event(evnum);
   
   if(!gMacroCanvas) {
-    gMacroCanvas = new TCanvas("c1", "TPC Track Check", 1400, 1000);
-    gMacroCanvas->Divide(2, 2);
+    gMacroCanvas = new TCanvas("c1", "TPC Track Check", 1400, 700);
+    gMacroCanvas->Divide(2, 1);
   }
   
   gMacroCanvas->cd(1);
@@ -335,8 +339,8 @@ event(Long64_t evnum = -1)
   {
     // Y-Z view: Pad geometry with hits colored by de
     // Fixed range for consistent viewing
-    const Double_t ymin = -200.0, ymax = 200.0;
-    const Double_t zmin = -200.0, zmax = 200.0;
+    const Double_t ymin = -300.0, ymax = 200.0;
+    const Double_t zmin = -300.0, zmax = 300.0;
     
     TH2Poly* h2 = new TH2Poly("h2", Form("Y-Z View (Run %u, Event %u);Y [mm];Z [mm]", 
                                           gEvent.runnum, gEvent.evnum),
@@ -450,93 +454,6 @@ event(Long64_t evnum = -1)
       gTrack->SetPoint(1, y2, zmax);
       gTrack->Draw("L same");
     }
-  }
-  
-  gMacroCanvas->cd(3);
-  {
-    // X-Y view at target
-    // Fixed range for consistent viewing
-    const Double_t xmin = -100.0, xmax = 100.0;
-    const Double_t ymin = -100.0, ymax = 100.0;
-    
-    TH2D* h3 = new TH2D("h3", Form("X-Y View at Target (Run %u, Event %u);X [mm];Y [mm]", 
-                                    gEvent.runnum, gEvent.evnum),
-                         100, xmin, xmax, 100, ymin, ymax);
-    h3->SetStats(0);
-    h3->Draw();
-    
-    // Draw clusters (projected to z=0)
-    TGraph* gCl = new TGraph();
-    gCl->SetMarkerStyle(21);
-    gCl->SetMarkerSize(1.0);
-    gCl->SetMarkerColor(kBlue);
-    for(Int_t i = 0; i < gEvent.nclTpc; i++) {
-      gCl->SetPoint(gCl->GetN(), gEvent.cluster_x[i], gEvent.cluster_y[i]);
-    }
-    gCl->Draw("P same");
-    
-    // Draw Hough-selected clusters
-    TGraph* gClHough = new TGraph();
-    gClHough->SetMarkerStyle(22);
-    gClHough->SetMarkerSize(1.2);
-    gClHough->SetMarkerColor(kRed);
-    for(Int_t i = 0; i < gEvent.nclTpc; i++) {
-      if(gEvent.cluster_houghflag[i] > 0) {
-        gClHough->SetPoint(gClHough->GetN(), gEvent.cluster_x[i], gEvent.cluster_y[i]);
-      }
-    }
-    gClHough->Draw("P same");
-    
-    // Draw track starting points
-    TGraph* gTrackStart = new TGraph();
-    gTrackStart->SetMarkerStyle(29);
-    gTrackStart->SetMarkerSize(2.0);
-    gTrackStart->SetMarkerColor(kGreen);
-    for(Int_t itrack = 0; itrack < gEvent.ntTpc; itrack++) {
-      gTrackStart->SetPoint(gTrackStart->GetN(), gEvent.x0Tpc[itrack], gEvent.y0Tpc[itrack]);
-    }
-    gTrackStart->Draw("P same");
-  }
-  
-  gMacroCanvas->cd(4);
-  {
-    // Layer vs Row: Clustering visualization
-    // Fixed range for consistent viewing
-    const Double_t rowmin = 0.0, rowmax = 200.0;
-    const Double_t layermin = 0.0, layermax = 20.0;
-    
-    TH2D* h4 = new TH2D("h4", Form("Layer vs Row (Run %u, Event %u);Row;Layer", 
-                                    gEvent.runnum, gEvent.evnum),
-                         200, rowmin, rowmax, 20, layermin, layermax);
-    h4->SetStats(0);
-    h4->Draw();
-    
-    // Draw raw hits
-    for(Int_t i = 0; i < gEvent.nhTpc; i++) {
-      h4->Fill(gEvent.raw_row[i], gEvent.raw_layer[i]);
-    }
-    
-    // Draw clusters
-    TGraph* gCl = new TGraph();
-    gCl->SetMarkerStyle(21);
-    gCl->SetMarkerSize(1.5);
-    gCl->SetMarkerColor(kBlue);
-    for(Int_t i = 0; i < gEvent.nclTpc; i++) {
-      gCl->SetPoint(gCl->GetN(), gEvent.cluster_row_center[i], gEvent.cluster_layer[i]);
-    }
-    gCl->Draw("P same");
-    
-    // Draw Hough-selected clusters
-    TGraph* gClHough = new TGraph();
-    gClHough->SetMarkerStyle(22);
-    gClHough->SetMarkerSize(1.8);
-    gClHough->SetMarkerColor(kRed);
-    for(Int_t i = 0; i < gEvent.nclTpc; i++) {
-      if(gEvent.cluster_houghflag[i] > 0) {
-        gClHough->SetPoint(gClHough->GetN(), gEvent.cluster_row_center[i], gEvent.cluster_layer[i]);
-      }
-    }
-    gClHough->Draw("P same");
   }
   
   gMacroCanvas->Update();
