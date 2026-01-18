@@ -291,7 +291,7 @@ event(Long64_t evnum = -1)
   
   // Create or reuse canvas
   if(!gMacroCanvas) {
-    gMacroCanvas = new TCanvas("c3d", "TPC Track 3D View", 600, 800);
+    gMacroCanvas = new TCanvas("c3d", "TPC Track 3D View", 800, 800);
   } else {
     gMacroCanvas->Clear();
   }
