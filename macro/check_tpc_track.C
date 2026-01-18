@@ -26,16 +26,13 @@
 #include <TSystem.h>
 #include <vector>
 #include <iostream>
-
-// Add myanalysis/include to include path
-gSystem->AddIncludePath("-I../include");
-#include "TPCPadHelper.hh"
+#include "../include/TPCPadHelper.hh"
 
 // Global variables
-TFile* gFile = nullptr;
-TTreeReader* gReader = nullptr;
-TRandom3* gRandom = nullptr;
-TCanvas* gCanvas = nullptr;
+TFile* gMacroFile = nullptr;
+TTreeReader* gMacroReader = nullptr;
+TRandom3* gMacroRandom = nullptr;
+TCanvas* gMacroCanvas = nullptr;
 
 // Event data structure
 struct EventData {
@@ -109,62 +106,62 @@ TPC_pad_template(TH2Poly* h)
 void
 set_path(const char* path)
 {
-  if(gFile) {
-    gFile->Close();
-    delete gFile;
+  if(gMacroFile) {
+    gMacroFile->Close();
+    delete gMacroFile;
   }
-  if(gReader) {
-    delete gReader;
+  if(gMacroReader) {
+    delete gMacroReader;
   }
   
-  gFile = TFile::Open(path);
-  if(!gFile || gFile->IsZombie()) {
+  gMacroFile = TFile::Open(path);
+  if(!gMacroFile || gMacroFile->IsZombie()) {
     std::cerr << "Error: Cannot open file " << path << std::endl;
     return;
   }
   
-  TTree* tree = dynamic_cast<TTree*>(gFile->Get("tpc"));
+  TTree* tree = dynamic_cast<TTree*>(gMacroFile->Get("tpc"));
   if(!tree) {
     std::cerr << "Error: Cannot find tree 'tpc' in file" << std::endl;
     return;
   }
   
-  gReader = new TTreeReader(tree);
+  gMacroReader = new TTreeReader(tree);
   
   // Set up branches
-  TTreeReaderValue<UInt_t> runnum(*gReader, "run_number");
-  TTreeReaderValue<UInt_t> evnum(*gReader, "event_number");
-  TTreeReaderValue<Int_t> nhTpc(*gReader, "nhTpc");
-  TTreeReaderValue<Int_t> nclTpc(*gReader, "nclTpc");
-  TTreeReaderValue<Int_t> ntTpc(*gReader, "ntTpc");
+  TTreeReaderValue<UInt_t> runnum(*gMacroReader, "run_number");
+  TTreeReaderValue<UInt_t> evnum(*gMacroReader, "event_number");
+  TTreeReaderValue<Int_t> nhTpc(*gMacroReader, "nhTpc");
+  TTreeReaderValue<Int_t> nclTpc(*gMacroReader, "nclTpc");
+  TTreeReaderValue<Int_t> ntTpc(*gMacroReader, "ntTpc");
   
-  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_x(*gReader, "raw_hitpos_x");
-  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_y(*gReader, "raw_hitpos_y");
-  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_z(*gReader, "raw_hitpos_z");
-  TTreeReaderValue<std::vector<Int_t>> raw_padid(*gReader, "raw_padid");
-  TTreeReaderValue<std::vector<Int_t>> raw_layer(*gReader, "raw_layer");
-  TTreeReaderValue<std::vector<Int_t>> raw_row(*gReader, "raw_row");
+  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_x(*gMacroReader, "raw_hitpos_x");
+  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_y(*gMacroReader, "raw_hitpos_y");
+  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_z(*gMacroReader, "raw_hitpos_z");
+  TTreeReaderValue<std::vector<Int_t>> raw_padid(*gMacroReader, "raw_padid");
+  TTreeReaderValue<std::vector<Int_t>> raw_layer(*gMacroReader, "raw_layer");
+  TTreeReaderValue<std::vector<Int_t>> raw_row(*gMacroReader, "raw_row");
   
-  TTreeReaderValue<std::vector<Double_t>> cluster_x(*gReader, "cluster_x");
-  TTreeReaderValue<std::vector<Double_t>> cluster_y(*gReader, "cluster_y");
-  TTreeReaderValue<std::vector<Double_t>> cluster_z(*gReader, "cluster_z");
-  TTreeReaderValue<std::vector<Double_t>> cluster_de(*gReader, "cluster_de");
-  TTreeReaderValue<std::vector<Int_t>> cluster_layer(*gReader, "cluster_layer");
-  TTreeReaderValue<std::vector<Int_t>> cluster_row_center(*gReader, "cluster_row_center");
-  TTreeReaderValue<std::vector<Int_t>> cluster_houghflag(*gReader, "cluster_houghflag");
+  TTreeReaderValue<std::vector<Double_t>> cluster_x(*gMacroReader, "cluster_x");
+  TTreeReaderValue<std::vector<Double_t>> cluster_y(*gMacroReader, "cluster_y");
+  TTreeReaderValue<std::vector<Double_t>> cluster_z(*gMacroReader, "cluster_z");
+  TTreeReaderValue<std::vector<Double_t>> cluster_de(*gMacroReader, "cluster_de");
+  TTreeReaderValue<std::vector<Int_t>> cluster_layer(*gMacroReader, "cluster_layer");
+  TTreeReaderValue<std::vector<Int_t>> cluster_row_center(*gMacroReader, "cluster_row_center");
+  TTreeReaderValue<std::vector<Int_t>> cluster_houghflag(*gMacroReader, "cluster_houghflag");
   
-  TTreeReaderValue<std::vector<Double_t>> x0Tpc(*gReader, "x0Tpc");
-  TTreeReaderValue<std::vector<Double_t>> y0Tpc(*gReader, "y0Tpc");
-  TTreeReaderValue<std::vector<Double_t>> u0Tpc(*gReader, "u0Tpc");
-  TTreeReaderValue<std::vector<Double_t>> v0Tpc(*gReader, "v0Tpc");
-  TTreeReaderValue<std::vector<Double_t>> theta(*gReader, "theta");
-  TTreeReaderValue<std::vector<Int_t>> nhtrack(*gReader, "nhtrack");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_x(*gReader, "hitpos_x");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_y(*gReader, "hitpos_y");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_z(*gReader, "hitpos_z");
+  TTreeReaderValue<std::vector<Double_t>> x0Tpc(*gMacroReader, "x0Tpc");
+  TTreeReaderValue<std::vector<Double_t>> y0Tpc(*gMacroReader, "y0Tpc");
+  TTreeReaderValue<std::vector<Double_t>> u0Tpc(*gMacroReader, "u0Tpc");
+  TTreeReaderValue<std::vector<Double_t>> v0Tpc(*gMacroReader, "v0Tpc");
+  TTreeReaderValue<std::vector<Double_t>> theta(*gMacroReader, "theta");
+  TTreeReaderValue<std::vector<Int_t>> nhtrack(*gMacroReader, "nhtrack");
+  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_x(*gMacroReader, "hitpos_x");
+  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_y(*gMacroReader, "hitpos_y");
+  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_z(*gMacroReader, "hitpos_z");
   
   // Read first entry to get tree size
-  if(gReader->Next()) {
+  if(gMacroReader->Next()) {
     gEvent.runnum = *runnum;
     gEvent.evnum = *evnum;
     gEvent.nhTpc = *nhTpc;
@@ -193,32 +190,32 @@ set_path(const char* path)
     gEvent.hitpos_z = *hitpos_z;
   }
   
-  gReader->SetEntry(0);
+  gMacroReader->SetEntry(0);
   
   std::cout << "File opened: " << path << std::endl;
   std::cout << "Total entries: " << tree->GetEntries() << std::endl;
   
-  if(!gRandom) gRandom = new TRandom3();
+  if(!gMacroRandom) gMacroRandom = new TRandom3();
 }
 
 //______________________________________________________________________________
 void
 load_event(Long64_t entry = -1)
 {
-  if(!gReader) {
+  if(!gMacroReader) {
     std::cerr << "Error: No file opened. Use set_path() first." << std::endl;
     return;
   }
   
-  Long64_t nentries = gReader->GetEntries(false);
+  Long64_t nentries = gMacroReader->GetEntries(false);
   if(nentries == 0) {
     std::cerr << "Error: No entries in tree" << std::endl;
     return;
   }
   
   if(entry < 0) {
-    if(!gRandom) gRandom = new TRandom3();
-    entry = gRandom->Integer(nentries);
+    if(!gMacroRandom) gMacroRandom = new TRandom3();
+    entry = gMacroRandom->Integer(nentries);
   }
   
   if(entry >= nentries) {
@@ -226,39 +223,39 @@ load_event(Long64_t entry = -1)
     return;
   }
   
-  gReader->SetEntry(entry);
+  gMacroReader->SetEntry(entry);
   
   // Read event data
-  TTreeReaderValue<UInt_t> runnum(*gReader, "run_number");
-  TTreeReaderValue<UInt_t> evnum(*gReader, "event_number");
-  TTreeReaderValue<Int_t> nhTpc(*gReader, "nhTpc");
-  TTreeReaderValue<Int_t> nclTpc(*gReader, "nclTpc");
-  TTreeReaderValue<Int_t> ntTpc(*gReader, "ntTpc");
+  TTreeReaderValue<UInt_t> runnum(*gMacroReader, "run_number");
+  TTreeReaderValue<UInt_t> evnum(*gMacroReader, "event_number");
+  TTreeReaderValue<Int_t> nhTpc(*gMacroReader, "nhTpc");
+  TTreeReaderValue<Int_t> nclTpc(*gMacroReader, "nclTpc");
+  TTreeReaderValue<Int_t> ntTpc(*gMacroReader, "ntTpc");
   
-  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_x(*gReader, "raw_hitpos_x");
-  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_y(*gReader, "raw_hitpos_y");
-  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_z(*gReader, "raw_hitpos_z");
-  TTreeReaderValue<std::vector<Int_t>> raw_padid(*gReader, "raw_padid");
-  TTreeReaderValue<std::vector<Int_t>> raw_layer(*gReader, "raw_layer");
-  TTreeReaderValue<std::vector<Int_t>> raw_row(*gReader, "raw_row");
+  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_x(*gMacroReader, "raw_hitpos_x");
+  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_y(*gMacroReader, "raw_hitpos_y");
+  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_z(*gMacroReader, "raw_hitpos_z");
+  TTreeReaderValue<std::vector<Int_t>> raw_padid(*gMacroReader, "raw_padid");
+  TTreeReaderValue<std::vector<Int_t>> raw_layer(*gMacroReader, "raw_layer");
+  TTreeReaderValue<std::vector<Int_t>> raw_row(*gMacroReader, "raw_row");
   
-  TTreeReaderValue<std::vector<Double_t>> cluster_x(*gReader, "cluster_x");
-  TTreeReaderValue<std::vector<Double_t>> cluster_y(*gReader, "cluster_y");
-  TTreeReaderValue<std::vector<Double_t>> cluster_z(*gReader, "cluster_z");
-  TTreeReaderValue<std::vector<Double_t>> cluster_de(*gReader, "cluster_de");
-  TTreeReaderValue<std::vector<Int_t>> cluster_layer(*gReader, "cluster_layer");
-  TTreeReaderValue<std::vector<Int_t>> cluster_row_center(*gReader, "cluster_row_center");
-  TTreeReaderValue<std::vector<Int_t>> cluster_houghflag(*gReader, "cluster_houghflag");
+  TTreeReaderValue<std::vector<Double_t>> cluster_x(*gMacroReader, "cluster_x");
+  TTreeReaderValue<std::vector<Double_t>> cluster_y(*gMacroReader, "cluster_y");
+  TTreeReaderValue<std::vector<Double_t>> cluster_z(*gMacroReader, "cluster_z");
+  TTreeReaderValue<std::vector<Double_t>> cluster_de(*gMacroReader, "cluster_de");
+  TTreeReaderValue<std::vector<Int_t>> cluster_layer(*gMacroReader, "cluster_layer");
+  TTreeReaderValue<std::vector<Int_t>> cluster_row_center(*gMacroReader, "cluster_row_center");
+  TTreeReaderValue<std::vector<Int_t>> cluster_houghflag(*gMacroReader, "cluster_houghflag");
   
-  TTreeReaderValue<std::vector<Double_t>> x0Tpc(*gReader, "x0Tpc");
-  TTreeReaderValue<std::vector<Double_t>> y0Tpc(*gReader, "y0Tpc");
-  TTreeReaderValue<std::vector<Double_t>> u0Tpc(*gReader, "u0Tpc");
-  TTreeReaderValue<std::vector<Double_t>> v0Tpc(*gReader, "v0Tpc");
-  TTreeReaderValue<std::vector<Double_t>> theta(*gReader, "theta");
-  TTreeReaderValue<std::vector<Int_t>> nhtrack(*gReader, "nhtrack");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_x(*gReader, "hitpos_x");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_y(*gReader, "hitpos_y");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_z(*gReader, "hitpos_z");
+  TTreeReaderValue<std::vector<Double_t>> x0Tpc(*gMacroReader, "x0Tpc");
+  TTreeReaderValue<std::vector<Double_t>> y0Tpc(*gMacroReader, "y0Tpc");
+  TTreeReaderValue<std::vector<Double_t>> u0Tpc(*gMacroReader, "u0Tpc");
+  TTreeReaderValue<std::vector<Double_t>> v0Tpc(*gMacroReader, "v0Tpc");
+  TTreeReaderValue<std::vector<Double_t>> theta(*gMacroReader, "theta");
+  TTreeReaderValue<std::vector<Int_t>> nhtrack(*gMacroReader, "nhtrack");
+  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_x(*gMacroReader, "hitpos_x");
+  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_y(*gMacroReader, "hitpos_y");
+  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_z(*gMacroReader, "hitpos_z");
   
   gEvent.runnum = *runnum;
   gEvent.evnum = *evnum;
@@ -301,12 +298,12 @@ event(Long64_t evnum = -1)
 {
   load_event(evnum);
   
-  if(!gCanvas) {
-    gCanvas = new TCanvas("c1", "TPC Track Check", 1400, 1000);
-    gCanvas->Divide(2, 2);
+  if(!gMacroCanvas) {
+    gMacroCanvas = new TCanvas("c1", "TPC Track Check", 1400, 1000);
+    gMacroCanvas->Divide(2, 2);
   }
   
-  gCanvas->cd(1);
+  gMacroCanvas->cd(1);
   {
     // X-Z view: Raw hits and clusters
     TH2D* h1 = new TH2D("h1", Form("X-Z View (Run %u, Event %u);X [mm];Z [mm]", 
@@ -380,7 +377,7 @@ event(Long64_t evnum = -1)
     leg1->Draw();
   }
   
-  gCanvas->cd(2);
+  gMacroCanvas->cd(2);
   {
     // Y-Z view: Raw hits and clusters
     TH2D* h2 = new TH2D("h2", Form("Y-Z View (Run %u, Event %u);Y [mm];Z [mm]", 
@@ -449,7 +446,7 @@ event(Long64_t evnum = -1)
     }
   }
   
-  gCanvas->cd(3);
+  gMacroCanvas->cd(3);
   {
     // X-Y view at target
     TH2D* h3 = new TH2D("h3", Form("X-Y View at Target (Run %u, Event %u);X [mm];Y [mm]", 
@@ -491,7 +488,7 @@ event(Long64_t evnum = -1)
     gTrackStart->Draw("P same");
   }
   
-  gCanvas->cd(4);
+  gMacroCanvas->cd(4);
   {
     // Layer vs Row: Clustering visualization
     TH2D* h4 = new TH2D("h4", Form("Layer vs Row (Run %u, Event %u);Row;Layer", 
@@ -528,7 +525,7 @@ event(Long64_t evnum = -1)
     gClHough->Draw("P same");
   }
   
-  gCanvas->Update();
+  gMacroCanvas->Update();
   
   // Print summary
   std::cout << "\n=== Event Summary ===" << std::endl;
