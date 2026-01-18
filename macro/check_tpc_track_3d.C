@@ -22,6 +22,8 @@
 #include <TPolyLine3D.h>
 #include <TPolyMarker3D.h>
 #include <TMarker3DBox.h>
+#include <TArrow.h>
+#include <TLatex.h>
 #include <TRandom3.h>
 #include <TMath.h>
 #include <TVector3.h>
@@ -82,6 +84,7 @@ std::vector<TPolyMarker3D*> gClusters;
 std::vector<TPolyMarker3D*> gHoughClusters;
 std::vector<TPolyLine3D*> gTracks;
 std::vector<TPolyLine3D*> gTPCFrame;
+std::vector<TObject*> gAxisLabels; // For TLatex objects
 
 //______________________________________________________________________________
 void
@@ -245,6 +248,11 @@ clear_objects()
     if(obj) delete obj;
   }
   gTPCFrame.clear();
+  
+  for(auto* obj : gAxisLabels) {
+    if(obj) delete obj;
+  }
+  gAxisLabels.clear();
 }
 
 //______________________________________________________________________________
@@ -301,10 +309,97 @@ event(Long64_t evnum = -1)
   Double_t ymin = xmin_orig, ymax = xmax_orig; // Display Y = original X
   Double_t zmin = ymin_orig, zmax = ymax_orig; // Display Z = original Y
   
-  // Create 3D view
+  // Create 3D view (without axis marks)
   gMacroView = TView::CreateView(1, 0, 0);
   gMacroView->SetRange(xmin, ymin, zmin, xmax, ymax, zmax);
-  gMacroView->ShowAxis();
+  // Don't call ShowAxis() to avoid axis marks
+  
+  // Draw small axis arrows in the corner
+  // Position: near the minimum corner of the view
+  Double_t axisOriginX = xmin + (xmax - xmin) * 0.05;
+  Double_t axisOriginY = ymin + (ymax - ymin) * 0.05;
+  Double_t axisOriginZ = zmin + (zmax - zmin) * 0.05;
+  Double_t axisLength = TMath::Min(TMath::Min(xmax - xmin, ymax - ymin), zmax - zmin) * 0.1;
+  
+  // X axis (original Z direction) - red
+  TPolyLine3D* axisX = new TPolyLine3D(2);
+  axisX->SetLineColor(kRed);
+  axisX->SetLineWidth(2);
+  axisX->SetPoint(0, axisOriginX, axisOriginY, axisOriginZ);
+  axisX->SetPoint(1, axisOriginX + axisLength, axisOriginY, axisOriginZ);
+  axisX->Draw();
+  gTPCFrame.push_back(axisX);
+  
+  // Arrow head for X axis
+  TPolyLine3D* arrowX1 = new TPolyLine3D(3);
+  arrowX1->SetLineColor(kRed);
+  arrowX1->SetLineWidth(2);
+  Double_t arrowSize = axisLength * 0.15;
+  arrowX1->SetPoint(0, axisOriginX + axisLength, axisOriginY, axisOriginZ);
+  arrowX1->SetPoint(1, axisOriginX + axisLength - arrowSize, axisOriginY - arrowSize * 0.3, axisOriginZ);
+  arrowX1->SetPoint(2, axisOriginX + axisLength - arrowSize, axisOriginY + arrowSize * 0.3, axisOriginZ);
+  arrowX1->Draw();
+  gTPCFrame.push_back(arrowX1);
+  
+  // Y axis (original X direction) - green
+  TPolyLine3D* axisY = new TPolyLine3D(2);
+  axisY->SetLineColor(kGreen + 2);
+  axisY->SetLineWidth(2);
+  axisY->SetPoint(0, axisOriginX, axisOriginY, axisOriginZ);
+  axisY->SetPoint(1, axisOriginX, axisOriginY + axisLength, axisOriginZ);
+  axisY->Draw();
+  gTPCFrame.push_back(axisY);
+  
+  // Arrow head for Y axis
+  TPolyLine3D* arrowY1 = new TPolyLine3D(3);
+  arrowY1->SetLineColor(kGreen + 2);
+  arrowY1->SetLineWidth(2);
+  arrowY1->SetPoint(0, axisOriginX, axisOriginY + axisLength, axisOriginZ);
+  arrowY1->SetPoint(1, axisOriginX - arrowSize * 0.3, axisOriginY + axisLength - arrowSize, axisOriginZ);
+  arrowY1->SetPoint(2, axisOriginX + arrowSize * 0.3, axisOriginY + axisLength - arrowSize, axisOriginZ);
+  arrowY1->Draw();
+  gTPCFrame.push_back(arrowY1);
+  
+  // Z axis (original Y direction) - blue
+  TPolyLine3D* axisZ = new TPolyLine3D(2);
+  axisZ->SetLineColor(kBlue);
+  axisZ->SetLineWidth(2);
+  axisZ->SetPoint(0, axisOriginX, axisOriginY, axisOriginZ);
+  axisZ->SetPoint(1, axisOriginX, axisOriginY, axisOriginZ + axisLength);
+  axisZ->Draw();
+  gTPCFrame.push_back(axisZ);
+  
+  // Arrow head for Z axis
+  TPolyLine3D* arrowZ1 = new TPolyLine3D(3);
+  arrowZ1->SetLineColor(kBlue);
+  arrowZ1->SetLineWidth(2);
+  arrowZ1->SetPoint(0, axisOriginX, axisOriginY, axisOriginZ + axisLength);
+  arrowZ1->SetPoint(1, axisOriginX - arrowSize * 0.3, axisOriginY, axisOriginZ + axisLength - arrowSize);
+  arrowZ1->SetPoint(2, axisOriginX + arrowSize * 0.3, axisOriginY, axisOriginZ + axisLength - arrowSize);
+  arrowZ1->Draw();
+  gTPCFrame.push_back(arrowZ1);
+  
+  // Add axis labels
+  TLatex* labelX = new TLatex();
+  labelX->SetTextColor(kRed);
+  labelX->SetTextSize(0.02);
+  labelX->SetNDC(kFALSE);
+  labelX->DrawLatex(axisOriginX + axisLength * 1.2, axisOriginY, axisOriginZ, "X (Z)");
+  gAxisLabels.push_back(labelX);
+  
+  TLatex* labelY = new TLatex();
+  labelY->SetTextColor(kGreen + 2);
+  labelY->SetTextSize(0.02);
+  labelY->SetNDC(kFALSE);
+  labelY->DrawLatex(axisOriginX, axisOriginY + axisLength * 1.2, axisOriginZ, "Y (X)");
+  gAxisLabels.push_back(labelY);
+  
+  TLatex* labelZ = new TLatex();
+  labelZ->SetTextColor(kBlue);
+  labelZ->SetTextSize(0.02);
+  labelZ->SetNDC(kFALSE);
+  labelZ->DrawLatex(axisOriginX, axisOriginY, axisOriginZ + axisLength * 1.2, "Z (Y)");
+  gAxisLabels.push_back(labelZ);
   
   // Draw TPC frame (regular octagonal prism)
   // Frame dimensions:
