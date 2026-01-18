@@ -45,6 +45,7 @@ struct EventData {
   std::vector<Double_t> raw_hitpos_x;
   std::vector<Double_t> raw_hitpos_y;
   std::vector<Double_t> raw_hitpos_z;
+  std::vector<Double_t> raw_de;
   std::vector<Int_t> raw_padid;
   std::vector<Int_t> raw_layer;
   std::vector<Int_t> raw_row;
@@ -132,11 +133,6 @@ set_path(const char* path)
   std::cout << "Total entries: " << tree->GetEntries() << std::endl;
   
   if(!gMacroRandom) gMacroRandom = new TRandom3();
-  
-  std::cout << "File opened: " << path << std::endl;
-  std::cout << "Total entries: " << tree->GetEntries() << std::endl;
-  
-  if(!gMacroRandom) gMacroRandom = new TRandom3();
 }
 
 //______________________________________________________________________________
@@ -174,6 +170,7 @@ load_event(Long64_t entry = -1)
   TTreeReaderValue<std::vector<Double_t>> raw_hitpos_x(*gMacroReader, "raw_hitpos_x");
   TTreeReaderValue<std::vector<Double_t>> raw_hitpos_y(*gMacroReader, "raw_hitpos_y");
   TTreeReaderValue<std::vector<Double_t>> raw_hitpos_z(*gMacroReader, "raw_hitpos_z");
+  TTreeReaderValue<std::vector<Double_t>> raw_de(*gMacroReader, "raw_de");
   TTreeReaderValue<std::vector<Int_t>> raw_padid(*gMacroReader, "raw_padid");
   TTreeReaderValue<std::vector<Int_t>> raw_layer(*gMacroReader, "raw_layer");
   TTreeReaderValue<std::vector<Int_t>> raw_row(*gMacroReader, "raw_row");
@@ -207,6 +204,7 @@ load_event(Long64_t entry = -1)
   gEvent.raw_hitpos_x = *raw_hitpos_x;
   gEvent.raw_hitpos_y = *raw_hitpos_y;
   gEvent.raw_hitpos_z = *raw_hitpos_z;
+  gEvent.raw_de = *raw_de;
   gEvent.raw_padid = *raw_padid;
   gEvent.raw_layer = *raw_layer;
   gEvent.raw_row = *raw_row;
@@ -248,34 +246,48 @@ event(Long64_t evnum = -1)
   
   gMacroCanvas->cd(1);
   {
-    // X-Z view: Raw hits and clusters
-    TH2D* h1 = new TH2D("h1", Form("X-Z View (Run %u, Event %u);X [mm];Z [mm]", 
-                                    gEvent.runnum, gEvent.evnum),
-                         100, -200, 200, 100, -200, 200);
-    h1->SetStats(0);
-    h1->Draw();
+    // X-Z view: Pad geometry with hits colored by de
+    // Fixed range for consistent viewing
+    const Double_t xmin = -200.0, xmax = 200.0;
+    const Double_t zmin = -200.0, zmax = 200.0;
     
-    // Draw raw hits (using TPCPadHelper to get pad position if padid is available)
-    TGraph* gRaw = new TGraph();
-    gRaw->SetMarkerStyle(20);
-    gRaw->SetMarkerSize(0.5);
-    gRaw->SetMarkerColor(kGray);
+    TH2Poly* h1 = new TH2Poly("h1", Form("X-Z View (Run %u, Event %u);X [mm];Z [mm]", 
+                                          gEvent.runnum, gEvent.evnum),
+                               xmin, xmax, zmin, zmax);
+    h1->SetStats(0);
+    
+    // Create pad template (all pads with minimum value)
+    TPC_pad_template(h1);
+    h1->SetMinimum(0);
+    h1->SetMaximum(1000); // Adjust based on typical de values
+    
+    // Fill pads with hit de values
+    std::map<Int_t, Double_t> pad_de_map; // padid -> max de
     for(Int_t i = 0; i < gEvent.nhTpc; i++) {
-      Double_t x = gEvent.raw_hitpos_x[i];
-      Double_t z = gEvent.raw_hitpos_z[i];
-      // If padid is available, use TPCPadHelper to get more accurate position
       if(i < static_cast<Int_t>(gEvent.raw_padid.size()) && gEvent.raw_padid[i] >= 0) {
-        TVector3 padPos = tpc::getPosition(gEvent.raw_padid[i]);
-        if(!TMath::IsNaN(padPos.X())) {
-          x = padPos.X();
-          z = padPos.Z();
+        Int_t padid = gEvent.raw_padid[i];
+        Double_t de = (i < static_cast<Int_t>(gEvent.raw_de.size())) ? gEvent.raw_de[i] : 0.0;
+        if(pad_de_map.find(padid) == pad_de_map.end() || pad_de_map[padid] < de) {
+          pad_de_map[padid] = de;
         }
       }
-      gRaw->SetPoint(gRaw->GetN(), x, z);
     }
-    gRaw->Draw("P same");
     
-    // Draw clusters
+    // Set pad values based on de
+    for(const auto& pair : pad_de_map) {
+      Int_t padid = pair.first;
+      Double_t de = pair.second;
+      // Find bin corresponding to this pad
+      TVector3 padPos = tpc::getPosition(padid);
+      Int_t bin = h1->FindBin(padPos.X(), padPos.Z());
+      if(bin > 0) {
+        h1->SetBinContent(bin, de);
+      }
+    }
+    
+    h1->Draw("COLZ");
+    
+    // Draw clusters on top
     TGraph* gCl = new TGraph();
     gCl->SetMarkerStyle(21);
     gCl->SetMarkerSize(1.0);
@@ -301,7 +313,6 @@ event(Long64_t evnum = -1)
     for(Int_t itrack = 0; itrack < gEvent.ntTpc; itrack++) {
       Double_t x0 = gEvent.x0Tpc[itrack];
       Double_t u0 = gEvent.u0Tpc[itrack];
-      Double_t zmin = -200, zmax = 200;
       Double_t x1 = x0 + u0 * zmin;
       Double_t x2 = x0 + u0 * zmax;
       
@@ -314,7 +325,7 @@ event(Long64_t evnum = -1)
     }
     
     TLegend* leg1 = new TLegend(0.7, 0.7, 0.9, 0.9);
-    leg1->AddEntry(gRaw, "Raw hits", "p");
+    leg1->AddEntry((TObject*)0, "Pads: de (color)", "");
     leg1->AddEntry(gCl, "Clusters", "p");
     leg1->AddEntry(gClHough, "Hough selected", "p");
     leg1->Draw();
@@ -322,35 +333,88 @@ event(Long64_t evnum = -1)
   
   gMacroCanvas->cd(2);
   {
-    // Y-Z view: Raw hits and clusters
-    TH2D* h2 = new TH2D("h2", Form("Y-Z View (Run %u, Event %u);Y [mm];Z [mm]", 
-                                    gEvent.runnum, gEvent.evnum),
-                         100, -200, 200, 100, -200, 200);
-    h2->SetStats(0);
-    h2->Draw();
+    // Y-Z view: Pad geometry with hits colored by de
+    // Fixed range for consistent viewing
+    const Double_t ymin = -200.0, ymax = 200.0;
+    const Double_t zmin = -200.0, zmax = 200.0;
     
-    // Draw raw hits (using TPCPadHelper to get pad position if padid is available)
-    TGraph* gRaw = new TGraph();
-    gRaw->SetMarkerStyle(20);
-    gRaw->SetMarkerSize(0.5);
-    gRaw->SetMarkerColor(kGray);
+    TH2Poly* h2 = new TH2Poly("h2", Form("Y-Z View (Run %u, Event %u);Y [mm];Z [mm]", 
+                                          gEvent.runnum, gEvent.evnum),
+                               ymin, ymax, zmin, zmax);
+    h2->SetStats(0);
+    
+    // Create pad template (all pads with minimum value)
+    // For Y-Z view, we need to project pads to Y-Z plane
+    // Since pads are in X-Z plane, we'll use the pad's Y position (which is 0 for pad center)
+    // and use raw_hitpos_y for actual Y positions
+    Double_t X[5];
+    Double_t Y[5];
+    for(Int_t l = 0; l < tpc::NumOfLayersTPC; ++l) {
+      Double_t pLength = tpc::padParameter[l][tpc::kLength];
+      Double_t st = (180. - (360. / tpc::padParameter[l][tpc::kNumOfDivision]) *
+                     tpc::padParameter[l][tpc::kNumOfPad] / 2.);
+      Double_t sTheta = (-1 + st / 180.) * TMath::Pi();
+      Double_t dTheta = (360. / tpc::padParameter[l][tpc::kNumOfDivision]) / 180. * TMath::Pi();
+      Double_t cRad = tpc::padParameter[l][tpc::kRadius];
+      Int_t nPad = static_cast<Int_t>(tpc::padParameter[l][tpc::kNumOfPad]);
+      for(Int_t j = 0; j < nPad; ++j) {
+        // Calculate pad position in X-Z plane
+        Double_t x1 = (cRad + (pLength / 2.)) * TMath::Cos(j * dTheta + sTheta);
+        Double_t x2 = (cRad + (pLength / 2.)) * TMath::Cos((j + 1) * dTheta + sTheta);
+        Double_t x3 = (cRad - (pLength / 2.)) * TMath::Cos((j + 1) * dTheta + sTheta);
+        Double_t x4 = (cRad - (pLength / 2.)) * TMath::Cos(j * dTheta + sTheta);
+        Double_t z1 = (cRad + (pLength / 2.)) * TMath::Sin(j * dTheta + sTheta);
+        Double_t z2 = (cRad + (pLength / 2.)) * TMath::Sin((j + 1) * dTheta + sTheta);
+        Double_t z3 = (cRad - (pLength / 2.)) * TMath::Sin((j + 1) * dTheta + sTheta);
+        Double_t z4 = (cRad - (pLength / 2.)) * TMath::Sin(j * dTheta + sTheta);
+        
+        // For Y-Z view, Y is the pad's Y position (0 for pad center, but we'll use a small range)
+        // and Z is the pad's Z position
+        // Use a small Y range around 0 to represent the pad thickness
+        Double_t yThickness = 5.0; // Approximate pad thickness in Y direction
+        Y[1] = yThickness / 2.0;
+        Y[2] = yThickness / 2.0;
+        Y[3] = -yThickness / 2.0;
+        Y[4] = -yThickness / 2.0;
+        Y[0] = Y[4];
+        X[1] = z1 + tpc::ZTarget;
+        X[2] = z2 + tpc::ZTarget;
+        X[3] = z3 + tpc::ZTarget;
+        X[4] = z4 + tpc::ZTarget;
+        X[0] = X[4];
+        h2->AddBin(5, X, Y);
+      }
+    }
+    h2->SetMinimum(0);
+    h2->SetMaximum(1000);
+    
+    // Fill pads with hit de values
+    std::map<Int_t, Double_t> pad_de_map; // padid -> max de
     for(Int_t i = 0; i < gEvent.nhTpc; i++) {
-      Double_t y = gEvent.raw_hitpos_y[i];
-      Double_t z = gEvent.raw_hitpos_z[i];
-      // If padid is available, use TPCPadHelper to get more accurate position
-      // Note: getPosition returns (x, 0, z), so y is always 0 for pad center
-      // We use raw_hitpos_y for y coordinate
       if(i < static_cast<Int_t>(gEvent.raw_padid.size()) && gEvent.raw_padid[i] >= 0) {
-        TVector3 padPos = tpc::getPosition(gEvent.raw_padid[i]);
-        if(!TMath::IsNaN(padPos.Z())) {
-          z = padPos.Z();
+        Int_t padid = gEvent.raw_padid[i];
+        Double_t de = (i < static_cast<Int_t>(gEvent.raw_de.size())) ? gEvent.raw_de[i] : 0.0;
+        if(pad_de_map.find(padid) == pad_de_map.end() || pad_de_map[padid] < de) {
+          pad_de_map[padid] = de;
         }
       }
-      gRaw->SetPoint(gRaw->GetN(), y, z);
     }
-    gRaw->Draw("P same");
     
-    // Draw clusters
+    // Set pad values based on de
+    for(const auto& pair : pad_de_map) {
+      Int_t padid = pair.first;
+      Double_t de = pair.second;
+      TVector3 padPos = tpc::getPosition(padid);
+      // For Y-Z view, use pad's Y (0) and Z position
+      Int_t bin = h2->FindBin(0.0, padPos.Z());
+      if(bin > 0) {
+        h2->SetBinContent(bin, de);
+      }
+    }
+    
+    h2->Draw("COLZ");
+    
+    // Draw clusters on top
     TGraph* gCl = new TGraph();
     gCl->SetMarkerStyle(21);
     gCl->SetMarkerSize(1.0);
@@ -376,7 +440,6 @@ event(Long64_t evnum = -1)
     for(Int_t itrack = 0; itrack < gEvent.ntTpc; itrack++) {
       Double_t y0 = gEvent.y0Tpc[itrack];
       Double_t v0 = gEvent.v0Tpc[itrack];
-      Double_t zmin = -200, zmax = 200;
       Double_t y1 = y0 + v0 * zmin;
       Double_t y2 = y0 + v0 * zmax;
       
@@ -392,9 +455,13 @@ event(Long64_t evnum = -1)
   gMacroCanvas->cd(3);
   {
     // X-Y view at target
+    // Fixed range for consistent viewing
+    const Double_t xmin = -100.0, xmax = 100.0;
+    const Double_t ymin = -100.0, ymax = 100.0;
+    
     TH2D* h3 = new TH2D("h3", Form("X-Y View at Target (Run %u, Event %u);X [mm];Y [mm]", 
                                     gEvent.runnum, gEvent.evnum),
-                         100, -100, 100, 100, -100, 100);
+                         100, xmin, xmax, 100, ymin, ymax);
     h3->SetStats(0);
     h3->Draw();
     
@@ -434,9 +501,13 @@ event(Long64_t evnum = -1)
   gMacroCanvas->cd(4);
   {
     // Layer vs Row: Clustering visualization
+    // Fixed range for consistent viewing
+    const Double_t rowmin = 0.0, rowmax = 200.0;
+    const Double_t layermin = 0.0, layermax = 20.0;
+    
     TH2D* h4 = new TH2D("h4", Form("Layer vs Row (Run %u, Event %u);Row;Layer", 
                                     gEvent.runnum, gEvent.evnum),
-                         200, 0, 200, 20, 0, 20);
+                         200, rowmin, rowmax, 20, layermin, layermax);
     h4->SetStats(0);
     h4->Draw();
     
