@@ -76,8 +76,10 @@ EventData gEvent;
 void
 TPC_pad_template(TH2Poly* h)
 {
-  Double_t X[5];
-  Double_t Y[5];
+  // For X-Z view: TH2Poly X = actual Z (horizontal), TH2Poly Y = actual X (vertical)
+  // According to tpc::getPosition: X = radius * sin(theta), Z = radius * cos(theta) + ZTarget
+  Double_t X[5]; // TH2Poly X = actual Z coordinate (horizontal axis)
+  Double_t Y[5]; // TH2Poly Y = actual X coordinate (vertical axis)
   for(Int_t l = 0; l < tpc::NumOfLayersTPC; ++l) {
     Double_t pLength = tpc::padParameter[l][tpc::kLength];
     Double_t st = (180. - (360. / tpc::padParameter[l][tpc::kNumOfDivision]) *
@@ -87,17 +89,26 @@ TPC_pad_template(TH2Poly* h)
     Double_t cRad = tpc::padParameter[l][tpc::kRadius];
     Int_t nPad = static_cast<Int_t>(tpc::padParameter[l][tpc::kNumOfPad]);
     for(Int_t j = 0; j < nPad; ++j) {
-      X[1] = (cRad + (pLength / 2.)) * TMath::Cos(j * dTheta + sTheta);
-      X[2] = (cRad + (pLength / 2.)) * TMath::Cos((j + 1) * dTheta + sTheta);
-      X[3] = (cRad - (pLength / 2.)) * TMath::Cos((j + 1) * dTheta + sTheta);
-      X[4] = (cRad - (pLength / 2.)) * TMath::Cos(j * dTheta + sTheta);
+      Double_t theta1 = j * dTheta + sTheta;
+      Double_t theta2 = (j + 1) * dTheta + sTheta;
+      Double_t r_in = cRad - (pLength / 2.);
+      Double_t r_out = cRad + (pLength / 2.);
+      
+      // X = radius * sin(theta), Z = radius * cos(theta) + ZTarget
+      // TH2Poly X = actual Z (horizontal axis)
+      X[1] = r_out * TMath::Cos(theta1) + tpc::ZTarget;
+      X[2] = r_out * TMath::Cos(theta2) + tpc::ZTarget;
+      X[3] = r_in * TMath::Cos(theta2) + tpc::ZTarget;
+      X[4] = r_in * TMath::Cos(theta1) + tpc::ZTarget;
       X[0] = X[4];
-      Y[1] = (cRad + (pLength / 2.)) * TMath::Sin(j * dTheta + sTheta);
-      Y[2] = (cRad + (pLength / 2.)) * TMath::Sin((j + 1) * dTheta + sTheta);
-      Y[3] = (cRad - (pLength / 2.)) * TMath::Sin((j + 1) * dTheta + sTheta);
-      Y[4] = (cRad - (pLength / 2.)) * TMath::Sin(j * dTheta + sTheta);
+      
+      // TH2Poly Y = actual X (vertical axis)
+      Y[1] = r_out * TMath::Sin(theta1);
+      Y[2] = r_out * TMath::Sin(theta2);
+      Y[3] = r_in * TMath::Sin(theta2);
+      Y[4] = r_in * TMath::Sin(theta1);
       Y[0] = Y[4];
-      for(Int_t k = 0; k < 5; ++k) X[k] += tpc::ZTarget;
+      
       h->AddBin(5, X, Y);
     }
   }
@@ -256,12 +267,13 @@ event(Long64_t evnum = -1)
   {
     // X-Z view: Pad geometry with hits colored by de
     // Fixed range for consistent viewing
-    const Double_t xmin = -350.0, xmax = 350.0;
-    const Double_t zmin = -350.0, zmax = 350.0;
+    // Note: Z is horizontal axis, X is vertical axis
+    const Double_t zmin = -300.0, zmax = 300.0;
+    const Double_t xmin = -300.0, xmax = 300.0;
     
-    TH2Poly* h1 = new TH2Poly("h1", Form("X-Z View (Run %u, Event %u);X [mm];Z [mm]", 
+    TH2Poly* h1 = new TH2Poly("h1", Form("X-Z View (Run %u, Event %u);Z [mm];X [mm]", 
                                           gEvent.runnum, gEvent.evnum),
-                               xmin, xmax, zmin, zmax);
+                               zmin, zmax, xmin, xmax);
     h1->SetStats(0);
     
     // Create pad template (all pads with minimum value)
@@ -286,8 +298,9 @@ event(Long64_t evnum = -1)
       Int_t padid = pair.first;
       Double_t de = pair.second;
       // Find bin corresponding to this pad
+      // Note: Z is horizontal (first arg), X is vertical (second arg)
       TVector3 padPos = tpc::getPosition(padid);
-      Int_t bin = h1->FindBin(padPos.X(), padPos.Z());
+      Int_t bin = h1->FindBin(padPos.Z(), padPos.X());
       if(bin > 0) {
         h1->SetBinContent(bin, de);
       }
@@ -296,12 +309,13 @@ event(Long64_t evnum = -1)
     h1->Draw("COLZ");
     
     // Draw clusters on top
+    // Note: Z is horizontal (x), X is vertical (y)
     TGraph* gCl = new TGraph();
     gCl->SetMarkerStyle(21);
     gCl->SetMarkerSize(1.0);
     gCl->SetMarkerColor(kBlue);
     for(Int_t i = 0; i < gEvent.nclTpc; i++) {
-      gCl->SetPoint(gCl->GetN(), gEvent.cluster_x[i], gEvent.cluster_z[i]);
+      gCl->SetPoint(gCl->GetN(), gEvent.cluster_z[i], gEvent.cluster_x[i]);
     }
     gCl->Draw("P same");
     
@@ -312,12 +326,13 @@ event(Long64_t evnum = -1)
     gClHough->SetMarkerColor(kRed);
     for(Int_t i = 0; i < gEvent.nclTpc; i++) {
       if(gEvent.cluster_houghflag[i] > 0) {
-        gClHough->SetPoint(gClHough->GetN(), gEvent.cluster_x[i], gEvent.cluster_z[i]);
+        gClHough->SetPoint(gClHough->GetN(), gEvent.cluster_z[i], gEvent.cluster_x[i]);
       }
     }
     gClHough->Draw("P same");
     
     // Draw tracks
+    // Note: Z is horizontal (x), X is vertical (y)
     for(Int_t itrack = 0; itrack < gEvent.ntTpc; itrack++) {
       Double_t x0 = gEvent.x0Tpc[itrack];
       Double_t u0 = gEvent.u0Tpc[itrack];
@@ -327,8 +342,8 @@ event(Long64_t evnum = -1)
       TGraph* gTrack = new TGraph();
       gTrack->SetLineWidth(2);
       gTrack->SetLineColor(itrack % 9 + 1);
-      gTrack->SetPoint(0, x1, zmin);
-      gTrack->SetPoint(1, x2, zmax);
+      gTrack->SetPoint(0, zmin, x1);
+      gTrack->SetPoint(1, zmax, x2);
       gTrack->Draw("L same");
     }
     
@@ -344,7 +359,7 @@ event(Long64_t evnum = -1)
     // Y-Z view: Pad geometry with hits colored by de
     // Fixed range for consistent viewing
     // Note: Z is horizontal axis, Y is vertical axis
-    const Double_t zmin = -350.0, zmax = 350.0;
+    const Double_t zmin = -300.0, zmax = 300.0;
     const Double_t ymin = -200.0, ymax = 200.0;
     
     TH2Poly* h2 = new TH2Poly("h2", Form("Y-Z View (Run %u, Event %u);Z [mm];Y [mm]", 
@@ -367,31 +382,29 @@ event(Long64_t evnum = -1)
       Double_t cRad = tpc::padParameter[l][tpc::kRadius];
       Int_t nPad = static_cast<Int_t>(tpc::padParameter[l][tpc::kNumOfPad]);
       for(Int_t j = 0; j < nPad; ++j) {
-        // Calculate pad position in X-Z plane
-        Double_t x1 = (cRad + (pLength / 2.)) * TMath::Cos(j * dTheta + sTheta);
-        Double_t x2 = (cRad + (pLength / 2.)) * TMath::Cos((j + 1) * dTheta + sTheta);
-        Double_t x3 = (cRad - (pLength / 2.)) * TMath::Cos((j + 1) * dTheta + sTheta);
-        Double_t x4 = (cRad - (pLength / 2.)) * TMath::Cos(j * dTheta + sTheta);
-        Double_t z1 = (cRad + (pLength / 2.)) * TMath::Sin(j * dTheta + sTheta);
-        Double_t z2 = (cRad + (pLength / 2.)) * TMath::Sin((j + 1) * dTheta + sTheta);
-        Double_t z3 = (cRad - (pLength / 2.)) * TMath::Sin((j + 1) * dTheta + sTheta);
-        Double_t z4 = (cRad - (pLength / 2.)) * TMath::Sin(j * dTheta + sTheta);
+        // For Y-Z view: TH2Poly X = actual Z (horizontal), TH2Poly Y = actual Y (vertical)
+        // According to tpc::getPosition: Z = radius * cos(theta) + ZTarget, Y = 0
+        Double_t theta1 = j * dTheta + sTheta;
+        Double_t theta2 = (j + 1) * dTheta + sTheta;
+        Double_t r_in = cRad - (pLength / 2.);
+        Double_t r_out = cRad + (pLength / 2.);
         
-        // For Y-Z view, Z is horizontal axis (X in TH2Poly), Y is vertical axis (Y in TH2Poly)
-        // Use a small Y range around 0 to represent the pad thickness
-        Double_t yThickness = 5.0; // Approximate pad thickness in Y direction
-        // X in TH2Poly corresponds to Z coordinate
-        X[1] = z1 + tpc::ZTarget;
-        X[2] = z2 + tpc::ZTarget;
-        X[3] = z3 + tpc::ZTarget;
-        X[4] = z4 + tpc::ZTarget;
+        // Z = radius * cos(theta) + ZTarget
+        // TH2Poly X = actual Z (horizontal axis)
+        X[1] = r_out * TMath::Cos(theta1) + tpc::ZTarget;
+        X[2] = r_out * TMath::Cos(theta2) + tpc::ZTarget;
+        X[3] = r_in * TMath::Cos(theta2) + tpc::ZTarget;
+        X[4] = r_in * TMath::Cos(theta1) + tpc::ZTarget;
         X[0] = X[4];
-        // Y in TH2Poly corresponds to Y coordinate
+        
+        // TH2Poly Y = actual Y (vertical axis, use small range for pad thickness)
+        Double_t yThickness = 5.0; // Approximate pad thickness in Y direction
         Y[1] = yThickness / 2.0;
         Y[2] = yThickness / 2.0;
         Y[3] = -yThickness / 2.0;
         Y[4] = -yThickness / 2.0;
         Y[0] = Y[4];
+        
         h2->AddBin(5, X, Y);
       }
     }
