@@ -28,6 +28,7 @@
 #include <TStyle.h>
 #include <TLegend.h>
 #include <TText.h>
+#include <TLatex.h>
 #include <vector>
 #include <iostream>
 #include "../include/TPCPadHelper.hh"
@@ -77,7 +78,7 @@ struct EventData {
 EventData gEvent;
 
 // Forward declaration
-void DrawAxisLabel(Double_t x, Double_t y, Double_t z, Char_t label, Color_t color, Double_t labelSize);
+void DrawAxisLabel3D(Double_t x, Double_t y, Double_t z, const char* label, Color_t color, TView* view);
 
 // Storage for 3D objects
 std::vector<TPolyMarker3D*> gRawHits;
@@ -221,79 +222,20 @@ load_event(Long64_t entry = -1)
 
 //______________________________________________________________________________
 void
-DrawAxisLabel(Double_t x, Double_t y, Double_t z, Char_t label, Color_t color, Double_t labelSize)
+DrawAxisLabel3D(Double_t x, Double_t y, Double_t z, const char* label, Color_t color, TView* view)
 {
-  // Draw a simple axis label using small lines to form letters
-  // X: two crossing lines
-  if(label == 'X') {
-    TPolyLine3D* x1 = new TPolyLine3D(2);
-    x1->SetLineColor(color);
-    x1->SetLineWidth(2);
-    x1->SetPoint(0, x - labelSize * 0.3, y - labelSize * 0.3, z);
-    x1->SetPoint(1, x + labelSize * 0.3, y + labelSize * 0.3, z);
-    x1->Draw();
-    gTPCFrame.push_back(x1);
-    
-    TPolyLine3D* x2 = new TPolyLine3D(2);
-    x2->SetLineColor(color);
-    x2->SetLineWidth(2);
-    x2->SetPoint(0, x - labelSize * 0.3, y + labelSize * 0.3, z);
-    x2->SetPoint(1, x + labelSize * 0.3, y - labelSize * 0.3, z);
-    x2->Draw();
-    gTPCFrame.push_back(x2);
-  }
-  // Y: V shape with vertical line
-  else if(label == 'Y') {
-    TPolyLine3D* y1 = new TPolyLine3D(2);
-    y1->SetLineColor(color);
-    y1->SetLineWidth(2);
-    y1->SetPoint(0, x, y - labelSize * 0.4, z);
-    y1->SetPoint(1, x, y + labelSize * 0.2, z);
-    y1->Draw();
-    gTPCFrame.push_back(y1);
-    
-    TPolyLine3D* y2 = new TPolyLine3D(2);
-    y2->SetLineColor(color);
-    y2->SetLineWidth(2);
-    y2->SetPoint(0, x, y + labelSize * 0.2, z);
-    y2->SetPoint(1, x - labelSize * 0.3, y + labelSize * 0.4, z);
-    y2->Draw();
-    gTPCFrame.push_back(y2);
-    
-    TPolyLine3D* y3 = new TPolyLine3D(2);
-    y3->SetLineColor(color);
-    y3->SetLineWidth(2);
-    y3->SetPoint(0, x, y + labelSize * 0.2, z);
-    y3->SetPoint(1, x + labelSize * 0.3, y + labelSize * 0.4, z);
-    y3->Draw();
-    gTPCFrame.push_back(y3);
-  }
-  // Z: three lines forming Z shape
-  else if(label == 'Z') {
-    TPolyLine3D* z1 = new TPolyLine3D(2);
-    z1->SetLineColor(color);
-    z1->SetLineWidth(2);
-    z1->SetPoint(0, x - labelSize * 0.3, y + labelSize * 0.3, z);
-    z1->SetPoint(1, x + labelSize * 0.3, y + labelSize * 0.3, z);
-    z1->Draw();
-    gTPCFrame.push_back(z1);
-    
-    TPolyLine3D* z2 = new TPolyLine3D(2);
-    z2->SetLineColor(color);
-    z2->SetLineWidth(2);
-    z2->SetPoint(0, x + labelSize * 0.3, y + labelSize * 0.3, z);
-    z2->SetPoint(1, x - labelSize * 0.3, y - labelSize * 0.3, z);
-    z2->Draw();
-    gTPCFrame.push_back(z2);
-    
-    TPolyLine3D* z3 = new TPolyLine3D(2);
-    z3->SetLineColor(color);
-    z3->SetLineWidth(2);
-    z3->SetPoint(0, x - labelSize * 0.3, y - labelSize * 0.3, z);
-    z3->SetPoint(1, x + labelSize * 0.3, y - labelSize * 0.3, z);
-    z3->Draw();
-    gTPCFrame.push_back(z3);
-  }
+  // Convert 3D world coordinates to normalized device coordinates (NDC)
+  Double_t xndc, yndc;
+  view->WCtoNDC(x, y, z, xndc, yndc);
+  
+  // Draw text using TLatex in NDC coordinates
+  TLatex* latex = new TLatex();
+  latex->SetNDC();
+  latex->SetTextColor(color);
+  latex->SetTextSize(0.02);
+  latex->SetTextAlign(22); // Center alignment
+  latex->DrawLatex(xndc, yndc, label);
+  // Note: TLatex objects are managed by ROOT, so we don't need to store them
 }
 
 //______________________________________________________________________________
@@ -345,10 +287,11 @@ event(Long64_t evnum = -1)
   
   // Fixed range for view (to prevent scale changes between events)
   // Note: Coordinate transformation (x,y,z) -> (z,x,y)
-  // Original coordinates: X: -300 to 300, Y: -310 to 310 (TPC frame height), Z: -300 to 300
-  const Double_t xmin_orig = -300.0, xmax_orig = 300.0;
+  // Original coordinates: X: -311 to 311 (octagon radius), Y: -310 to 310 (TPC frame height), Z: -311 to 311
+  // Use symmetric range to avoid distortion
+  const Double_t xmin_orig = -311.0, xmax_orig = 311.0;  // Octagon radius
   const Double_t ymin_orig = -310.0, ymax_orig = 310.0;  // Fixed to TPC frame height
-  const Double_t zmin_orig = -300.0, zmax_orig = 300.0;
+  const Double_t zmin_orig = -311.0, zmax_orig = 311.0;  // Octagon radius
   
   // Transform range: (x,y,z) -> (z,x,y)
   const Double_t xmin = zmin_orig, xmax = zmax_orig; // Display X = original Z
@@ -424,14 +367,6 @@ event(Long64_t evnum = -1)
   arrowZ1->SetPoint(2, axisOriginX + arrowSize * 0.3, axisOriginY, axisOriginZ + axisLength - arrowSize);
   arrowZ1->Draw();
   gTPCFrame.push_back(arrowZ1);
-  
-  // Draw axis labels using small markers/lines to form letters
-  // X axis label
-  DrawAxisLabel(axisOriginX + axisLength * 1.3, axisOriginY, axisOriginZ, 'X', kRed, axisLength);
-  // Y axis label
-  DrawAxisLabel(axisOriginX, axisOriginY + axisLength * 1.3, axisOriginZ, 'Y', kGreen + 2, axisLength);
-  // Z axis label
-  DrawAxisLabel(axisOriginX, axisOriginY, axisOriginZ + axisLength * 1.3, 'Z', kBlue, axisLength);
   
   // Draw TPC frame (regular octagonal prism)
   // Frame dimensions:
@@ -630,6 +565,17 @@ event(Long64_t evnum = -1)
       }
     }
   }
+  
+  gMacroCanvas->Update();
+  
+  // Draw axis labels after canvas update (so WCtoNDC conversion works correctly)
+  // Note: Coordinate transform (x,y,z) -> (z,x,y)
+  // Display X axis = original Z direction -> label "Z"
+  DrawAxisLabel3D(axisOriginX + axisLength * 1.3, axisOriginY, axisOriginZ, "Z", kRed, gMacroView);
+  // Display Y axis = original X direction -> label "X"
+  DrawAxisLabel3D(axisOriginX, axisOriginY + axisLength * 1.3, axisOriginZ, "X", kGreen + 2, gMacroView);
+  // Display Z axis = original Y direction -> label "Y"
+  DrawAxisLabel3D(axisOriginX, axisOriginY, axisOriginZ + axisLength * 1.3, "Y", kBlue, gMacroView);
   
   gMacroCanvas->Update();
   
