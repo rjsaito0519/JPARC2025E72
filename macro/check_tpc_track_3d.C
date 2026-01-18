@@ -312,7 +312,6 @@ event_3d(Long64_t evnum = -1)
       }
     }
     if(npoints > 0) {
-      rawHits->SetNextPoint(npoints);
       rawHits->Draw();
       gRawHits3D.push_back(rawHits);
     } else {
@@ -339,7 +338,6 @@ event_3d(Long64_t evnum = -1)
       }
     }
     if(npoints > 0) {
-      clusters->SetNextPoint(npoints);
       clusters->Draw();
       gClusters3D.push_back(clusters);
     } else {
@@ -369,7 +367,6 @@ event_3d(Long64_t evnum = -1)
       }
     }
     if(npoints > 0) {
-      houghClusters->SetNextPoint(npoints);
       houghClusters->Draw();
       gHoughClusters3D.push_back(houghClusters);
     } else {
@@ -429,7 +426,6 @@ event_3d(Long64_t evnum = -1)
                                gEvent3D.hitpos_y[itrack][i],
                                gEvent3D.hitpos_z[itrack][i]);
           }
-          trackHits->SetNextPoint(nhits);
           trackHits->Draw();
           gRawHits3D.push_back(trackHits);
         }
