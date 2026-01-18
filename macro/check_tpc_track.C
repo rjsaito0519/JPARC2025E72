@@ -128,69 +128,10 @@ set_path(const char* path)
   
   gMacroReader = new TTreeReader(tree);
   
-  // Set up branches
-  TTreeReaderValue<UInt_t> runnum(*gMacroReader, "run_number");
-  TTreeReaderValue<UInt_t> evnum(*gMacroReader, "event_number");
-  TTreeReaderValue<Int_t> nhTpc(*gMacroReader, "nhTpc");
-  TTreeReaderValue<Int_t> nclTpc(*gMacroReader, "nclTpc");
-  TTreeReaderValue<Int_t> ntTpc(*gMacroReader, "ntTpc");
+  std::cout << "File opened: " << path << std::endl;
+  std::cout << "Total entries: " << tree->GetEntries() << std::endl;
   
-  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_x(*gMacroReader, "raw_hitpos_x");
-  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_y(*gMacroReader, "raw_hitpos_y");
-  TTreeReaderValue<std::vector<Double_t>> raw_hitpos_z(*gMacroReader, "raw_hitpos_z");
-  TTreeReaderValue<std::vector<Int_t>> raw_padid(*gMacroReader, "raw_padid");
-  TTreeReaderValue<std::vector<Int_t>> raw_layer(*gMacroReader, "raw_layer");
-  TTreeReaderValue<std::vector<Int_t>> raw_row(*gMacroReader, "raw_row");
-  
-  TTreeReaderValue<std::vector<Double_t>> cluster_x(*gMacroReader, "cluster_x");
-  TTreeReaderValue<std::vector<Double_t>> cluster_y(*gMacroReader, "cluster_y");
-  TTreeReaderValue<std::vector<Double_t>> cluster_z(*gMacroReader, "cluster_z");
-  TTreeReaderValue<std::vector<Double_t>> cluster_de(*gMacroReader, "cluster_de");
-  TTreeReaderValue<std::vector<Int_t>> cluster_layer(*gMacroReader, "cluster_layer");
-  TTreeReaderValue<std::vector<Int_t>> cluster_row_center(*gMacroReader, "cluster_row_center");
-  TTreeReaderValue<std::vector<Int_t>> cluster_houghflag(*gMacroReader, "cluster_houghflag");
-  
-  TTreeReaderValue<std::vector<Double_t>> x0Tpc(*gMacroReader, "x0Tpc");
-  TTreeReaderValue<std::vector<Double_t>> y0Tpc(*gMacroReader, "y0Tpc");
-  TTreeReaderValue<std::vector<Double_t>> u0Tpc(*gMacroReader, "u0Tpc");
-  TTreeReaderValue<std::vector<Double_t>> v0Tpc(*gMacroReader, "v0Tpc");
-  TTreeReaderValue<std::vector<Double_t>> theta(*gMacroReader, "theta");
-  TTreeReaderValue<std::vector<Int_t>> nhtrack(*gMacroReader, "nhtrack");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_x(*gMacroReader, "hitpos_x");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_y(*gMacroReader, "hitpos_y");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_z(*gMacroReader, "hitpos_z");
-  
-  // Read first entry to get tree size
-  if(gMacroReader->Next()) {
-    gEvent.runnum = *runnum;
-    gEvent.evnum = *evnum;
-    gEvent.nhTpc = *nhTpc;
-    gEvent.nclTpc = *nclTpc;
-    gEvent.ntTpc = *ntTpc;
-    gEvent.raw_hitpos_x = *raw_hitpos_x;
-    gEvent.raw_hitpos_y = *raw_hitpos_y;
-    gEvent.raw_hitpos_z = *raw_hitpos_z;
-    gEvent.raw_padid = *raw_padid;
-    gEvent.raw_layer = *raw_layer;
-    gEvent.raw_row = *raw_row;
-    gEvent.cluster_x = *cluster_x;
-    gEvent.cluster_y = *cluster_y;
-    gEvent.cluster_z = *cluster_z;
-    gEvent.cluster_de = *cluster_de;
-    gEvent.cluster_layer = *cluster_layer;
-    gEvent.cluster_houghflag = *cluster_houghflag;
-    gEvent.x0Tpc = *x0Tpc;
-    gEvent.y0Tpc = *y0Tpc;
-    gEvent.u0Tpc = *u0Tpc;
-    gEvent.v0Tpc = *v0Tpc;
-    gEvent.theta = *theta;
-    gEvent.nhtrack = *nhtrack;
-    gEvent.hitpos_x = *hitpos_x;
-    gEvent.hitpos_y = *hitpos_y;
-    gEvent.hitpos_z = *hitpos_z;
-  }
-  
-  gMacroReader->SetEntry(0);
+  if(!gMacroRandom) gMacroRandom = new TRandom3();
   
   std::cout << "File opened: " << path << std::endl;
   std::cout << "Total entries: " << tree->GetEntries() << std::endl;
@@ -223,9 +164,7 @@ load_event(Long64_t entry = -1)
     return;
   }
   
-  gMacroReader->SetEntry(entry);
-  
-  // Read event data
+  // Create TTreeReaderValue objects BEFORE calling SetEntry()
   TTreeReaderValue<UInt_t> runnum(*gMacroReader, "run_number");
   TTreeReaderValue<UInt_t> evnum(*gMacroReader, "event_number");
   TTreeReaderValue<Int_t> nhTpc(*gMacroReader, "nhTpc");
@@ -257,6 +196,9 @@ load_event(Long64_t entry = -1)
   TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_y(*gMacroReader, "hitpos_y");
   TTreeReaderValue<std::vector<std::vector<Double_t>>> hitpos_z(*gMacroReader, "hitpos_z");
   
+  // Now set the entry after all TTreeReaderValue objects are created
+  gMacroReader->SetEntry(entry);
+  
   gEvent.runnum = *runnum;
   gEvent.evnum = *evnum;
   gEvent.nhTpc = *nhTpc;
@@ -265,6 +207,7 @@ load_event(Long64_t entry = -1)
   gEvent.raw_hitpos_x = *raw_hitpos_x;
   gEvent.raw_hitpos_y = *raw_hitpos_y;
   gEvent.raw_hitpos_z = *raw_hitpos_z;
+  gEvent.raw_padid = *raw_padid;
   gEvent.raw_layer = *raw_layer;
   gEvent.raw_row = *raw_row;
   gEvent.cluster_x = *cluster_x;
