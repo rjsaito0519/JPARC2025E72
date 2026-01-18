@@ -306,51 +306,57 @@ event(Long64_t evnum = -1)
   gMacroView->SetRange(xmin, ymin, zmin, xmax, ymax, zmax);
   gMacroView->ShowAxis();
   
-  // Draw TPC frame (cylindrical layers)
-  // Draw circles for each layer at different Z positions
-  const Int_t nCirclePoints = 64;
-  for(Int_t layer = 0; layer < tpc::NumOfLayersTPC; layer++) {
-    Double_t radius = tpc::padParameter[layer][tpc::kRadius];
-    Double_t padLength = tpc::padParameter[layer][tpc::kLength];
-    Double_t r_in = radius - padLength / 2.0;
-    Double_t r_out = radius + padLength / 2.0;
-    
-    // Draw inner and outer circles at different Y positions (original X)
-    // Coordinate transform: (x,y,z) -> (z,x,y)
-    // For frame, we draw circles in X-Y plane at different Z positions
-    // But with coordinate transform, we need to draw in transformed space
-    
-    // Inner circle
-    TPolyLine3D* circle_in = new TPolyLine3D(nCirclePoints + 1);
-    circle_in->SetLineColor(kGray + 1);
-    circle_in->SetLineWidth(1);
-    circle_in->SetLineStyle(2);
-    for(Int_t i = 0; i <= nCirclePoints; i++) {
-      Double_t theta = 2.0 * TMath::Pi() * i / nCirclePoints;
-      Double_t x_orig = r_in * TMath::Cos(theta);
-      Double_t y_orig = r_in * TMath::Sin(theta);
-      Double_t z_orig = 0.0; // Center of TPC in Z
+  // Draw TPC frame (regular octagonal prism)
+  // Frame dimensions:
+  //   - Height: 620 in Y direction (center at 0, so -310 to +310)
+  //   - Octagon face-to-face distance: 622 (center at 0)
+  //   - Coordinate transform: (x,y,z) -> (z,x,y)
+  
+  const Double_t frameHeight = 620.0;  // Y direction
+  const Double_t frameHalfHeight = frameHeight / 2.0;  // 310.0
+  const Double_t frameFaceToFace = 622.0;
+  const Double_t frameRadius = frameFaceToFace / 2.0;  // 311.0
+  const Int_t nOctagonSides = 8;
+  
+  // Calculate octagon vertices (in X-Z plane, Y is height)
+  // For regular octagon, vertices are at angles: 0, 45, 90, 135, 180, 225, 270, 315 degrees
+  // Distance from center to vertex = face-to-face / (2 * cos(22.5°))
+  const Double_t octagonVertexRadius = frameRadius / TMath::Cos(TMath::Pi() / 8.0);
+  
+  std::vector<Double_t> octagon_x_orig(nOctagonSides);
+  std::vector<Double_t> octagon_z_orig(nOctagonSides);
+  for(Int_t i = 0; i < nOctagonSides; i++) {
+    Double_t angle = i * TMath::Pi() / 4.0;  // 45 degrees per side
+    octagon_x_orig[i] = octagonVertexRadius * TMath::Cos(angle);
+    octagon_z_orig[i] = octagonVertexRadius * TMath::Sin(angle);
+  }
+  
+  // Draw top and bottom octagons
+  for(Int_t y_sign = -1; y_sign <= 1; y_sign += 2) {
+    Double_t y_orig = y_sign * frameHalfHeight;  // -310 or +310
+    TPolyLine3D* octagon = new TPolyLine3D(nOctagonSides + 1);
+    octagon->SetLineColor(kGray + 1);
+    octagon->SetLineWidth(2);
+    for(Int_t i = 0; i <= nOctagonSides; i++) {
+      Int_t idx = i % nOctagonSides;
       // Transform: (x,y,z) -> (z,x,y)
-      circle_in->SetPoint(i, z_orig, x_orig, y_orig);
+      octagon->SetPoint(i, octagon_z_orig[idx], octagon_x_orig[idx], y_orig);
     }
-    circle_in->Draw();
-    gTPCFrame.push_back(circle_in);
-    
-    // Outer circle
-    TPolyLine3D* circle_out = new TPolyLine3D(nCirclePoints + 1);
-    circle_out->SetLineColor(kGray + 1);
-    circle_out->SetLineWidth(1);
-    circle_out->SetLineStyle(1);
-    for(Int_t i = 0; i <= nCirclePoints; i++) {
-      Double_t theta = 2.0 * TMath::Pi() * i / nCirclePoints;
-      Double_t x_orig = r_out * TMath::Cos(theta);
-      Double_t y_orig = r_out * TMath::Sin(theta);
-      Double_t z_orig = 0.0; // Center of TPC in Z
-      // Transform: (x,y,z) -> (z,x,y)
-      circle_out->SetPoint(i, z_orig, x_orig, y_orig);
-    }
-    circle_out->Draw();
-    gTPCFrame.push_back(circle_out);
+    octagon->Draw();
+    gTPCFrame.push_back(octagon);
+  }
+  
+  // Draw vertical edges (8 edges connecting top and bottom octagons)
+  for(Int_t i = 0; i < nOctagonSides; i++) {
+    TPolyLine3D* edge = new TPolyLine3D(2);
+    edge->SetLineColor(kGray + 1);
+    edge->SetLineWidth(2);
+    // Bottom vertex
+    edge->SetPoint(0, octagon_z_orig[i], octagon_x_orig[i], -frameHalfHeight);
+    // Top vertex
+    edge->SetPoint(1, octagon_z_orig[i], octagon_x_orig[i], frameHalfHeight);
+    edge->Draw();
+    gTPCFrame.push_back(edge);
   }
   
   // Draw raw hits
