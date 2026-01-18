@@ -225,8 +225,10 @@ void
 DrawAxisLabel3D(Double_t x, Double_t y, Double_t z, const char* label, Color_t color, TView* view)
 {
   // Convert 3D world coordinates to normalized device coordinates (NDC)
-  Double_t xndc, yndc;
-  view->WCtoNDC(x, y, z, xndc, yndc);
+  // WCtoNDC takes arrays as arguments
+  Double_t wc[3] = {x, y, z};
+  Double_t ndc[3];
+  view->WCtoNDC(wc, ndc);
   
   // Draw text using TLatex in NDC coordinates
   TLatex* latex = new TLatex();
@@ -234,7 +236,7 @@ DrawAxisLabel3D(Double_t x, Double_t y, Double_t z, const char* label, Color_t c
   latex->SetTextColor(color);
   latex->SetTextSize(0.02);
   latex->SetTextAlign(22); // Center alignment
-  latex->DrawLatex(xndc, yndc, label);
+  latex->DrawLatex(ndc[0], ndc[1], label);
   // Note: TLatex objects are managed by ROOT, so we don't need to store them
 }
 
@@ -419,6 +421,53 @@ event(Long64_t evnum = -1)
     edge->SetPoint(1, octagon_z_orig[i], octagon_x_orig[i], frameHalfHeight);
     edge->Draw();
     gTPCFrame.push_back(edge);
+  }
+  
+  // Draw target (cylinder)
+  // Target position: center at (0, 0, -143) in original coordinates
+  // Cylinder axis is along z direction (original), which is x direction (display)
+  // Height: 100, center at y=0, so y: -50 to +50
+  // Diameter: 80, so radius: 40
+  const Double_t targetZ_orig = -143.0;  // Original Z position
+  const Double_t targetHeight = 100.0;
+  const Double_t targetHalfHeight = targetHeight / 2.0;  // 50.0
+  const Double_t targetRadius = 40.0;  // Diameter 80 / 2
+  const Int_t nCirclePoints = 64;
+  
+  // Draw top and bottom circles of the cylinder
+  for(Int_t y_sign = -1; y_sign <= 1; y_sign += 2) {
+    Double_t y_orig = y_sign * targetHalfHeight;  // -50 or +50
+    TPolyLine3D* circle = new TPolyLine3D(nCirclePoints + 1);
+    circle->SetLineColor(kMagenta);
+    circle->SetLineWidth(2);
+    for(Int_t i = 0; i <= nCirclePoints; i++) {
+      Double_t theta = 2.0 * TMath::Pi() * i / nCirclePoints;
+      Double_t x_orig = targetRadius * TMath::Cos(theta);
+      Double_t z_orig = targetRadius * TMath::Sin(theta) + targetZ_orig;
+      // Transform: (x,y,z) -> (z,x,y)
+      circle->SetPoint(i, z_orig, x_orig, y_orig);
+    }
+    circle->Draw();
+    gTPCFrame.push_back(circle);
+  }
+  
+  // Draw vertical lines connecting top and bottom circles
+  // Draw 8 lines evenly spaced around the circle
+  const Int_t nVerticalLines = 8;
+  for(Int_t i = 0; i < nVerticalLines; i++) {
+    Double_t theta = 2.0 * TMath::Pi() * i / nVerticalLines;
+    Double_t x_orig = targetRadius * TMath::Cos(theta);
+    Double_t z_orig = targetRadius * TMath::Sin(theta) + targetZ_orig;
+    
+    TPolyLine3D* line = new TPolyLine3D(2);
+    line->SetLineColor(kMagenta);
+    line->SetLineWidth(2);
+    // Bottom point
+    line->SetPoint(0, z_orig, x_orig, -targetHalfHeight);
+    // Top point
+    line->SetPoint(1, z_orig, x_orig, targetHalfHeight);
+    line->Draw();
+    gTPCFrame.push_back(line);
   }
   
   // Draw raw hits
