@@ -383,14 +383,15 @@ event(Long64_t evnum = -1)
   const Int_t nOctagonSides = 8;
   
   // Calculate octagon vertices (in X-Z plane, Y is height)
-  // For regular octagon, vertices are at angles: 0, 45, 90, 135, 180, 225, 270, 315 degrees
+  // For regular octagon, edge centers are on axes (not vertices)
+  // So we rotate by π/8 (22.5 degrees) so that edges are aligned with axes
   // Distance from center to vertex = face-to-face / (2 * cos(22.5°))
   const Double_t octagonVertexRadius = frameRadius / TMath::Cos(TMath::Pi() / 8.0);
   
   std::vector<Double_t> octagon_x_orig(nOctagonSides);
   std::vector<Double_t> octagon_z_orig(nOctagonSides);
   for(Int_t i = 0; i < nOctagonSides; i++) {
-    Double_t angle = i * TMath::Pi() / 4.0;  // 45 degrees per side
+    Double_t angle = i * TMath::Pi() / 4.0 + TMath::Pi() / 8.0;  // 45 degrees per side, offset by 22.5 degrees
     octagon_x_orig[i] = octagonVertexRadius * TMath::Cos(angle);
     octagon_z_orig[i] = octagonVertexRadius * TMath::Sin(angle);
   }
@@ -438,7 +439,7 @@ event(Long64_t evnum = -1)
   for(Int_t y_sign = -1; y_sign <= 1; y_sign += 2) {
     Double_t y_orig = y_sign * targetHalfHeight;  // -50 or +50
     TPolyLine3D* circle = new TPolyLine3D(nCirclePoints + 1);
-    circle->SetLineColor(kMagenta);
+    circle->SetLineColor(kBlack);
     circle->SetLineWidth(2);
     for(Int_t i = 0; i <= nCirclePoints; i++) {
       Double_t theta = 2.0 * TMath::Pi() * i / nCirclePoints;
@@ -460,7 +461,7 @@ event(Long64_t evnum = -1)
     Double_t z_orig = targetRadius * TMath::Sin(theta) + targetZ_orig;
     
     TPolyLine3D* line = new TPolyLine3D(2);
-    line->SetLineColor(kMagenta);
+    line->SetLineColor(kBlack);
     line->SetLineWidth(2);
     // Bottom point
     line->SetPoint(0, z_orig, x_orig, -targetHalfHeight);
@@ -614,17 +615,6 @@ event(Long64_t evnum = -1)
       }
     }
   }
-  
-  gMacroCanvas->Update();
-  
-  // Draw axis labels after canvas update (so WCtoNDC conversion works correctly)
-  // Note: Coordinate transform (x,y,z) -> (z,x,y)
-  // Display X axis = original Z direction -> label "Z"
-  DrawAxisLabel3D(axisOriginX + axisLength * 1.3, axisOriginY, axisOriginZ, "Z", kRed, gMacroView);
-  // Display Y axis = original X direction -> label "X"
-  DrawAxisLabel3D(axisOriginX, axisOriginY + axisLength * 1.3, axisOriginZ, "X", kGreen + 2, gMacroView);
-  // Display Z axis = original Y direction -> label "Y"
-  DrawAxisLabel3D(axisOriginX, axisOriginY, axisOriginZ + axisLength * 1.3, "Y", kBlue, gMacroView);
   
   gMacroCanvas->Update();
   
