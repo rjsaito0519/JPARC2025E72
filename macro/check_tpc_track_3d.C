@@ -29,6 +29,7 @@
 #include <TLegend.h>
 #include <TText.h>
 #include <TLatex.h>
+#include <ctime>
 #include <vector>
 #include <iostream>
 #include "../include/TPCPadHelper.hh"
@@ -116,7 +117,11 @@ set_path(const char* path)
   std::cout << "File opened: " << path << std::endl;
   std::cout << "Total entries: " << tree->GetEntries() << std::endl;
   
-  if(!gMacroRandom) gMacroRandom = new TRandom3();
+  if(!gMacroRandom) {
+    gMacroRandom = new TRandom3();
+    // Set seed based on current time to ensure different random numbers each time
+    gMacroRandom->SetSeed(0); // 0 means use current time
+  }
 }
 
 //______________________________________________________________________________
@@ -135,7 +140,11 @@ load_event(Long64_t entry = -1)
   }
   
   if(entry < 0) {
-    if(!gMacroRandom) gMacroRandom = new TRandom3();
+    if(!gMacroRandom) {
+      gMacroRandom = new TRandom3();
+      // Set seed based on current time to ensure different random numbers each time
+      gMacroRandom->SetSeed(0); // 0 means use current time
+    }
     entry = gMacroRandom->Integer(nentries);
   }
   
@@ -282,7 +291,7 @@ event(Long64_t evnum = -1)
   
   // Create or reuse canvas
   if(!gMacroCanvas) {
-    gMacroCanvas = new TCanvas("c3d", "TPC Track 3D View", 1200, 800);
+    gMacroCanvas = new TCanvas("c3d", "TPC Track 3D View", 600, 800);
   } else {
     gMacroCanvas->Clear();
   }
