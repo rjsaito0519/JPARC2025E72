@@ -23,9 +23,12 @@
 #include <TRandom3.h>
 #include <TMath.h>
 #include <TVector3.h>
+#include <TSystem.h>
 #include <vector>
 #include <iostream>
 
+// Add myanalysis/include to include path
+gSystem->AddIncludePath("-I../include");
 #include "TPCPadHelper.hh"
 
 // Global variables
