@@ -22,8 +22,6 @@
 #include <TPolyLine3D.h>
 #include <TPolyMarker3D.h>
 #include <TMarker3DBox.h>
-#include <TArrow.h>
-#include <TLatex.h>
 #include <TRandom3.h>
 #include <TMath.h>
 #include <TVector3.h>
@@ -84,7 +82,6 @@ std::vector<TPolyMarker3D*> gClusters;
 std::vector<TPolyMarker3D*> gHoughClusters;
 std::vector<TPolyLine3D*> gTracks;
 std::vector<TPolyLine3D*> gTPCFrame;
-std::vector<TObject*> gAxisLabels; // For TLatex objects
 
 //______________________________________________________________________________
 void
@@ -248,11 +245,6 @@ clear_objects()
     if(obj) delete obj;
   }
   gTPCFrame.clear();
-  
-  for(auto* obj : gAxisLabels) {
-    if(obj) delete obj;
-  }
-  gAxisLabels.clear();
 }
 
 //______________________________________________________________________________
@@ -379,27 +371,11 @@ event(Long64_t evnum = -1)
   arrowZ1->Draw();
   gTPCFrame.push_back(arrowZ1);
   
-  // Add axis labels
-  TLatex* labelX = new TLatex();
-  labelX->SetTextColor(kRed);
-  labelX->SetTextSize(0.02);
-  labelX->SetNDC(kFALSE);
-  labelX->DrawLatex(axisOriginX + axisLength * 1.2, axisOriginY, axisOriginZ, "X (Z)");
-  gAxisLabels.push_back(labelX);
-  
-  TLatex* labelY = new TLatex();
-  labelY->SetTextColor(kGreen + 2);
-  labelY->SetTextSize(0.02);
-  labelY->SetNDC(kFALSE);
-  labelY->DrawLatex(axisOriginX, axisOriginY + axisLength * 1.2, axisOriginZ, "Y (X)");
-  gAxisLabels.push_back(labelY);
-  
-  TLatex* labelZ = new TLatex();
-  labelZ->SetTextColor(kBlue);
-  labelZ->SetTextSize(0.02);
-  labelZ->SetNDC(kFALSE);
-  labelZ->DrawLatex(axisOriginX, axisOriginY, axisOriginZ + axisLength * 1.2, "Z (Y)");
-  gAxisLabels.push_back(labelZ);
+  // Note: TLatex doesn't support 3D coordinates directly
+  // Axis direction is indicated by color:
+  //   Red = X axis (original Z direction)
+  //   Green = Y axis (original X direction)
+  //   Blue = Z axis (original Y direction)
   
   // Draw TPC frame (regular octagonal prism)
   // Frame dimensions:
