@@ -243,17 +243,21 @@ event(Long64_t evnum = -1)
 {
   load_event(evnum);
   
-  if(!gMacroCanvas) {
-    gMacroCanvas = new TCanvas("c1", "TPC Track Check", 1400, 700);
-    gMacroCanvas->Divide(2, 1);
+  // Create new canvas each time to avoid overwriting
+  if(gMacroCanvas) {
+    delete gMacroCanvas;
   }
+  gMacroCanvas = new TCanvas(Form("c1_%u_%u", gEvent.runnum, gEvent.evnum), 
+                              Form("TPC Track Check (Run %u, Event %u)", gEvent.runnum, gEvent.evnum), 
+                              1400, 700);
+  gMacroCanvas->Divide(2, 1);
   
   gMacroCanvas->cd(1);
   {
     // X-Z view: Pad geometry with hits colored by de
     // Fixed range for consistent viewing
-    const Double_t xmin = -200.0, xmax = 200.0;
-    const Double_t zmin = -200.0, zmax = 200.0;
+    const Double_t xmin = -350.0, xmax = 350.0;
+    const Double_t zmin = -350.0, zmax = 350.0;
     
     TH2Poly* h1 = new TH2Poly("h1", Form("X-Z View (Run %u, Event %u);X [mm];Z [mm]", 
                                           gEvent.runnum, gEvent.evnum),
@@ -339,12 +343,13 @@ event(Long64_t evnum = -1)
   {
     // Y-Z view: Pad geometry with hits colored by de
     // Fixed range for consistent viewing
-    const Double_t ymin = -300.0, ymax = 200.0;
-    const Double_t zmin = -300.0, zmax = 300.0;
+    // Note: Z is horizontal axis, Y is vertical axis
+    const Double_t zmin = -350.0, zmax = 350.0;
+    const Double_t ymin = -200.0, ymax = 200.0;
     
-    TH2Poly* h2 = new TH2Poly("h2", Form("Y-Z View (Run %u, Event %u);Y [mm];Z [mm]", 
+    TH2Poly* h2 = new TH2Poly("h2", Form("Y-Z View (Run %u, Event %u);Z [mm];Y [mm]", 
                                           gEvent.runnum, gEvent.evnum),
-                               ymin, ymax, zmin, zmax);
+                               zmin, zmax, ymin, ymax);
     h2->SetStats(0);
     
     // Create pad template (all pads with minimum value)
@@ -372,20 +377,21 @@ event(Long64_t evnum = -1)
         Double_t z3 = (cRad - (pLength / 2.)) * TMath::Sin((j + 1) * dTheta + sTheta);
         Double_t z4 = (cRad - (pLength / 2.)) * TMath::Sin(j * dTheta + sTheta);
         
-        // For Y-Z view, Y is the pad's Y position (0 for pad center, but we'll use a small range)
-        // and Z is the pad's Z position
+        // For Y-Z view, Z is horizontal axis (X in TH2Poly), Y is vertical axis (Y in TH2Poly)
         // Use a small Y range around 0 to represent the pad thickness
         Double_t yThickness = 5.0; // Approximate pad thickness in Y direction
-        Y[1] = yThickness / 2.0;
-        Y[2] = yThickness / 2.0;
-        Y[3] = -yThickness / 2.0;
-        Y[4] = -yThickness / 2.0;
-        Y[0] = Y[4];
+        // X in TH2Poly corresponds to Z coordinate
         X[1] = z1 + tpc::ZTarget;
         X[2] = z2 + tpc::ZTarget;
         X[3] = z3 + tpc::ZTarget;
         X[4] = z4 + tpc::ZTarget;
         X[0] = X[4];
+        // Y in TH2Poly corresponds to Y coordinate
+        Y[1] = yThickness / 2.0;
+        Y[2] = yThickness / 2.0;
+        Y[3] = -yThickness / 2.0;
+        Y[4] = -yThickness / 2.0;
+        Y[0] = Y[4];
         h2->AddBin(5, X, Y);
       }
     }
@@ -409,8 +415,8 @@ event(Long64_t evnum = -1)
       Int_t padid = pair.first;
       Double_t de = pair.second;
       TVector3 padPos = tpc::getPosition(padid);
-      // For Y-Z view, use pad's Y (0) and Z position
-      Int_t bin = h2->FindBin(0.0, padPos.Z());
+      // For Y-Z view, Z is horizontal (first arg), Y is vertical (second arg)
+      Int_t bin = h2->FindBin(padPos.Z(), 0.0);
       if(bin > 0) {
         h2->SetBinContent(bin, de);
       }
@@ -419,12 +425,13 @@ event(Long64_t evnum = -1)
     h2->Draw("COLZ");
     
     // Draw clusters on top
+    // Note: Z is horizontal (x), Y is vertical (y)
     TGraph* gCl = new TGraph();
     gCl->SetMarkerStyle(21);
     gCl->SetMarkerSize(1.0);
     gCl->SetMarkerColor(kBlue);
     for(Int_t i = 0; i < gEvent.nclTpc; i++) {
-      gCl->SetPoint(gCl->GetN(), gEvent.cluster_y[i], gEvent.cluster_z[i]);
+      gCl->SetPoint(gCl->GetN(), gEvent.cluster_z[i], gEvent.cluster_y[i]);
     }
     gCl->Draw("P same");
     
@@ -435,12 +442,13 @@ event(Long64_t evnum = -1)
     gClHough->SetMarkerColor(kRed);
     for(Int_t i = 0; i < gEvent.nclTpc; i++) {
       if(gEvent.cluster_houghflag[i] > 0) {
-        gClHough->SetPoint(gClHough->GetN(), gEvent.cluster_y[i], gEvent.cluster_z[i]);
+        gClHough->SetPoint(gClHough->GetN(), gEvent.cluster_z[i], gEvent.cluster_y[i]);
       }
     }
     gClHough->Draw("P same");
     
     // Draw tracks
+    // Note: Z is horizontal (x), Y is vertical (y)
     for(Int_t itrack = 0; itrack < gEvent.ntTpc; itrack++) {
       Double_t y0 = gEvent.y0Tpc[itrack];
       Double_t v0 = gEvent.v0Tpc[itrack];
@@ -450,8 +458,8 @@ event(Long64_t evnum = -1)
       TGraph* gTrack = new TGraph();
       gTrack->SetLineWidth(2);
       gTrack->SetLineColor(itrack % 9 + 1);
-      gTrack->SetPoint(0, y1, zmin);
-      gTrack->SetPoint(1, y2, zmax);
+      gTrack->SetPoint(0, zmin, y1);
+      gTrack->SetPoint(1, zmax, y2);
       gTrack->Draw("L same");
     }
   }
