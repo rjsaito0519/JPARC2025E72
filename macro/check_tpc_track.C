@@ -254,14 +254,17 @@ event(Long64_t evnum = -1)
 {
   load_event(evnum);
   
-  // Create new canvas each time to avoid overwriting
-  if(gMacroCanvas) {
-    delete gMacroCanvas;
+  // Create canvas if it doesn't exist, otherwise clear and reuse
+  if(!gMacroCanvas) {
+    gMacroCanvas = new TCanvas("c1", "TPC Track Check", 1400, 700);
+    gMacroCanvas->Divide(2, 1);
+  } else {
+    // Clear existing pads
+    gMacroCanvas->cd(1);
+    gPad->Clear();
+    gMacroCanvas->cd(2);
+    gPad->Clear();
   }
-  gMacroCanvas = new TCanvas(Form("c1_%u_%u", gEvent.runnum, gEvent.evnum), 
-                              Form("TPC Track Check (Run %u, Event %u)", gEvent.runnum, gEvent.evnum), 
-                              1400, 700);
-  gMacroCanvas->Divide(2, 1);
   
   gMacroCanvas->cd(1);
   {
@@ -271,8 +274,10 @@ event(Long64_t evnum = -1)
     const Double_t zmin = -300.0, zmax = 300.0;
     const Double_t xmin = -300.0, xmax = 300.0;
     
-    TH2Poly* h1 = new TH2Poly("h1", Form("X-Z View (Run %u, Event %u);Z [mm];X [mm]", 
-                                          gEvent.runnum, gEvent.evnum),
+    // Use unique name to avoid conflicts
+    TH2Poly* h1 = new TH2Poly(Form("h1_%u_%u", gEvent.runnum, gEvent.evnum), 
+                               Form("X-Z View (Run %u, Event %u);Z [mm];X [mm]", 
+                                    gEvent.runnum, gEvent.evnum),
                                zmin, zmax, xmin, xmax);
     h1->SetStats(0);
     
@@ -362,8 +367,10 @@ event(Long64_t evnum = -1)
     const Double_t zmin = -300.0, zmax = 300.0;
     const Double_t ymin = -200.0, ymax = 200.0;
     
-    TH2Poly* h2 = new TH2Poly("h2", Form("Y-Z View (Run %u, Event %u);Z [mm];Y [mm]", 
-                                          gEvent.runnum, gEvent.evnum),
+    // Use unique name to avoid conflicts
+    TH2Poly* h2 = new TH2Poly(Form("h2_%u_%u", gEvent.runnum, gEvent.evnum), 
+                               Form("Y-Z View (Run %u, Event %u);Z [mm];Y [mm]", 
+                                    gEvent.runnum, gEvent.evnum),
                                zmin, zmax, ymin, ymax);
     h2->SetStats(0);
     
