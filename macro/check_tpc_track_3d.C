@@ -76,6 +76,9 @@ struct EventData {
 
 EventData gEvent;
 
+// Forward declaration
+void DrawAxisLabel(Double_t x, Double_t y, Double_t z, Char_t label, Color_t color, Double_t labelSize);
+
 // Storage for 3D objects
 std::vector<TPolyMarker3D*> gRawHits;
 std::vector<TPolyMarker3D*> gClusters;
@@ -218,6 +221,83 @@ load_event(Long64_t entry = -1)
 
 //______________________________________________________________________________
 void
+DrawAxisLabel(Double_t x, Double_t y, Double_t z, Char_t label, Color_t color, Double_t labelSize)
+{
+  // Draw a simple axis label using small lines to form letters
+  // X: two crossing lines
+  if(label == 'X') {
+    TPolyLine3D* x1 = new TPolyLine3D(2);
+    x1->SetLineColor(color);
+    x1->SetLineWidth(2);
+    x1->SetPoint(0, x - labelSize * 0.3, y - labelSize * 0.3, z);
+    x1->SetPoint(1, x + labelSize * 0.3, y + labelSize * 0.3, z);
+    x1->Draw();
+    gTPCFrame.push_back(x1);
+    
+    TPolyLine3D* x2 = new TPolyLine3D(2);
+    x2->SetLineColor(color);
+    x2->SetLineWidth(2);
+    x2->SetPoint(0, x - labelSize * 0.3, y + labelSize * 0.3, z);
+    x2->SetPoint(1, x + labelSize * 0.3, y - labelSize * 0.3, z);
+    x2->Draw();
+    gTPCFrame.push_back(x2);
+  }
+  // Y: V shape with vertical line
+  else if(label == 'Y') {
+    TPolyLine3D* y1 = new TPolyLine3D(2);
+    y1->SetLineColor(color);
+    y1->SetLineWidth(2);
+    y1->SetPoint(0, x, y - labelSize * 0.4, z);
+    y1->SetPoint(1, x, y + labelSize * 0.2, z);
+    y1->Draw();
+    gTPCFrame.push_back(y1);
+    
+    TPolyLine3D* y2 = new TPolyLine3D(2);
+    y2->SetLineColor(color);
+    y2->SetLineWidth(2);
+    y2->SetPoint(0, x, y + labelSize * 0.2, z);
+    y2->SetPoint(1, x - labelSize * 0.3, y + labelSize * 0.4, z);
+    y2->Draw();
+    gTPCFrame.push_back(y2);
+    
+    TPolyLine3D* y3 = new TPolyLine3D(2);
+    y3->SetLineColor(color);
+    y3->SetLineWidth(2);
+    y3->SetPoint(0, x, y + labelSize * 0.2, z);
+    y3->SetPoint(1, x + labelSize * 0.3, y + labelSize * 0.4, z);
+    y3->Draw();
+    gTPCFrame.push_back(y3);
+  }
+  // Z: three lines forming Z shape
+  else if(label == 'Z') {
+    TPolyLine3D* z1 = new TPolyLine3D(2);
+    z1->SetLineColor(color);
+    z1->SetLineWidth(2);
+    z1->SetPoint(0, x - labelSize * 0.3, y + labelSize * 0.3, z);
+    z1->SetPoint(1, x + labelSize * 0.3, y + labelSize * 0.3, z);
+    z1->Draw();
+    gTPCFrame.push_back(z1);
+    
+    TPolyLine3D* z2 = new TPolyLine3D(2);
+    z2->SetLineColor(color);
+    z2->SetLineWidth(2);
+    z2->SetPoint(0, x + labelSize * 0.3, y + labelSize * 0.3, z);
+    z2->SetPoint(1, x - labelSize * 0.3, y - labelSize * 0.3, z);
+    z2->Draw();
+    gTPCFrame.push_back(z2);
+    
+    TPolyLine3D* z3 = new TPolyLine3D(2);
+    z3->SetLineColor(color);
+    z3->SetLineWidth(2);
+    z3->SetPoint(0, x - labelSize * 0.3, y - labelSize * 0.3, z);
+    z3->SetPoint(1, x + labelSize * 0.3, y - labelSize * 0.3, z);
+    z3->Draw();
+    gTPCFrame.push_back(z3);
+  }
+}
+
+//______________________________________________________________________________
+void
 clear_objects()
 {
   // Delete existing 3D objects
@@ -263,43 +343,17 @@ event(Long64_t evnum = -1)
     gMacroCanvas->Clear();
   }
   
-  // Calculate range for view
+  // Fixed range for view (to prevent scale changes between events)
   // Note: Coordinate transformation (x,y,z) -> (z,x,y)
-  // So we need to find range in original coordinates and transform
-  Double_t xmin_orig = -300.0, xmax_orig = 300.0;
-  Double_t ymin_orig = -200.0, ymax_orig = 200.0;
-  Double_t zmin_orig = -300.0, zmax_orig = 300.0;
-  
-  // Find actual range from data (in original coordinates)
-  if(gEvent.nhTpc > 0) {
-    for(Int_t i = 0; i < gEvent.nhTpc; i++) {
-      if(i < static_cast<Int_t>(gEvent.raw_hitpos_x.size())) {
-        if(gEvent.raw_hitpos_x[i] < xmin_orig) xmin_orig = gEvent.raw_hitpos_x[i];
-        if(gEvent.raw_hitpos_x[i] > xmax_orig) xmax_orig = gEvent.raw_hitpos_x[i];
-      }
-      if(i < static_cast<Int_t>(gEvent.raw_hitpos_y.size())) {
-        if(gEvent.raw_hitpos_y[i] < ymin_orig) ymin_orig = gEvent.raw_hitpos_y[i];
-        if(gEvent.raw_hitpos_y[i] > ymax_orig) ymax_orig = gEvent.raw_hitpos_y[i];
-      }
-      if(i < static_cast<Int_t>(gEvent.raw_hitpos_z.size())) {
-        if(gEvent.raw_hitpos_z[i] < zmin_orig) zmin_orig = gEvent.raw_hitpos_z[i];
-        if(gEvent.raw_hitpos_z[i] > zmax_orig) zmax_orig = gEvent.raw_hitpos_z[i];
-      }
-    }
-  }
-  
-  // Add some margin
-  Double_t xmargin = (xmax_orig - xmin_orig) * 0.1;
-  Double_t ymargin = (ymax_orig - ymin_orig) * 0.1;
-  Double_t zmargin = (zmax_orig - zmin_orig) * 0.1;
-  xmin_orig -= xmargin; xmax_orig += xmargin;
-  ymin_orig -= ymargin; ymax_orig += ymargin;
-  zmin_orig -= zmargin; zmax_orig += zmargin;
+  // Original coordinates: X: -300 to 300, Y: -310 to 310 (TPC frame height), Z: -300 to 300
+  const Double_t xmin_orig = -300.0, xmax_orig = 300.0;
+  const Double_t ymin_orig = -310.0, ymax_orig = 310.0;  // Fixed to TPC frame height
+  const Double_t zmin_orig = -300.0, zmax_orig = 300.0;
   
   // Transform range: (x,y,z) -> (z,x,y)
-  Double_t xmin = zmin_orig, xmax = zmax_orig; // Display X = original Z
-  Double_t ymin = xmin_orig, ymax = xmax_orig; // Display Y = original X
-  Double_t zmin = ymin_orig, zmax = ymax_orig; // Display Z = original Y
+  const Double_t xmin = zmin_orig, xmax = zmax_orig; // Display X = original Z
+  const Double_t ymin = xmin_orig, ymax = xmax_orig; // Display Y = original X
+  const Double_t zmin = ymin_orig, zmax = ymax_orig; // Display Z = original Y
   
   // Create 3D view (without axis marks)
   gMacroView = TView::CreateView(1, 0, 0);
@@ -371,11 +425,13 @@ event(Long64_t evnum = -1)
   arrowZ1->Draw();
   gTPCFrame.push_back(arrowZ1);
   
-  // Note: TLatex doesn't support 3D coordinates directly
-  // Axis direction is indicated by color:
-  //   Red = X axis (original Z direction)
-  //   Green = Y axis (original X direction)
-  //   Blue = Z axis (original Y direction)
+  // Draw axis labels using small markers/lines to form letters
+  // X axis label
+  DrawAxisLabel(axisOriginX + axisLength * 1.3, axisOriginY, axisOriginZ, 'X', kRed, axisLength);
+  // Y axis label
+  DrawAxisLabel(axisOriginX, axisOriginY + axisLength * 1.3, axisOriginZ, 'Y', kGreen + 2, axisLength);
+  // Z axis label
+  DrawAxisLabel(axisOriginX, axisOriginY, axisOriginZ + axisLength * 1.3, 'Z', kBlue, axisLength);
   
   // Draw TPC frame (regular octagonal prism)
   // Frame dimensions:
