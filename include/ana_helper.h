@@ -75,6 +75,7 @@ namespace ana_helper {
     FitResult tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin = 1);
     FitResult htof_adc_fit(TH1D *h, TCanvas *c, Int_t& n_c, TString key, Int_t n_rebin = 1);
+    FitResult pedestal_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult bht_tot_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult t0_offset_fit(TH1D *h, TCanvas *c, Int_t n_c);
     std::pair<Double_t, Double_t> find_phc_range(TH1D* h, Double_t ratio);

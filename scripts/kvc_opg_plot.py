@@ -1,4 +1,3 @@
-from doctest import debug
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -108,7 +107,10 @@ for HV in [58]:
                     label_str += f"seg.{seg+1}-{ch_board_map[ch]}: mean = {mean:.2f}"
                 else:
                     label_str += f"\nseg.{seg+1}-{ch_board_map[ch]}: mean = {mean:.2f}"
-                print(ch, seg, format(mean, ".3f"), format(error, ".3f"))
+                # print(ch, seg, format(mean, ".3f"), format(error, ".3f"))
+                # p1の更新用フォーマットで出力
+                # CId=6, PlId=0, SegId=seg, AorT=0, UorD=ch, p0=0.0, p1=mean
+                print(f"6\t0\t{seg}\t0\t{ch}\t{0.0:.6e}\t{mean:.6e}")
 
                 # 重み付き平均の横線を描画
                 ls = "--" if seg < 4 else ":"

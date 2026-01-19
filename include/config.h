@@ -76,8 +76,8 @@ public:
         { "bht",  63 },
         {  "t0",   5 },
         { "bh2",  15 },
-        // { "bac",   4 },
-        { "bac",   1 }, // for analysis
+        { "bac",   4 },
+        { "bac_sum",   1 }, // for analysis
         { "htof", 34 },
         { "kvc",   8 },
         {  "t1",   1 },

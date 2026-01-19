@@ -48,7 +48,6 @@ void analyze(TString path, TString counter, TString particle){
     gROOT->GetColor(0)->SetAlpha(0.01);
 
     TString counter_upper = counter;
-    if (counter == "bac_sum") counter_upper = "bac";
     counter_upper.ToUpper();
 
     // +-----------+
@@ -74,27 +73,18 @@ void analyze(TString path, TString counter, TString particle){
     // +-------------------+
     // | prepare histogram |
     // +-------------------+    
-    // -- tdc ----------
-    TH1D *h_tdc[2][conf.num_of_ch.at(counter.Data())];
+    // -- adc ----------
+    TH1D *h_adc[conf.num_of_UorD.at(counter.Data())][conf.num_of_ch.at(counter.Data())];
     for (Int_t i = 0; i < conf.num_of_ch.at(counter.Data()); i++ ) {
         if (counter == "bac") {
-            h_tdc[0][i] = (TH1D*)f->Get(Form("%s_TDC_seg4U_%s", counter_upper.Data(), particle.Data()));
+            h_adc[0][i] = (TH1D*)f->Get(Form("%s_ADC_seg%dU_%s", counter_upper.Data(), i, particle.Data()));
         } else if (counter == "kvc") {
-            h_tdc[0][i] = (TH1D*)f->Get(Form("%s_TDC_seg%dS_%s", counter_upper.Data(), i, particle.Data()));
-        } else {
-            h_tdc[0][i] = (TH1D*)f->Get(Form("%s_TDC_seg%dU_%s", counter_upper.Data(), i, particle.Data()));
-            h_tdc[1][i] = (TH1D*)f->Get(Form("%s_TDC_seg%dD_%s", counter_upper.Data(), i, particle.Data()));
+            h_adc[0][i] = (TH1D*)f->Get(Form("%s_TDC_seg%da_%s", counter_upper.Data(), i, particle.Data()));
+            h_adc[1][i] = (TH1D*)f->Get(Form("%s_TDC_seg%db_%s", counter_upper.Data(), i, particle.Data()));
+            h_adc[2][i] = (TH1D*)f->Get(Form("%s_TDC_seg%dc_%s", counter_upper.Data(), i, particle.Data()));
+            h_adc[3][i] = (TH1D*)f->Get(Form("%s_TDC_seg%dd_%s", counter_upper.Data(), i, particle.Data()));
         }
     }
-
-    // -- set tdc range ----------
-    TH1D *h_sum_tdc = (TH1D*)h_tdc[0][0]->Clone("h_sum_tdc");
-    h_sum_tdc->Reset(); 
-    for (Int_t i = 0; i < conf.num_of_ch.at(counter.Data()); i++) {
-        h_sum_tdc->Add(h_tdc[0][i]);
-        if (counter != "bac" && counter != "kvc") h_sum_tdc->Add(h_tdc[1][i]);
-    }
-    ana_helper::set_tdc_search_range(h_sum_tdc);
 
     // +--------------+
     // | fit and plot |
@@ -106,65 +96,59 @@ void analyze(TString path, TString counter, TString particle){
     TString pdf_path = Form("%s/img/run%05d_%s_HDPRM_%s.pdf", OUTPUT_DIR.Data(), run_num, counter_upper.Data(), particle.Data());
 
     // -- container -----
-    std::vector<FitResult> tdc_up;
-    std::vector<FitResult> tdc_down;
+    std::vector<std::vector<FitResult>> pedestal_cont(conf.num_of_ch.at(counter.Data()), std::vector<FitResult>());
 
-    auto c_tdc = new TCanvas(counter.Data(), "", 1500, 1200);
-    c_tdc->Divide(cols, rows);
-    c_tdc->Print(pdf_path + "["); // start
+    auto c_pedestal = new TCanvas("cvc", "", 1500, 1200);
+    c_pedestal->Divide(cols, rows);
+    c_pedestal->Print(pdf_path + "["); // start
     nth_pad = 1;
     for (Int_t i = 0; i < conf.num_of_ch.at(counter.Data()); i++) {
-        if (nth_pad > max_pads) {
-            c_tdc->Print(pdf_path);
-            c_tdc->Clear();
-            c_tdc->Divide(cols, rows);
-            nth_pad = 1;
-        }
+        for (Int_t UorD = 0; UorD < conf.num_of_UorD.at(counter.Data()); UorD++) {
+            if (nth_pad > max_pads) {
+                c_pedestal->Print(pdf_path);
+                c_pedestal->Clear();
+                c_pedestal->Divide(cols, rows);
+                nth_pad = 1;
+            }
 
-        FitResult result;
-        TString key;
-        // -- UP -----
-        result = ana_helper::tdc_fit(h_tdc[0][i], c_tdc, nth_pad);
-        tdc_up.push_back(result);
-        nth_pad++;
+            FitResult result;
 
-        if (counter != "bac" && counter != "kvc" && counter != "t1" && counter != "sac3" && counter != "sfv") {
-            // -- DOWN -----
-            result = ana_helper::tdc_fit(h_tdc[1][i], c_tdc, nth_pad);
-            tdc_down.push_back(result);
+            result = ana_helper::pedestal_fit(h_adc[UorD][i], c_pedestal, nth_pad);
+            pedestal_cont[i].push_back(result);
             nth_pad++;
         }
     }
-    c_tdc->Print(pdf_path);
-    c_tdc->Print(pdf_path + "]"); // end
-    delete c_tdc;
+    c_pedestal->Print(pdf_path);
+    c_pedestal->Print(pdf_path + "]"); // end
+    delete c_pedestal;
 
     // +-------+
     // | Write |
     // +-------+
     TTree* tree = new TTree("tree", "");
-    Int_t ch;
-    std::vector<Double_t> tdc_p0_val; 
-    std::vector<Double_t> tdc_p0_err; 
+    Int_t ch, UorD;
+    std::vector<Double_t> adc_p0_val;
+    std::vector<Double_t> adc_p0_err; 
     tree->Branch("ch", &ch, "ch/I");
-    tree->Branch("tdc_p0_val", &tdc_p0_val);
-    tree->Branch("tdc_p0_err", &tdc_p0_err);
+    tree->Branch("UorD", &UorD, "UorD/I");
+    tree->Branch("adc_p0_val", &adc_p0_val);
+    tree->Branch("adc_p0_err", &adc_p0_err);
     
     for (Int_t i = 0; i < conf.num_of_ch.at(counter.Data()); i++) {
-        ch = i;
-        tdc_p0_val.clear();
-        tdc_p0_err.clear();
+        for (Int_t j = 0; j < conf.num_of_UorD.at(counter.Data()); j++) {
+            ch = i;
+            UorD = j;
+            adc_p0_val.clear();
+            adc_p0_err.clear();
+            
+            // -- pedestal -----
+            adc_p0_val.push_back(pedestal_cont[i][j].par[1]);
+            adc_p0_err.push_back(pedestal_cont[i][j].err[1]);
         
-        // -- tdc -----
-        tdc_p0_val.push_back(tdc_up[i].par[1]);
-        tdc_p0_err.push_back(tdc_up[i].err[1]);
-        if (counter != "bac" && counter != "kvc" && counter != "t1" && counter != "sac3" && counter != "sfv") {
-            tdc_p0_val.push_back(tdc_down[i].par[1]);
-            tdc_p0_err.push_back(tdc_down[i].err[1]);
+            tree->Fill();
         }
-    
-        tree->Fill();
     }
+
     
     fout->cd();
     tree->Write();
@@ -186,7 +170,6 @@ Int_t main(int argc, char** argv) {
         return 1;
     }
 
-    if (counter == "bac") counter = "bac_sum";
     conf.detector = counter;
     analyze(path, counter, particle);
     return 0;

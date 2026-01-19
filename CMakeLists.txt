@@ -18,7 +18,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/obj)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
 # ROOTを探す
-find_package(ROOT REQUIRED COMPONENTS Spectrum MathMore EG Minuit Gui)
+find_package(ROOT REQUIRED COMPONENTS Spectrum MathMore EG Minuit Gui Core MathCore GenVector)
 if(ROOT_FOUND)
     include_directories(${ROOT_INCLUDE_DIRS})
 else()
