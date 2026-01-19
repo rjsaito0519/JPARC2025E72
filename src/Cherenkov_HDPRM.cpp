@@ -123,7 +123,7 @@ void analyze(TString path, TString counter, TString particle){
             FitResult result;
             TString key;
 
-            key = Form("%s-%d-%s", counter.Data(), i, suffix.at(Form(counter.Data(), i)).c_str());
+            key = Form("%s-%d-%s", counter.Data(), i, suffix.at(Form("%s-%d", counter.Data(), i)).c_str());
             conf.hdprm_pedestal_range_right = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : 2048.0;
             result = ana_helper::pedestal_fit(h_adc[UorD][i], c_pedestal, nth_pad);
             pedestal_cont[i].push_back(result);
