@@ -6,6 +6,7 @@
 #include <random>
 #include <algorithm>
 #include <set>
+#include <unordered_map>
 
 // ROOT
 #include <TFile.h>
@@ -79,10 +80,10 @@ void analyze(TString path, TString counter, TString particle){
         if (counter == "bac") {
             h_adc[0][i] = (TH1D*)f->Get(Form("%s_ADC_seg%dU_%s", counter_upper.Data(), i, particle.Data()));
         } else if (counter == "kvc") {
-            h_adc[0][i] = (TH1D*)f->Get(Form("%s_TDC_seg%da_%s", counter_upper.Data(), i, particle.Data()));
-            h_adc[1][i] = (TH1D*)f->Get(Form("%s_TDC_seg%db_%s", counter_upper.Data(), i, particle.Data()));
-            h_adc[2][i] = (TH1D*)f->Get(Form("%s_TDC_seg%dc_%s", counter_upper.Data(), i, particle.Data()));
-            h_adc[3][i] = (TH1D*)f->Get(Form("%s_TDC_seg%dd_%s", counter_upper.Data(), i, particle.Data()));
+            h_adc[0][i] = (TH1D*)f->Get(Form("%s_ADC_seg%da_%s", counter_upper.Data(), i, particle.Data()));
+            h_adc[1][i] = (TH1D*)f->Get(Form("%s_ADC_seg%db_%s", counter_upper.Data(), i, particle.Data()));
+            h_adc[2][i] = (TH1D*)f->Get(Form("%s_ADC_seg%dc_%s", counter_upper.Data(), i, particle.Data()));
+            h_adc[3][i] = (TH1D*)f->Get(Form("%s_ADC_seg%dd_%s", counter_upper.Data(), i, particle.Data()));
         }
     }
 
@@ -98,6 +99,14 @@ void analyze(TString path, TString counter, TString particle){
     // -- container -----
     std::vector<std::vector<FitResult>> pedestal_cont(conf.num_of_ch.at(counter.Data()), std::vector<FitResult>());
 
+    const std::unordered_map<std::string, std::string> suffix{
+        { "bac-0", "u" },
+        { "kvc-0", "a" },
+        { "kvc-1", "b" },
+        { "kvc-2", "c" },
+        { "kvc-3", "d" },        
+    };
+    
     auto c_pedestal = new TCanvas("cvc", "", 1500, 1200);
     c_pedestal->Divide(cols, rows);
     c_pedestal->Print(pdf_path + "["); // start
@@ -112,7 +121,10 @@ void analyze(TString path, TString counter, TString particle){
             }
 
             FitResult result;
+            TString key;
 
+            key = Form("%s-%d-%s", counter.Data(), i, suffix.at(Form(counter.Data(), i)).c_str());
+            conf.hdprm_pedestal_range_right = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : 2048.0;
             result = ana_helper::pedestal_fit(h_adc[UorD][i], c_pedestal, nth_pad);
             pedestal_cont[i].push_back(result);
             nth_pad++;

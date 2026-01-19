@@ -442,6 +442,11 @@ namespace ana_helper {
         gPad->SetLogy(1);
         std::vector<Double_t> par, err;
 
+        h->GetXaxis()->SetRangeUser(
+            h->GetXaxis()->GetXmin(),
+            conf.hdprm_pedestal_range_right
+        );
+
         // -- pedestal -----
         Double_t ped_pos        = h->GetBinCenter(h->GetMaximumBin());
         Double_t ped_half_width = 5.0;

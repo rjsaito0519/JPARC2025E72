@@ -35,6 +35,7 @@ public:
     Double_t adc_ped_remove_nsigma = 15.0;
     Double_t hdprm_mip_range_left  = -1.0;
     Double_t hdprm_mip_half_width_ratio = 0.9;
+    Double_t hdprm_pedestal_range_right  = 2048.0;
     FitResult hdprm_typical_value;
 
     Double_t btof_threshold = -3.0;
