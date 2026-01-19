@@ -138,27 +138,23 @@ void analyze(TString path, TString counter, TString particle){
     // | Write |
     // +-------+
     TTree* tree = new TTree("tree", "");
-    Int_t ch, UorD;
+    Int_t ch;
     std::vector<Double_t> adc_p0_val;
     std::vector<Double_t> adc_p0_err; 
     tree->Branch("ch", &ch, "ch/I");
-    tree->Branch("UorD", &UorD, "UorD/I");
     tree->Branch("adc_p0_val", &adc_p0_val);
     tree->Branch("adc_p0_err", &adc_p0_err);
     
     for (Int_t i = 0; i < conf.num_of_ch.at(counter.Data()); i++) {
+        ch = i;
+        adc_p0_val.clear();
+        adc_p0_err.clear();
         for (Int_t j = 0; j < conf.num_of_UorD.at(counter.Data()); j++) {
-            ch = i;
-            UorD = j;
-            adc_p0_val.clear();
-            adc_p0_err.clear();
-            
             // -- pedestal -----
             adc_p0_val.push_back(pedestal_cont[i][j].par[1]);
             adc_p0_err.push_back(pedestal_cont[i][j].err[1]);
-        
-            tree->Fill();
         }
+        tree->Fill();
     }
 
     
