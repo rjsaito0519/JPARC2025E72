@@ -101,6 +101,9 @@ void analyze(TString path, TString counter, TString particle){
 
     const std::unordered_map<std::string, std::string> suffix{
         { "bac-0", "u" },
+        { "bac-1", "u" },
+        { "bac-2", "u" },
+        { "bac-3", "u" },
         { "kvc-0", "a" },
         { "kvc-1", "b" },
         { "kvc-2", "c" },
