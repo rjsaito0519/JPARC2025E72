@@ -450,7 +450,7 @@ namespace ana_helper {
         // -- pedestal -----
         Double_t ped_pos        = h->GetBinCenter(h->GetMaximumBin());
         Double_t ped_half_width = 5.0;
-        std::pair<Double_t, Double_t> ped_n_sigma(2.0, 2.0);
+        std::pair<Double_t, Double_t> ped_n_sigma(1.3, 1.3);
 
         // -- first fit -----
         TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", ped_pos-ped_half_width, ped_pos+ped_half_width);
