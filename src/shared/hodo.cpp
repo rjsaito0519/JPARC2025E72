@@ -466,7 +466,7 @@ namespace ana_helper {
                 return p[0] * TMath::Gaus(x[0], p[1], p[2], true) + p[3];
             },
             par[1]-ped_n_sigma.first*par[2],
-            par[1]+ped_n_sigma.second*par[2]
+            par[1]+ped_n_sigma.second*par[2],
             4
         );
         f_fit_ped->SetParameter(0, par[0]);
