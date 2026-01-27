@@ -103,7 +103,7 @@ void analyze(TString path, TString particle){
     // +--------------+
     // -- prepare pdf -----
     Int_t nth_pad = 1;
-    Int_t rows = 2, cols = 2;
+    Int_t rows = 3, cols = 2;
     Int_t max_pads = rows * cols;
     TString pdf_path = Form("%s/img/run%05d_%s_HDPRM_%s.pdf", OUTPUT_DIR.Data(), run_num, counter_upper.Data(), particle.Data());
 
@@ -147,6 +147,7 @@ void analyze(TString path, TString particle){
             adc_res[i].push_back(aRes);
             nth_pad++;
         }
+        nth_pad++; // for changing canvas
     }
     c_kvc->Print(pdf_path);
     c_kvc->Print(pdf_path + "]"); // end
