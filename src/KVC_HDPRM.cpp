@@ -126,11 +126,6 @@ void analyze(TString path, TString particle){
             nth_pad = 1;
         }
 
-        // -- TDC Fit --
-        FitResult tRes = ana_helper::tdc_fit(h_tdc[i], c_kvc, nth_pad);
-        tdc_res.push_back(tRes);
-        nth_pad++;
-
         // -- ADC Fit (4 channels) --
         for (Int_t j = 0; j < 5; j++) {
             if (nth_pad > max_pads) {
@@ -147,6 +142,12 @@ void analyze(TString path, TString particle){
             adc_res[i].push_back(aRes);
             nth_pad++;
         }
+
+        // -- TDC Fit --
+        FitResult tRes = ana_helper::tdc_fit(h_tdc[i], c_kvc, nth_pad);
+        tdc_res.push_back(tRes);
+        nth_pad++;
+
     }
     c_kvc->Print(pdf_path);
     c_kvc->Print(pdf_path + "]"); // end
