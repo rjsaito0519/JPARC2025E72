@@ -461,11 +461,22 @@ namespace ana_helper {
 
         // -- second fit -----
         TF1 *f_fit_ped = new TF1( Form("ped_%s", h->GetName()), "gausn", par[1]-ped_n_sigma.first*par[2], par[1]+ped_n_sigma.second*par[2]);
+        TF1 *f_fit_ped = new TF1(
+            Form("tot_gauss_%s", h->GetName()), 
+            [](double *x, double *p) {
+                return p[0] * TMath::Gaus(x[0], p[1], p[2], true) + p[3];
+            },
+            par[1]-peak_n_sigma.first*par[2],
+            par[1]+peak_n_sigma.second*par[2],
+            4
+        );
         f_fit_ped->SetParameter(0, par[0]);
         f_fit_ped->SetParameter(1, par[1]);
         f_fit_ped->SetParameter(2, par[2]*0.9);
+        f_fit_ped->SetParameter(3, 1.0);
+        f_fit_ped->SetParLimits(3, 0.0, 100000.0);        
         f_fit_ped->SetLineColor(kOrange);
-        f_fit_ped->SetLineWidth(2);
+        f_fit_ped->SetLineWidth(2.0);
         f_fit_ped->SetNpx(1000);
         h->Fit(f_fit_ped, "0QEMR", "", par[1]-ped_n_sigma.first*par[2], par[1]+ped_n_sigma.second*par[2]);
 
