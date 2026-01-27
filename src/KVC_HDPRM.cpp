@@ -132,7 +132,7 @@ void analyze(TString path, TString particle){
         nth_pad++;
 
         // -- ADC Fit (4 channels) --
-        for (Int_t j = 0; j < 4; j++) {
+        for (Int_t j = 0; j < 5; j++) {
             if (nth_pad > max_pads) {
                 c_kvc->Print(pdf_path);
                 c_kvc->Clear();
@@ -147,7 +147,6 @@ void analyze(TString path, TString particle){
             adc_res[i].push_back(aRes);
             nth_pad++;
         }
-        nth_pad++; // for changing canvas
     }
     c_kvc->Print(pdf_path);
     c_kvc->Print(pdf_path + "]"); // end
