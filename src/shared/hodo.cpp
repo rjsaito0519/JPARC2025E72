@@ -460,14 +460,13 @@ namespace ana_helper {
         for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
 
         // -- second fit -----
-        TF1 *f_fit_ped = new TF1( Form("ped_%s", h->GetName()), "gausn", par[1]-ped_n_sigma.first*par[2], par[1]+ped_n_sigma.second*par[2]);
         TF1 *f_fit_ped = new TF1(
             Form("tot_gauss_%s", h->GetName()), 
             [](double *x, double *p) {
                 return p[0] * TMath::Gaus(x[0], p[1], p[2], true) + p[3];
             },
-            par[1]-peak_n_sigma.first*par[2],
-            par[1]+peak_n_sigma.second*par[2],
+            par[1]-ped_n_sigma.first*par[2],
+            par[1]+ped_n_sigma.second*par[2]
             4
         );
         f_fit_ped->SetParameter(0, par[0]);
