@@ -176,8 +176,8 @@ void analyze(TString path, TString particle){
         tdc_p0_val.clear();
         tdc_p0_err.clear();
 
-        // -- pedestal (4 values) -----
-        for(int j=0; j<4; ++j){
+        // -- pedestal (5 values) -----
+        for(int j=0; j<5; ++j){
             adc_p0_val.push_back(adc_res[i][j].par[1]);
             adc_p0_err.push_back(adc_res[i][j].err[1]);
         }
