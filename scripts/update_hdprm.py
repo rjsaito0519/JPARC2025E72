@@ -22,7 +22,7 @@ detector_n_ud_list = {
     "BH2":  2,
     "BAC":  1,
     "HTOF": -1,
-    "KVC":  4,
+    "KVC":  5,
     "T1":   1, 
     "CVC":  2,
     "SAC3": 1,
