@@ -76,7 +76,7 @@ void analyze(TString path, TString particle){
     // +-------------------+    
     Int_t num_ch = 8;
     // -- adc ----------
-    TH1D *h_adc[4][num_ch]; // a,b,c,d
+    TH1D *h_adc[5][num_ch]; // a,b,c,d,S
     // -- tdc ----------
     TH1D *h_tdc[num_ch];   // S
 
@@ -85,6 +85,7 @@ void analyze(TString path, TString particle){
         h_adc[1][i] = (TH1D*)f->Get(Form("%s_ADC_seg%db_%s", counter_upper.Data(), i, particle.Data()));
         h_adc[2][i] = (TH1D*)f->Get(Form("%s_ADC_seg%dc_%s", counter_upper.Data(), i, particle.Data()));
         h_adc[3][i] = (TH1D*)f->Get(Form("%s_ADC_seg%dd_%s", counter_upper.Data(), i, particle.Data()));
+        h_adc[4][i] = (TH1D*)f->Get(Form("%s_ADC_seg%dS_%s", counter_upper.Data(), i, particle.Data()));
         
         h_tdc[i]    = (TH1D*)f->Get(Form("%s_TDC_seg%dS_%s", counter_upper.Data(), i, particle.Data()));
     }
@@ -114,7 +115,7 @@ void analyze(TString path, TString particle){
     std::vector<std::vector<FitResult>> adc_res(num_ch, std::vector<FitResult>());
     
     // suffix map for keys
-    const std::vector<std::string> suffix = {"a", "b", "c", "d"};
+    const std::vector<std::string> suffix = {"a", "b", "c", "d", "S"};
 
     nth_pad = 1;
     for (Int_t i = 0; i < num_ch; i++) {

@@ -1,4 +1,5 @@
 import os
+import statistics
 import numpy as np
 import matplotlib.pyplot as plt
 import uproot
@@ -7,7 +8,7 @@ import sys
 
 import opg_tool
 
-debug_flag = 1
+debug_flag = 0
 
 plt.rcParams['font.family'] = 'Times New Roman' #全体のフォントを設定
 plt.rcParams['mathtext.fontset'] = 'stix'
@@ -85,7 +86,17 @@ if debug_flag: # for debug
     pprint.pprint(opg_mean_data)
     print(opg_mean_data.shape)
 
-# sys.exit()
+for seg in range(8):
+    buf1 = []
+    buf2 = []
+    for ch in range(4):
+        buf1.extend(opg_mean_data[ch][4*(seg%4):4*(seg%4+1)][:, 0])
+        buf2.extend(opg_mean_data[ch][4*(seg%4):4*(seg%4+1)][:, 1])
+    buf1 = np.asarray(buf1)
+    buf2 = np.asarray(buf2)        
+    mean, error = opg_tool.weighted_mean_and_error(buf1, 1.0/buf2**2)
+    print(mean)
+sys.exit()
 
 for HV in [58]:
     fig = plt.figure(figsize=(15, 6))
