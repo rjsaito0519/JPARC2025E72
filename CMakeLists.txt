@@ -15,7 +15,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/obj)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/obj)
 
 # ヘッダーファイル用のインクルードディレクトリ
-include_directories(${CMAKE_SOURCE_DIR}/include)
+include_directories(${CMAKE_SOURCE_DIR}/common/include)
 
 # ROOTを探す
 find_package(ROOT REQUIRED COMPONENTS Spectrum MathMore EG Minuit Gui Core MathCore GenVector)
@@ -25,11 +25,15 @@ else()
     message(FATAL_ERROR "ROOT not found. Please ensure ROOT is installed and accessible.")
 endif()
 
-# 共有コード（sharedディレクトリ）を収集
-file(GLOB SHARED_SRC "${CMAKE_SOURCE_DIR}/src/shared/*.cpp")
+# 共有コード（common/src）を収集
+file(GLOB SHARED_SRC "${CMAKE_SOURCE_DIR}/common/src/*.cpp")
 
 # 各ソースファイルに対して実行ファイルを作成
-file(GLOB EXECUTABLE_SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp")
+# calibration/src と analysis/src の両方からソースを探す
+file(GLOB EXECUTABLE_SOURCES 
+    "${CMAKE_SOURCE_DIR}/calibration/src/*.cpp"
+    "${CMAKE_SOURCE_DIR}/analysis/src/*.cpp"
+)
 # "unused" という名前が含まれるファイルやディレクトリを除外
 list(FILTER EXECUTABLE_SOURCES EXCLUDE REGEX "unused")
 foreach(EXECUTABLE_SOURCE ${EXECUTABLE_SOURCES})

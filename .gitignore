@@ -1,7 +1,29 @@
-.build
-bin
-results
-include/paths.h
-scripts/__pycache__
-scripts/conf.py
-data
+# Build artifacts
+.build/
+bin/
+lib/*.so
+lib/*.a
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE settings
+.vscode/
+.idea/
+
+# Configuration files (environment dependent)
+lib/paths.py
+common/include/paths.h
+
+# Output directories
+results/root/
+results/img/
+data/
+root
+param
+
+# Temporary files
+*.swp
+*~
+.DS_Store
