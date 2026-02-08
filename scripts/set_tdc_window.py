@@ -37,7 +37,7 @@ user_param_dir = os.path.join(script_dir, "param", "USER", SUB_DIR)
 target_file = os.path.join(user_param_dir, f"UserParam_run{run_num:05d}")
 
 if not os.path.isfile(target_file):
-    shutil.copy(os.path.join(script_dir, "param", "USER", "UserParam_e72_tpc_0"), target_file)
+    shutil.copy(os.path.join(script_dir, "param", "USER", "UserParam_e72_example"), target_file)
 # ---------------------------------------------------------------------------
 
 plt.rcParams['font.family'] = 'Times New Roman' #全体のフォントを設定

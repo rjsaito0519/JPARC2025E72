@@ -53,22 +53,22 @@ SUB_DIR = "e72"
 hdprm_dir = f"{conf.param_dir}/HDPRM"
 hdprm_target_file = f"{hdprm_dir}/{SUB_DIR}/HodoParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(hdprm_target_file):
-    shutil.copy(f"{hdprm_dir}/HodoParam_1", hdprm_target_file)
+    shutil.copy(f"{hdprm_dir}/HodoParam_e72_example", hdprm_target_file)
 
 hdphc_dir = f"{conf.param_dir}/HDPHC"
 hdphc_target_file = f"{hdphc_dir}/{SUB_DIR}/HodoPHCParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(hdphc_target_file):
-    shutil.copy(f"{hdphc_dir}/HodoPHCParam_1", hdphc_target_file)
+    shutil.copy(f"{hdphc_dir}/HodoPHCParam_e72_example", hdphc_target_file)
 
 dctdc_dir = f"{conf.param_dir}/DCTDC"
 dctdc_target_file = f"{dctdc_dir}/{SUB_DIR}/DCTdcParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(dctdc_target_file):
-    shutil.copy(f"{dctdc_dir}/DCTdcParam_1", dctdc_target_file)
+    shutil.copy(f"{dctdc_dir}/DCTdcParam_e72_example", dctdc_target_file)
 
 dcgeo_dir = f"{conf.param_dir}/DCGEO"
 dcgeo_target_file = f"{dcgeo_dir}/{SUB_DIR}/DCGeomParam_run{args.run_num:0=5}_{args.suffix}"
 if not os.path.isfile(dcgeo_target_file):
-    shutil.copy(f"{dcgeo_dir}/DCGeomParam_e72_20251126", dcgeo_target_file)
+    shutil.copy(f"{dcgeo_dir}/DCGeomParam_e72_example", dcgeo_target_file)
 
 # update param file
 # ---------------------------------------------------------------------------
