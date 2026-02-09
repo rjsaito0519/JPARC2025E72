@@ -664,14 +664,11 @@ namespace ana_helper {
 
         c->cd(n_c);
         std::vector<Double_t> par, err;
-        Double_t evnum_within_range = h->Integral(
-            h->FindBin(h->GetXaxis()->GetXmin()),
-            h->FindBin(h->GetXaxis()->GetXmax())
-        );
-        TString fit_option = evnum_within_range > 200.0 ? "0QEMR" : "0QEMRL";
+        Double_t max_bin_content = h->GetMaximum(); 
+        TString fit_option = max_bin_content > 50.0 ? "0QEMR" : "0QEMRL";
         FitResult result;
 
-        if (evnum_within_range > 200.0) {
+        if (max_bin_content > 10.0) {
 
             Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
             Double_t width    = h->GetStdDev();
@@ -714,6 +711,10 @@ namespace ana_helper {
             f_fit->Draw("same");
 
         } else {
+            Double_t evnum_within_range = h->Integral(
+                h->FindBin(h->GetXaxis()->GetXmin()),
+                h->FindBin(h->GetXaxis()->GetXmax())
+            );
             Double_t err_value = 9999.0;
             // -- fill result -----
             result.par.push_back(evnum_within_range);
@@ -726,10 +727,15 @@ namespace ana_helper {
             result.err.push_back(h->GetStdDevError());
 
             // -- draw figure -----
-            h->GetXaxis()->SetRangeUser(
-                result.par[1] - 15.0*result.par[2], 
-                result.par[1] + 15.0*result.par[2]
-            );
+            Double_t center = h->GetBinCenter(h->GetMaximumBin());
+            Double_t sigma = h->GetStdDev();
+            Double_t range_width = h->GetXaxis()->GetXmax() - h->GetXaxis()->GetXmin();
+            
+            Double_t half_width = 5.0 * sigma;
+            if (half_width < range_width * 0.01) half_width = range_width * 0.01;
+            if (half_width > range_width * 0.2)  half_width = range_width * 0.2;
+
+            h->GetXaxis()->SetRangeUser(center - half_width, center + half_width);
             h->Draw();
             TLatex* commnet = new TLatex();
             commnet->SetNDC();  // NDC座標（0〜1の正規化）を使う
@@ -739,6 +745,7 @@ namespace ana_helper {
 
         TLine *line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
         line->SetLineStyle(2); // 点線に設定
+        line->SetLineWidth(1.5); // 点線に設定
         line->SetLineColor(kRed); // 色を赤に設定
         line->Draw("same");
 
