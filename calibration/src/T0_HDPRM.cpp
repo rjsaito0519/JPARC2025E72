@@ -64,7 +64,8 @@ void analyze(TString path, TString particle){
     // +--------------------------+
     // | prepare output root file |
     // +--------------------------+
-    TString output_path = Form("%s/root/run%05d_T0_HDPRM_%s.root", OUTPUT_DIR.Data(), run_num, particle.Data());
+    TString root_base_dir = ana_helper::get_root_dir(OUTPUT_DIR, run_num);
+    TString output_path = Form("%s/run%05d_T0_HDPRM_%s.root", root_base_dir.Data(), run_num, particle.Data());
     if (std::ifstream(output_path.Data())) std::remove(output_path.Data());
     TFile* fout = new TFile(output_path.Data(), "RECREATE");
 
@@ -96,7 +97,8 @@ void analyze(TString path, TString particle){
     Int_t nth_pad = 1;
     Int_t rows = 2, cols = 2;
     Int_t max_pads = rows * cols;
-    TString pdf_path = Form("%s/img/run%05d_T0_HDPRM_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
+    TString img_base_dir = ana_helper::get_img_dir(OUTPUT_DIR, run_num);
+    TString pdf_path = Form("%s/run%05d_T0_HDPRM_%s.pdf", img_base_dir.Data(), run_num, particle.Data());
 
     // -- container -----
     std::vector<FitResult> adc_up;

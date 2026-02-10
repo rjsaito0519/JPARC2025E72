@@ -1,8 +1,8 @@
 limits_dict = {
     # key : [good ch min, good ch max]
-    "00344_Pi_bht" : [12, 47],
+    "00344_Pi_bht" : [ 7, 48],
 
-    "00351_Pi_bht" : [13, 47],
+    "00351_Pi_bht" : [13, 48],
 
     "02140_Pi_bht" : [14, 50],
     "02140_Pi_bh2" : [ 2,  9],

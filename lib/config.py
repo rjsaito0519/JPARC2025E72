@@ -13,14 +13,14 @@ SUB_DIR = "e72"
 DETECTOR_I_LIST = {
     "BHT":  1,
     "T0":   2,
-    "BH2":  3,
-    "BAC":  4,
-    "HTOF": 5,
-    "KVC":  6,
-    "T1":   7, 
-    "CVC":  8,
-    "SAC3": 9,
-    "SFV": 10,
+    "BH2":  6,
+    "BAC":  3,
+    # "HTOF": 5,
+    # "KVC":  6,
+    # "T1":   7, 
+    # "CVC":  8,
+    # "SAC3": 9,
+    # "SFV": 10,
 }
 
 DETECTOR_N_UD_LIST = {

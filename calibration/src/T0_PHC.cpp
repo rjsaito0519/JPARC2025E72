@@ -63,7 +63,8 @@ void analyze(TString path, TString particle){
     // +--------------------------+
     // | prepare output root file |
     // +--------------------------+
-    TString output_path = Form("%s/root/run%05d_T0_PHC_%s.root", OUTPUT_DIR.Data(), run_num, particle.Data());
+    TString root_base_dir = ana_helper::get_root_dir(OUTPUT_DIR, run_num);
+    TString output_path = Form("%s/run%05d_T0_PHC_%s.root", root_base_dir.Data(), run_num, particle.Data());
     if (std::ifstream(output_path.Data())) std::remove(output_path.Data());
     TFile* fout = new TFile(output_path.Data(), "RECREATE");
 
@@ -72,8 +73,13 @@ void analyze(TString path, TString particle){
     // +-------------------+    
     // -- BTOF vs dE ----------
     TH2D *h_t0_btof_vs_de[2][conf.num_of_ch.at("t0")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++ ) h_t0_btof_vs_de[0][i] = (TH2D*)f->Get(Form("T0_seg%dU_CBTOF_vs_DeltaE_%s", i, particle.Data()));
-    for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++ ) h_t0_btof_vs_de[1][i] = (TH2D*)f->Get(Form("T0_seg%dD_CBTOF_vs_DeltaE_%s", i, particle.Data()));
+    TH2D *h_t0_cbtof_vs_de[2][conf.num_of_ch.at("t0")];
+    for (Int_t i = 0; i < conf.num_of_ch.at("t0"); i++ ) {
+        h_t0_btof_vs_de[0][i]  = (TH2D*)f->Get(Form("T0_seg%dU_BTOF_vs_DeltaE_%s", i, particle.Data()));
+        h_t0_btof_vs_de[1][i]  = (TH2D*)f->Get(Form("T0_seg%dD_BTOF_vs_DeltaE_%s", i, particle.Data()));
+        h_t0_cbtof_vs_de[0][i] = (TH2D*)f->Get(Form("T0_seg%dU_CBTOF_vs_DeltaE_%s", i, particle.Data()));
+        h_t0_cbtof_vs_de[1][i] = (TH2D*)f->Get(Form("T0_seg%dD_CBTOF_vs_DeltaE_%s", i, particle.Data()));
+    }
 
     // +--------------+
     // | fit and plot |
@@ -82,7 +88,8 @@ void analyze(TString path, TString particle){
     Int_t nth_pad = 1;
     Int_t rows = 2, cols = 2;
     Int_t max_pads = rows * cols;
-    TString pdf_path = Form("%s/img/run%05d_T0_PHC_%s.pdf", OUTPUT_DIR.Data(), run_num, particle.Data());
+    TString img_base_dir = ana_helper::get_img_dir(OUTPUT_DIR, run_num);
+    TString pdf_path = Form("%s/run%05d_T0_PHC_%s.pdf", img_base_dir.Data(), run_num, particle.Data());
 
     // -- container -----
     std::vector<FitResult> phc_up;
@@ -105,10 +112,16 @@ void analyze(TString path, TString particle){
         result = ana_helper::phc_fit(h_t0_btof_vs_de[0][i], c_t0, nth_pad);
         phc_up.push_back(result);
         nth_pad++;
+        c_t0->cd(nth_pad);
+        if(h_t0_cbtof_vs_de[0][i]) h_t0_cbtof_vs_de[0][i]->Draw("colz");
+        nth_pad++;
 
         // -- DOWN -----
         result = ana_helper::phc_fit(h_t0_btof_vs_de[1][i], c_t0, nth_pad);
         phc_down.push_back(result);
+        nth_pad++;
+        c_t0->cd(nth_pad);
+        if(h_t0_cbtof_vs_de[1][i]) h_t0_cbtof_vs_de[1][i]->Draw("colz");
         nth_pad++;
     }
     c_t0->Print(pdf_path);
