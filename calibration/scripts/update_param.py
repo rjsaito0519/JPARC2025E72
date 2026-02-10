@@ -23,7 +23,17 @@ parser = argparse.ArgumentParser(
 parser.add_argument("run_num", type=int, help="Input run number")
 parser.add_argument("suffix", type=str, help="Input suffix (K or Pi)")
 parser.add_argument("param_type", type=str, help="Input parameter type (hdprm, t0, hdphc, dctdc, residual)")
+group = parser.add_mutually_exclusive_group()
+group.add_argument("--bcout", action="store_true", help="Set detector to BcOut")
+group.add_argument("--bcin", action="store_true", help="Set detector to BcIn")
 args = parser.parse_args()
+
+detector = "BcOut"
+if args.bcin:
+    detector = "BcIn"
+elif args.bcout:
+    detector = "BcOut"
+# else: detector = "BcOut" (default)
 
 if args.suffix not in ["K", "Pi"]:
     print("suffix should be K or Pi")
@@ -61,9 +71,8 @@ def get_root_file(run_num, det, suffix, type_str):
 
     for root_file_name in patterns:
         search_paths = [
+            config.OUTPUT_DIR / "root" / f"run{run_num:05d}" / root_file_name,
             config.SCRATCH_DIR / f"run{run_num:05d}" / root_file_name,
-            config.DECODE_DIR / f"run{run_num:05d}" / root_file_name,
-            config.OUTPUT_DIR / "root" / f"run{run_num:05d}" / root_file_name
         ]
         for root_file in search_paths:
             if root_file.exists():
@@ -102,7 +111,7 @@ all_new_data = {}
 print(colored(f"\n>>> Collecting results for {args.param_type} <<<", "cyan"))
 
 if args.param_type == "hdprm":
-    detectors = ["BHT", "BH2", "BAC", "KVC", "T1", "CVC", "SAC3", "SFV"]
+    detectors = ["BHT", "BH2", "HTOF", "BAC", "KVC", "T1", "CVC", "SAC3", "SFV"]
     for det in detectors:
         root_file = get_root_file(args.run_num, det, args.suffix, "HDPRM")
         if not root_file:
@@ -145,31 +154,116 @@ elif args.param_type == "hdphc":
         print(f"  - {det:<6}: {color_ok()} {len(data)} entries found (Range: {good_range})")
 
 elif args.param_type == "dctdc":
-    root_file = get_root_file(args.run_num, "DC", args.suffix, "tdc")
+    # C++ (BLC_TDC) outputs: runXXXXX_BLC1_TDC_Pi.root (BcIn) or runXXXXX_BLC2_TDC_Pi.root (BcOut)
+    blc_det = "BLC1" if detector == "BcIn" else "BLC2" if detector == "BcOut" else detector
+    
+    root_file = get_root_file(args.run_num, blc_det, args.suffix, "TDC")
     if not root_file:
-        root_file = get_root_file(args.run_num, "BLC2", args.suffix, "TDC")
+         root_file = get_root_file(args.run_num, detector, args.suffix, "tdc")
+    if not root_file and detector != "DC":
+        root_file = get_root_file(args.run_num, "DC", args.suffix, "tdc")
+        
     if root_file:
         data = update_dctdc.make_dictdata(str(root_file))
         all_new_data.update(data)
-        print(f"  - DC/BLC TDC: {color_ok()} {len(data)} entries found")
+        print(f"  - {detector} TDC: {color_ok()} {len(data)} entries found")
 
 elif args.param_type == "residual":
-    root_file = get_root_file(args.run_num, "DC", args.suffix, "resi")
+    # Helper to apply additive update
+    def prepare_additive_residuals(r_file):
+        d = update_residual.make_dictdata(str(r_file))
+        if not d: return {}
+        
+        # Get current values to ADD
+        c_data = param_file.get_data_dict(key_len=cat["key_len"])
+        ofs_idx = cat["start_col"] - cat["key_len"]
+        
+        for k in d.keys():
+            if k in c_data:
+                try:
+                    vals = c_data[k]
+                    if len(vals) > ofs_idx:
+                        old_val = float(vals[ofs_idx])
+                        res_val = float(d[k][0])
+                        d[k] = [old_val + res_val]
+                    else:
+                        print(colored(f"    [Warning] Key {k}: Data row too short.", "yellow"))
+                except ValueError:
+                    print(colored(f"    [Warning] Key {k}: Invalid float conversion.", "yellow"))
+        return d
+
+    # C++ (BLC_residual) outputs: runXXXXX_BLC1_residual_Pi.root (BcIn) or runXXXXX_BLC2_residual_Pi.root (BcOut)
+    blc_det = "BLC1" if detector == "BcIn" else "BLC2" if detector == "BcOut" else detector
+    
+    # 1. Search for specified detector (Result naming: BLC1_residual or BLC2_residual)
+    root_file = get_root_file(args.run_num, blc_det, args.suffix, "residual")
+    found_any = False
+    
     if root_file:
-        data = update_residual.make_dictdata(str(root_file))
-        all_new_data.update(data)
-        print(f"  - DC Residuals: {color_ok()} {len(data)} entries found")
+        data = prepare_additive_residuals(root_file)
+        if data:
+            all_new_data.update(data)
+            print(f"  - {detector} Residuals: {color_ok()} {len(data)} entries found (Additive Update)")
+            found_any = True
+    
+    # 2. Fallbacks
+    if not found_any:
+        # Try "resi" suffix (Old naming or compatibility)
+        root_file = get_root_file(args.run_num, detector, args.suffix, "resi")
+        if root_file:
+             # Double check this is not a 'decoded' file which uproot will now handle via 'tree' check
+             data = prepare_additive_residuals(root_file)
+             if data:
+                 all_new_data.update(data)
+                 print(f"  - {detector} Residuals (resi): {color_ok()} {len(data)} entries found")
+                 found_any = True
+
+    if not found_any:
+        # Generic DC check
+        for d_name in ["DC", "BLC1", "BLC2"]:
+            for t_name in ["residual", "resi"]:
+                if found_any: break
+                root_file = get_root_file(args.run_num, d_name, args.suffix, t_name)
+                if root_file:
+                     data = prepare_additive_residuals(root_file)
+                     if data:
+                         all_new_data.update(data)
+                         print(f"  - {d_name} {t_name}: {color_ok()} {len(data)} entries found")
+                         found_any = True
+
+# Helper to report convergence for residuals
+def report_convergence(data):
+    if not data: return
+    
+    corrs = [v[0] for v in data.values()]
+    sigs = [v[1] for v in data.values() if len(v) > 1]
+    
+    rms = np.sqrt(np.mean(np.square(corrs)))
+    max_c = np.max(np.abs(corrs))
+    avg_sig = np.mean(sigs) if sigs else 0.0
+    
+    print(colored("\n>>> Convergence Report (Residual) <<<", "white", attrs=["bold"]))
+    print(f"  - Alignment Error (RMS): {rms:.4f} mm")
+    print(f"  - Maximum Correction:    {max_c:.4f} mm")
+    print(f"  - Average Resolution:   {avg_sig:.4f} mm")
+    
+    threshold = 0.01 # 10 um
+    if rms < threshold:
+        print(colored(f"  - Status: [CONVERGED] (RMS < {threshold}mm)", "green", attrs=["bold"]))
     else:
-        for det in ["BLC1", "BLC2"]:
-            root_file = get_root_file(args.run_num, det, args.suffix, "residual")
-            if root_file:
-                data = update_residual.make_dictdata(str(root_file))
-                all_new_data.update(data)
-                print(f"  - {det:<6}: {color_ok()} {len(data)} entries found")
+        print(colored(f"  - Status: [IN PROGRESS] (Needs more iteration)", "yellow", attrs=["bold"]))
+    print()
 
 # Perform update
 if all_new_data:
-    success_count = param_file.update(all_new_data, key_len=cat["key_len"], start_col=cat["start_col"])
+    # Ensure all_new_data only has one value per key for the file update 
+    # (stripping extra info like sigma used for reporting)
+    cleaned_data = {k: [v[0]] if isinstance(v, list) else [v] for k, v in all_new_data.items()}
+    
+    if args.param_type == "residual":
+        report_convergence(all_new_data)
+        
+    success_count = param_file.update(cleaned_data, key_len=cat["key_len"], start_col=cat["start_col"])
     param_file.write()
     print(colored(f"\n[SUCCESS] Updated {success_count} entries total for Run {args.run_num} {args.suffix}", "green", attrs=["bold"]))
     print(f"File: {target_file.relative_to(config.ANALYZER_DIR)}\n")

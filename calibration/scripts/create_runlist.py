@@ -20,13 +20,18 @@ def colored(text, color):
 
 parser = argparse.ArgumentParser(
     prog="make_runlist",
-    usage="python3 create_runlist.py <run_num> <suffix> [--dc]",
+    usage="python3 create_runlist.py <run_num> <suffix> [--bcout | --bcin]",
     description="Tool to create analyzer .conf and .yml runlist files with smart storage management.",
     add_help=True,
 )
 parser.add_argument("run_num", type=int, help="Input run number")
 parser.add_argument("suffix",  type=str, help="Input suffixes (e.g. Pi_hdprm K_t0)", nargs='*')
-parser.add_argument('--dc', action="store_true", help='Set mode to DC (BcIn/BcOut common) calibration')
+
+# Mutually exclusive group for detector selection
+group = parser.add_mutually_exclusive_group()
+group.add_argument('--bcout', action="store_true", help='Set mode to BcOut calibration')
+group.add_argument('--bcin', action="store_true", help='Set mode to BcIn calibration')
+
 args = parser.parse_args()
 # ---------------------------------------------------------------------------
 
@@ -41,12 +46,16 @@ for param_type in ["conf", "USER", "HDPRM", "HDPHC", "DCTDC", "DCDRFT", "DCGEO"]
     (config.PARAM_DIR / param_type / SUB_DIR).mkdir(parents=True, exist_ok=True)
 
 # Determine Mode
-if args.dc:
-    prefix = "DC"
-    mode_label = "dc"
-else:
-    prefix = "Hodo"
-    mode_label = "hodo"
+# Default is Hodo
+prefix = "Hodo"
+mode_label = "hodo"
+
+if args.bcout:
+    prefix = "BcOut"
+    mode_label = "bcout"
+elif args.bcin:
+    prefix = "BcIn"
+    mode_label = "bcin"
 
 set1 = set(args.suffix)
 set2 = {"0", "Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"}
@@ -132,13 +141,22 @@ for suffix in args.suffix:
         print(f"Warning: Failed to create symlink: {e}")
 
     # Collect for runlist
-    binary = "./bin/Hodoscope" if mode_label == "hodo" else "./bin/BcOutTracking"
+    if mode_label == "hodo":
+        binary = "./bin/Hodoscope"
+        unit = 100000
+    elif args.bcin:
+        binary = "./bin/BcInTracking"
+        unit = 50000
+    else:
+        binary = "./bin/BcOutTracking"
+        unit = 50000
     all_runs_info.append({
         "label": f"run{args.run_num:05d}_{suffix}_{mode_label}:",
         "bin": binary,
         "conf": f"param/conf/{SUB_DIR}/{conf_target_file.name}",
         "data": f"rawdata/run{args.run_num:05d}.dat",
-        "root": str(actual_root_abs)
+        "root": str(actual_root_abs),
+        "unit": unit
     })
 
 # 4. Update Runlist (Always recover WORKDIR and DEFAULT from myexample.yml)
@@ -161,6 +179,7 @@ with open(runlist_target_file, "w") as f_out:
         f_out.write(f"    conf: {r['conf']}\n")
         f_out.write(f"    data: {r['data']}\n")
         f_out.write(f"    root: {r['root']}\n")
+        f_out.write(f"    unit: {r['unit']}\n")
 
 # Output Report
 print(colored(f"\n[SUCCESS] Setup for Run {args.run_num} {args.suffix} ({prefix})", "green"))
