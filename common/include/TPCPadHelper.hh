@@ -414,11 +414,10 @@ inline Double_t ArcLength(Int_t layer, Double_t row1, Double_t row2)
 
 //_____________________________________________________________________________
 inline void 
-InitializeHistograms(const char* name)
+InitializeHistograms(TH2Poly* h1)
 {
-  auto h1 = gDirectory->Get<TH2Poly>(name);
   if (!h1) {
-    std::cerr << "[tpc::InitializeHistograms] Error: TH2Poly '" << name << "' not found in gDirectory" << std::endl;
+    std::cerr << "[tpc::InitializeHistograms] Error: TH2Poly pointer is null" << std::endl;
     return;
   }
 
@@ -454,6 +453,18 @@ InitializeHistograms(const char* name)
       h1->AddBin(5, X, Y);
     }
   }
+}
+
+//_____________________________________________________________________________
+inline void 
+InitializeHistograms(const char* name)
+{
+  auto h1 = gDirectory->Get<TH2Poly>(name);
+  if (!h1) {
+    std::cerr << "[tpc::InitializeHistograms] Error: TH2Poly '" << name << "' not found in gDirectory" << std::endl;
+    return;
+  }
+  InitializeHistograms(h1);
 }
 
 //_____________________________________________________________________________

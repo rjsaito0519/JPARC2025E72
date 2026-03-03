@@ -34,6 +34,13 @@
 #include <TROOT.h>
 #include <TStyle.h>
 #include <TString.h>
+#include <TTree.h>
+#include <TTreeReader.h>
+#include <TTreeReaderValue.h>
+#include <TPRegexp.h>
+
+#include "paths.h"
+#include "ana_helper.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -53,6 +60,21 @@ static const Int_t NumOfAsadTPC = 31;
 // PNG 解像度（ピクセル）。ラスター PDF 用なので控えめに。
 static const Int_t kCoboW = 1200, kCoboH = 600;
 static const Int_t kAsadW = 1600, kAsadH = 800;
+
+//_____________________________________________________________________________
+// 検索するヒストグラム名のフォーマット候補 (優先順)
+// フォーマット文字列には channel (%d または %02d) と suffix ("_RawClock" か empty) が入る
+static const std::vector<std::string> HIST_FMTS_COBO = {
+  "TPC_ResidualY_BcOut_vs_ClockTime_CoBo%d%s",
+  "TPCHit_ResY_vs_ClockTime_CoBo%d%s",
+  "TPCCl_ResY_vs_ClockTime_CoBo%d%s"
+};
+
+static const std::vector<std::string> HIST_FMTS_ASAD = {
+  "TPC_ResidualY_BcOut_vs_ClockTime_Asad%02d%s",
+  "TPCHit_ResY_vs_ClockTime_Asad%02d%s",
+  "TPCCl_ResY_vs_ClockTime_Asad%02d%s"
+};
 
 //_____________________________________________________________________________
 static TH2D* GetHist(TFile* f, const TString& hname)
@@ -89,14 +111,22 @@ static void DrawCoboPage(TFile* f, TCanvas* c, Bool_t corrected,
   const char* label = corrected ? "Corrected" : "Raw";
 
   for (Int_t cobo = 0; cobo < NumOfSegCOBO; ++cobo) {
-    // _RawClock ヒストグラムを使用（補正前）、または補正後はsuffix無し
-    TString hname;
-    if (!corrected) {
-      hname = Form("TPC_ResidualY_BcOut_vs_ClockTime_CoBo%d_RawClock", cobo);
-    } else {
-      hname = Form("TPC_ResidualY_BcOut_vs_ClockTime_CoBo%d", cobo);
+    // 候補フォーマットを順に試す
+    TH2D* h = nullptr;
+    TString found_name = "";
+    
+    // suffix: RawClock or empty (corrected)
+    const char* hist_suffix = !corrected ? "_RawClock" : "";
+
+    for (const auto& fmt : HIST_FMTS_COBO) {
+      TString hname = Form(fmt.c_str(), cobo, hist_suffix);
+      h = GetHist(f, hname);
+      if (h) {
+        found_name = hname;
+        break;
+      }
     }
-    TH2D* h = GetHist(f, hname);
+
     c->cd(cobo + 1);
     gPad->SetRightMargin(0.12);
     gPad->SetLeftMargin(0.12);
@@ -148,14 +178,22 @@ static void DrawAsadPage(TFile* f, TCanvas* c, Bool_t corrected)
   const char* label = corrected ? "Corrected" : "Raw";
 
   for (Int_t asad = 0; asad < NumOfAsadTPC; ++asad) {
-    // _RawClock ヒストグラムを使用（補正前）、または補正後はsuffix無し
-    TString hname;
-    if (!corrected) {
-      hname = Form("TPC_ResidualY_BcOut_vs_ClockTime_Asad%02d_RawClock", asad);
-    } else {
-      hname = Form("TPC_ResidualY_BcOut_vs_ClockTime_Asad%02d", asad);
+    // 候補フォーマットを順に試す
+    TH2D* h = nullptr;
+    TString found_name = "";
+
+    // suffix: RawClock or empty (corrected)
+    const char* hist_suffix = !corrected ? "_RawClock" : "";
+
+    for (const auto& fmt : HIST_FMTS_ASAD) {
+      TString hname = Form(fmt.c_str(), asad, hist_suffix);
+      h = GetHist(f, hname);
+      if (h) {
+        found_name = hname;
+        break;
+      }
     }
-    TH2D* h = GetHist(f, hname);
+    
     c->cd(asad + 1);
     gPad->SetRightMargin(0.12);
     gPad->SetLeftMargin(0.12);
@@ -227,9 +265,45 @@ int main(int argc, char* argv[])
   }
 
   if (outpath.empty()) {
+    Int_t run_number = -1;
+    TFile* f_tmp = TFile::Open(inpath.c_str());
+    if (f_tmp && !f_tmp->IsZombie()) {
+      TTree *tree = (TTree*)f_tmp->Get("tpc");
+      if (tree) {
+        try {
+          TTreeReader reader(tree);
+          TTreeReaderValue<UInt_t> rv(reader, "run_number");
+          if (reader.Next()) {
+            run_number = *rv;
+            std::cout << "Auto-detected run number from TTree (TTreeReader): " << run_number << std::endl;
+          }
+        } catch (...) {
+          // Ignore errors and try fallback
+        }
+      }
+      f_tmp->Close();
+      delete f_tmp;
+    }
+
+    if (run_number < 0) {
+      TString filename = inpath.c_str();
+      TPRegexp run_regex("run([0-9]+)");
+      TString run_str = filename(run_regex);
+      if (!run_str.IsNull()) {
+        run_str.ReplaceAll("run", "");
+        run_number = run_str.Atoi();
+        std::cout << "Auto-detected run number from filename: " << run_number << std::endl;
+      }
+    }
+
     fs::path p(inpath);
     std::string base = p.stem().string();
-    outpath = (p.parent_path() / (base + "_TPC_Phase.pdf")).string();
+    if (run_number >= 0) {
+      TString img_dir = ana_helper::get_img_dir(OUTPUT_DIR, run_number);
+      outpath = std::string(img_dir.Data()) + "/" + base + "_TPC_Phase.pdf";
+    } else {
+      outpath = (p.parent_path() / (base + "_TPC_Phase.pdf")).string();
+    }
   }
 
   fs::path out(outpath);

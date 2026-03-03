@@ -65,6 +65,16 @@ static const char* PHASE_NAME_FMT = "TpcPhase_Cobo%d";
 // フィット関数の結果を保存する名前（参照用）
 static const char* FIT_NAME_FMT = "TpcPhase_Fit_Cobo%d";
 
+// 検索するヒストグラム名のフォーマット候補 (優先順)
+static const std::vector<std::string> HIST_FMTS = {
+  // DstTPCBcOutTracking (Tracks)
+  "TPC_ResidualY_BcOut_vs_ClockTime_CoBo%d_RawClock",
+  // DstTPCHitBcOutTracking (Hits)
+  "TPCHit_ResY_vs_ClockTime_CoBo%d_RawClock",
+  // DstTPCHitBcOutTracking (Clusters)
+  "TPCCl_ResY_vs_ClockTime_CoBo%d_RawClock"
+};
+
 // ResY [mm] -> Δclock [ns] の変換で使う drift velocity [mm/ns]
 static const Double_t DEFAULT_VDRIFT = 0.055;
 
@@ -515,8 +525,6 @@ int main(int argc, char* argv[])
     return 1;
   }
 
-  static const char* hist_fmt = "TPC_ResidualY_BcOut_vs_ClockTime_CoBo%d_RawClock";
-
   // PDF出力は将来の実装のため、現在は無効化
 
   Int_t n_created = 0;
@@ -540,13 +548,24 @@ int main(int argc, char* argv[])
       continue;
     }
 
-    TString hname = Form(hist_fmt, cobo);
-    TH2D* raw = GetHist(fin, hname);
+    TString hname = "";
+    TH2D* raw = nullptr;
+    
+    // 候補フォーマットを順に試す
+    for (const auto& fmt : HIST_FMTS) {
+      TString s = Form(fmt.c_str(), cobo);
+      raw = GetHist(fin, s);
+      if (raw) {
+        hname = s;
+        break;
+      }
+    }
+
     if (!raw) {
-      std::cout << "  CoBo " << cobo << ": Histogram not found, skipped" << std::endl;
+      std::cout << "  CoBo " << cobo << ": Histogram not found (tried all known formats), skipped" << std::endl;
       continue;
     }
-    std::cout << "  CoBo " << cobo << ": Processing..." << std::flush;
+    std::cout << "  CoBo " << cobo << ": Found " << hname << ". Processing..." << std::flush;
     TH2D* h = (TH2D*)raw->Clone(Form("%s_tmp", hname.Data()));
 
     std::vector<Double_t> x_center, mean_y, err_y;

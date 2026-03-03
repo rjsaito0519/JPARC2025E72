@@ -72,6 +72,8 @@ public:
     Double_t npe_min = -10.;
     Double_t npe_max = 410.;
 
+    const Int_t NumOfLayersTPC = 32;
+
     const std::pair<Int_t, Int_t> htof_adc_exist_seg = {0, 33};
 
     const std::unordered_map<std::string, Int_t> num_of_ch{

@@ -59,7 +59,7 @@ def main():
     if mode == "hdprm":
         # Run BHT_HDPRM, BH2_HDPRM, HTOF_HDPRM, BAC_HDPRM, KVC_HDPRM, T1_HDPRM, CVC_HDPRM, SAC3_HDPRM, SFV_HDPRM
         # Note: update_param.py supports these 9 detectors for 'hdprm'
-        detectors = ["BHT", "BH2", "HTOF", "BAC", "KVC", "T1", "CVC", "SAC3", "SFV"]
+        detectors = ["BHT", "BH2", "BAC", "KVC", "T1"]
         
         print(colored(f">>> Step 1: Running HDPRM analysis for {len(detectors)} detectors", "cyan"))
         for det in detectors:
@@ -88,7 +88,7 @@ def main():
     elif mode == "hdphc":
         # Run BHT_PHC, BH2_PHC, HTOF_PHC, T1_PHC, CVC_PHC
         # Note: update_param.py supports these 5 detectors for 'hdphc'
-        detectors = ["BHT", "BH2", "HTOF", "T1", "CVC"]
+        detectors = ["BHT", "BH2","T1"]
         
         print(colored(f">>> Step 1: Running PHC analysis for {len(detectors)} detectors", "cyan"))
         for det in detectors:
