@@ -29,7 +29,8 @@ def main():
     parser.add_argument("run_num", type=int, help="Run Number")
     parser.add_argument("mode", type=str, choices=["hdprm", "t0", "hdphc"], help="Calibration Mode")
     parser.add_argument('--kaon', action="store_true", help='Use Kaon (K) suffix instead of Pion (Pi)')
-    
+    parser.add_argument('--ftof', action="store_true", help='Include FTOF-related detectors (CVC, SFV, SAC3 for hdprm; CVC for hdphc)')
+
     args = parser.parse_args()
 
     run_num = args.run_num
@@ -49,6 +50,8 @@ def main():
          
     print(colored(f"[INFO] Using Input File: {input_root_file}", "green"))
     print(colored(f"[INFO] Mode: {mode} (Suffix: {suffix})", "green"))
+    if args.ftof:
+        print(colored("[INFO] FTOF detectors included", "green"))
 
     bin_dir = project_root / "bin"
     script_dir = Path(__file__).parent
@@ -59,7 +62,7 @@ def main():
     if mode == "hdprm":
         # Run BHT_HDPRM, BH2_HDPRM, HTOF_HDPRM, BAC_HDPRM, KVC_HDPRM, T1_HDPRM, CVC_HDPRM, SAC3_HDPRM, SFV_HDPRM
         # Note: update_param.py supports these 9 detectors for 'hdprm'
-        detectors = ["BHT", "BH2", "BAC", "KVC", "T1"]
+        detectors = ["BHT", "BH2", "BAC", "KVC", "T1"] + (["CVC", "SFV", "SAC3"] if args.ftof else [])
         
         print(colored(f">>> Step 1: Running HDPRM analysis for {len(detectors)} detectors", "cyan"))
         for det in detectors:
@@ -88,7 +91,7 @@ def main():
     elif mode == "hdphc":
         # Run BHT_PHC, BH2_PHC, HTOF_PHC, T1_PHC, CVC_PHC
         # Note: update_param.py supports these 5 detectors for 'hdphc'
-        detectors = ["BHT", "BH2","T1"]
+        detectors = ["BHT", "BH2", "T1"] + (["CVC"] if args.ftof else [])
         
         print(colored(f">>> Step 1: Running PHC analysis for {len(detectors)} detectors", "cyan"))
         for det in detectors:

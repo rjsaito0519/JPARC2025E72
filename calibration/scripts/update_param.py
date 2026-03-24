@@ -44,6 +44,7 @@ import update_phc
 import update_dctdc
 import update_residual
 import phc_conf
+import hdprm_conf
 
 def get_root_file(run_num, det, suffix, type_str):
     """Search for ROOT file in scratch, decode, or local output dirs."""
@@ -121,8 +122,8 @@ if args.param_type == "hdprm":
         det_lower = det.lower()
         conf_key = f"{args.run_num:05d}_{args.suffix}_{det_lower}"
         good_range = [-np.inf, np.inf]
-        if hasattr(phc_conf, 'limits_dict') and conf_key in phc_conf.limits_dict:
-             good_range = phc_conf.limits_dict[conf_key]
+        if hasattr(hdprm_conf, 'limits_dict') and conf_key in hdprm_conf.limits_dict:
+             good_range = hdprm_conf.limits_dict[conf_key]
              
         data = update_hdprm.make_dictdata(str(root_file), good_ch_range=good_range)
         all_new_data.update(data)
@@ -258,10 +259,13 @@ def report_convergence(data):
 if all_new_data:
     # Ensure all_new_data only has one value per key for the file update 
     # (stripping extra info like sigma used for reporting)
-    cleaned_data = {k: [v[0]] if isinstance(v, list) else [v] for k, v in all_new_data.items()}
-    
     if args.param_type == "residual":
+        # report_convergence uses sigma (v[1]) if present
         report_convergence(all_new_data)
+        # Stripping extra info (like sigma) for the file update
+        cleaned_data = {k: [v[0]] if isinstance(v, list) else [v] for k, v in all_new_data.items()}
+    else:
+        cleaned_data = all_new_data
         
     success_count = param_file.update(cleaned_data, key_len=cat["key_len"], start_col=cat["start_col"])
     param_file.write()
