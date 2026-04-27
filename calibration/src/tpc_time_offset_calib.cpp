@@ -117,7 +117,7 @@ int main(Int_t argc, char** argv) {
         std::cerr << "Usage: " << argv[0]
                   << " <input.root> [run_number] [--threshold N] [--sigma N] [--nsigma N] [--stat-range N] [--min-peak-ratio R]"
                   << " [--min-sigma MM] [--min-sigma-rel-rms F] [--sigma-init-rel R] [--max-chi2-ndf X] [--min-fit-ndf N]"
-                  << " [--min-fit-prob P] [--local-peak-mm W] [--local-peak-sep B] [--hist-fmt fmt]" << std::endl;
+                  << " [--min-fit-prob P] [--local-peak-mm W] [--local-peak-sep B] [--hist-fmt fmt] [--ave] [--debug]" << std::endl;
         return EXIT_FAILURE;
     }
 
@@ -144,6 +144,8 @@ int main(Int_t argc, char** argv) {
     // mode: "hit" → TPCHit_ResY_..., "trk" → TPCTrk_ResY_...
     TString mode = "hit";
     TString hist_fmt = "TPCHit_ResY_Layer%02d_Row%03d";
+    Bool_t debug_mode = kFALSE;
+    Bool_t use_asad_mean_fill = kFALSE;
 
     Int_t arg_idx = 2;
     if (arg_idx < argc && TString(argv[arg_idx]).IsDigit()) {
@@ -183,6 +185,10 @@ int main(Int_t argc, char** argv) {
         } else if (arg == "--hist-fmt" && i + 1 < argc) {
             // 明示的なフォーマット指定（mode よりこちらを優先）
             hist_fmt = argv[++i];
+        } else if (arg == "--ave" || arg == "--asad-avg") {
+            use_asad_mean_fill = kTRUE;
+        } else if (arg == "--debug") {
+            debug_mode = kTRUE;
         }
     }
 
@@ -261,7 +267,19 @@ int main(Int_t argc, char** argv) {
     }
 
     std::string line;
+    bool in_tpcphase_stamp_block = false;
     while (std::getline(ifs, line)) {
+        if (line.find("# --- begin TPCPHASE pointer") != std::string::npos) {
+            in_tpcphase_stamp_block = true;
+            continue;
+        }
+        if (in_tpcphase_stamp_block) {
+            if (line.find("# --- end TPCPHASE pointer ---") != std::string::npos) {
+                in_tpcphase_stamp_block = false;
+            }
+            continue;
+        }
+
         TpcParamEntry entry;
         entry.raw_line = line;
         
@@ -297,6 +315,13 @@ int main(Int_t argc, char** argv) {
         if (!e.is_comment && e.aty == 2 && !e.p.empty())
             ini_p0[{e.layer, e.row}] = e.p[0];
     }
+    // センターフレーム上のパッドは time offset 校正対象外（p0=0、Δp0 表示は 0）
+    for (auto& e : entries) {
+        if (e.is_comment || e.aty != 2 || e.p.empty()) continue;
+        if (!tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
+        e.p[0] = 0.0;
+        ini_p0[{e.layer, e.row}] = 0.0;
+    }
     std::set<std::pair<Int_t, Int_t>> pads_updated;
 
     // --- PDF Setup ---
@@ -328,14 +353,71 @@ int main(Int_t argc, char** argv) {
 
     const Int_t nx = 4, ny = 4;
     Int_t ipad = 0;
+    std::vector<TLine*> page_lines;
     canvas->Print(pdf_path + "["); // Open multi-page PDF
 
     std::cout << "Extracting offsets..." << std::endl;
     Int_t n_updated = 0;
+    Int_t n_filled_by_asad = 0;
     Int_t n_total_pads = 0;
+    std::map<Int_t, std::pair<Double_t, Double_t>> layer_seed;  // layer -> (mean, sigma)
+
+    // Layerごとの合算ヒストで事前fitし、pad fit の初期値 seed に使う
+    for (Int_t layer = 0; layer < tpc::NumOfLayersTPC; ++layer) {
+        const Int_t n_pad = static_cast<Int_t>(tpc::padParameter[layer][tpc::kNumOfPad]);
+        TH1D* h_layer = nullptr;
+        for (Int_t row = 0; row < n_pad; ++row) {
+            TString hname = Form(hist_fmt.Data(), layer, row);
+            TH1D* h_tmp = nullptr;
+            f->GetObject(hname.Data(), h_tmp);
+            if (!h_tmp) {
+                TString hname_pre = "hist/" + hname;
+                f->GetObject(hname_pre.Data(), h_tmp);
+            }
+            if (!h_tmp || h_tmp->GetEntries() <= 0)
+                continue;
+            if (!h_layer) {
+                h_layer = (TH1D*)h_tmp->Clone(Form("hLayerPrefit_%02d", layer));
+                h_layer->SetDirectory(nullptr);
+            } else {
+                h_layer->Add(h_tmp);
+            }
+        }
+        if (!h_layer || h_layer->GetEntries() <= 0) {
+            if (h_layer)
+                delete h_layer;
+            continue;
+        }
+
+        const Int_t b = DominantLocalMaximumBin(h_layer, local_peak_sep_bins);
+        const Double_t px = h_layer->GetBinCenter(b);
+        const Double_t py = TMath::Max(h_layer->GetBinContent(b), 1.0);
+        Double_t sr = TMath::Max(h_layer->GetRMS(), 0.2);
+        Double_t fmin = px - 2.0 * sr;
+        Double_t fmax = px + 2.0 * sr;
+        if (fmax - fmin < 8.0) {
+            fmin = px - 4.0;
+            fmax = px + 4.0;
+        }
+
+        TF1* f_seed = new TF1(Form("fLayerSeed_%02d", layer), "gaus(0)+pol0(3)", fmin, fmax);
+        f_seed->SetParameters(py, px, TMath::Max(0.25, 0.8 * sr), 0.0);
+        f_seed->SetParLimits(2, 0.05, 20.0);
+        if (h_layer->Fit(f_seed, "Q") == 0) {
+            const Double_t m = f_seed->GetParameter(1);
+            const Double_t s = TMath::Abs(f_seed->GetParameter(2));
+            if (std::isfinite(m) && std::isfinite(s) && s > 0.0) {
+                // layer合算は広めに出るので、pad seed は少し縮める
+                layer_seed[layer] = {m, TMath::Max(0.2, 0.8 * s)};
+            }
+        }
+        delete f_seed;
+        delete h_layer;
+    }
 
     for (auto& entry : entries) {
         if (entry.is_comment || entry.aty != 2) continue;
+        if (tpc::IsPadOnCenterFrame(entry.layer, entry.row)) continue;
         n_total_pads++;
 
         TString hname = Form(hist_fmt.Data(), entry.layer, entry.row);
@@ -369,9 +451,19 @@ int main(Int_t argc, char** argv) {
             if (h_rms_fit > 5.0)
                 h_rms_fit = 2.5;
 
-            // フィット範囲は主ピーク周り（副ピークが遠いときは窓外に出る）
-            Double_t fit_min = peak_x - nsigma * h_rms_fit;
-            Double_t fit_max = peak_x + nsigma * h_rms_fit;
+            // 事前fit seed があれば初期値に使い、fit範囲も seed 近傍に寄せる
+            Double_t seed_mean = peak_x;
+            Double_t seed_sigma = TMath::Max(0.2, 0.72 * h_rms_fit);
+            auto it_seed = layer_seed.find(entry.layer);
+            if (it_seed != layer_seed.end()) {
+                seed_mean = it_seed->second.first;
+                seed_sigma = TMath::Max(0.2, it_seed->second.second);
+            }
+
+            // fit範囲: 左 1σ, 右 2σ（必要に応じて h_rms_fit で下支え）
+            const Double_t sigma_win = TMath::Max(seed_sigma, nsigma * h_rms_fit);
+            Double_t fit_min = seed_mean - 1.0 * sigma_win;
+            Double_t fit_max = seed_mean + 2.0 * sigma_win;
 
             // --- Statistics check: Count hits within +/- stat_range ---
             Int_t bin_min_full = h->FindBin(-stat_range);
@@ -404,11 +496,11 @@ int main(Int_t argc, char** argv) {
                 const Double_t fit_span = fit_max - fit_min;
                 const Double_t rel = (sigma_init_rel > 1e-6) ? sigma_init_rel : 0.72;
                 // グローバル RMS は混ぜない（副ピークで初期 σ が膨らむのを防ぐ）
-                Double_t sigma_init = rel * TMath::Max(h_rms_fit, 0.12);
+                Double_t sigma_init = rel * TMath::Max(seed_sigma, 0.12);
                 sigma_init = TMath::Max(sigma_init, sigma_lo * 1.15);
                 if (fit_span > 1e-6)
                     sigma_init = TMath::Min(sigma_init, 0.42 * fit_span);
-                fFit->SetParameters(peak_y, peak_x, sigma_init, 0.0);
+                fFit->SetParameters(peak_y, seed_mean, sigma_init, 0.0);
                 fFit->SetParLimits(2, sigma_lo, 20.0);
             }
 
@@ -478,17 +570,56 @@ int main(Int_t argc, char** argv) {
                         TLine *vLine = new TLine(mean, h->GetMinimum(), mean, h->GetMaximum());
                         vLine->SetLineStyle(2);
                         vLine->SetLineColor(kBlue);
-                        vLine->DrawClone();
-                        delete vLine;
+                        vLine->Draw("same");
+                        page_lines.push_back(vLine);
 
                         if (ipad >= nx * ny) {
                             canvas->Print(pdf_path);
+                            for (auto* ln : page_lines) delete ln;
+                            page_lines.clear();
                             ipad = 0;
                         }
                     }
                 }
             }
             delete fFit;
+        }
+    }
+
+    // --- 未更新パッド補完（同一ASADの更新済み平均） ---
+    std::set<std::pair<Int_t, Int_t>> pads_filled_by_asad;
+    if (use_asad_mean_fill) {
+        std::map<Int_t, std::pair<Double_t, Int_t>> asad_stats;  // asad -> (sum, count)
+        for (const auto& e : entries) {
+            if (e.is_comment || e.aty != 2 || e.p.empty()) continue;
+            if (tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
+            const auto key = std::make_pair(e.layer, e.row);
+            if (!pads_updated.count(key)) continue;
+            const Int_t asad = tpc::GetASADId(e.layer, e.row);
+            auto& st = asad_stats[asad];
+            st.first += e.p[0];
+            st.second += 1;
+        }
+
+        for (auto& e : entries) {
+            if (e.is_comment || e.aty != 2 || e.p.empty()) continue;
+            if (tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;  // frameデフォルトは補完対象外
+            const auto key = std::make_pair(e.layer, e.row);
+            if (pads_updated.count(key)) continue;
+            const Int_t asad = tpc::GetASADId(e.layer, e.row);
+            const auto it = asad_stats.find(asad);
+            if (it == asad_stats.end() || it->second.second <= 0) continue;
+
+            const Double_t old_p0 = e.p[0];
+            const Double_t asad_mean = it->second.first / static_cast<Double_t>(it->second.second);
+            e.p[0] = asad_mean;
+            pads_filled_by_asad.insert(key);
+            n_filled_by_asad++;
+
+            const Int_t bin_idx = tpc::GetPadId(e.layer, e.row) + 1;
+            hSummary->SetBinContent(bin_idx, 70.0);  // 100:fit更新, 70:ASAD平均補完
+            std::cout << Form("  ASAD-mean fill: L=%2d R=%3d (ASAD=%2d, n=%3d) p0: %10.4f -> %10.4f",
+                              e.layer, e.row, asad, it->second.second, old_p0, e.p[0]) << std::endl;
         }
     }
 
@@ -505,7 +636,7 @@ int main(Int_t argc, char** argv) {
         hP0Map->SetBinContent(bin_idx, e.p[0]);
         all_p0.push_back(e.p[0]);
         const auto key = std::make_pair(e.layer, e.row);
-        if (pads_updated.count(key)) {
+        if (pads_updated.count(key) || pads_filled_by_asad.count(key)) {
             const Double_t dp = e.p[0] - ini_p0.at(key);
             hDeltaMap->SetBinContent(bin_idx, dp);
             all_dp.push_back(dp);
@@ -555,7 +686,11 @@ int main(Int_t argc, char** argv) {
     for (Double_t v : all_dp)
         hDeltaDist->Fill(v);
 
-    if (ipad > 0) canvas->Print(pdf_path);
+    if (ipad > 0) {
+        canvas->Print(pdf_path);
+        for (auto* ln : page_lines) delete ln;
+        page_lines.clear();
+    }
 
     gStyle->SetOptStat(1111);
     canvas->Clear();
@@ -633,35 +768,44 @@ int main(Int_t argc, char** argv) {
     delete cHR;
 
     // 4. Write updated parameter file
-    if (!fs::exists(e72_dir.Data())) fs::create_directories(e72_dir.Data());
-    
-    // Save previous version as backup if it existed
-    if (fs::exists(run_param_path.Data())) {
-        fs::copy(run_param_path.Data(), (run_param_path + ".bak").Data(), fs::copy_options::overwrite_existing);
-    }
-
-    std::ofstream ofs(run_param_path.Data());
-    if (!ofs.is_open()) {
-        std::cerr << "Error: cannot open output file " << run_param_path << std::endl;
-        if (f) f->Close();
-        return EXIT_FAILURE;
-    }
-
-    for (const auto& entry : entries) {
-        if (entry.is_comment) {
-            ofs << entry.raw_line.Data() << "\n";
-        } else {
-            ofs << entry.layer << "\t" << entry.row << "\t" << entry.aty;
-            for (size_t i = 0; i < entry.p.size(); ++i) {
-                ofs << "\t" << std::fixed << std::setprecision(8) << entry.p[i];
-            }
-            ofs << "\n";
+    if (!debug_mode) {
+        if (!fs::exists(e72_dir.Data())) fs::create_directories(e72_dir.Data());
+        
+        // Save previous version as backup if it existed
+        if (fs::exists(run_param_path.Data())) {
+            fs::copy(run_param_path.Data(), (run_param_path + ".bak").Data(), fs::copy_options::overwrite_existing);
         }
+
+        std::ofstream ofs(run_param_path.Data());
+        if (!ofs.is_open()) {
+            std::cerr << "Error: cannot open output file " << run_param_path << std::endl;
+            if (f) f->Close();
+            return EXIT_FAILURE;
+        }
+
+        for (const auto& entry : entries) {
+            if (entry.is_comment) {
+                ofs << entry.raw_line.Data() << "\n";
+            } else {
+                ofs << entry.layer << "\t" << entry.row << "\t" << entry.aty;
+                for (size_t i = 0; i < entry.p.size(); ++i) {
+                    ofs << "\t" << std::fixed << std::setprecision(8) << entry.p[i];
+                }
+                ofs << "\n";
+            }
+        }
+        ofs.close();
     }
-    ofs.close();
 
     std::cout << "Done! Updated " << n_updated << " out of " << n_total_pads << " pads." << std::endl;
-    std::cout << "Result saved to: " << run_param_path << std::endl;
+    if (use_asad_mean_fill) {
+        std::cout << "ASAD-mean filled pads: " << n_filled_by_asad << std::endl;
+    }
+    if (debug_mode) {
+        std::cout << "Debug mode: parameter file was NOT updated." << std::endl;
+    } else {
+        std::cout << "Result saved to: " << run_param_path << std::endl;
+    }
     std::cout << "QA PDF saved to: " << pdf_path << std::endl;
 
     if (f) f->Close();

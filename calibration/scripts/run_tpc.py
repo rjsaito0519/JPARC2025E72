@@ -6,11 +6,14 @@ run_tpc: TPC 周りの便利フロントエンド
   ./run_tpc.py <root_file> phase  [--fit-step N] [--vdrift V] [--smooth N] [--mode hit|trk]
   ./run_tpc.py <root_file> phase --plot-only [--vdrift V]
   ./run_tpc.py <root_file> offset [--run N] [--mode hit|trk] [...]
+  ./run_tpc.py <root_file> gain [--run N] [--target-mpv 200] [...]
 
   - phase : tpc_phase_from_tpcbcout + tpc_phase_plot（root は tpcbcout）
-            → 既定で TPCPRM run ファイルに TPCPHASE コメント追記。--fit-step 1 なら kCobo(3) 行も TTree から更新
+            → --fit-step 1 なら kCobo(3) 行を TTree から更新（TPCPRM へのコメント追記はしない）
   - offset: tpc_time_offset_calib（root は tpc_runXXXXX 等）
             → QA PDF に p0 / Δp0 の分布（1D + TPC 上の 2D マップ）を含む
+  - gain  : tpc_gain_calib（root は tpc_runXXXXX 等）
+            → TPCCl_dE_* の Landau fit から MPV を求めて ATY=0 の gain を更新
 """
 
 import argparse
@@ -40,7 +43,7 @@ def run_command(cmd: str, exit_on_error: bool = True) -> int:
     return ret
 
 
-# TPCParamMan は読まない（人間・conf 同期用）。ブロックごと差し替え。
+# 互換のため旧スタンプ文字列は保持（更新時に除去する）
 TPCPHASE_STAMP_BEGIN = "# --- begin TPCPHASE pointer (run_tpc.py; not parsed by TPCParamMan) ---"
 TPCPHASE_STAMP_END = "# --- end TPCPHASE pointer ---"
 
@@ -123,15 +126,16 @@ def update_tpcprm_phase_stamp(
     run_num: int, phase_path: Path, *, patch_kcobo: bool = True
 ) -> None:
     """
-    TPCPRM の run 別ファイルに、今回の TpcPhase ROOT へのパスをコメントで追記する。
-    ファイルが無ければ TPCParam_0_yoffset_adjusted をコピーしてから追記。
+    TPCPRM の run 別ファイルを更新する（旧 TPCPHASE コメントブロックは除去）。
+    ファイルが無ければ TPCParam_0_yoffset_adjusted をコピーしてから更新。
     patch_kcobo=True かつ TpcPhase に TpcPhase_CoboFallback があるとき、--fit-step 1 の kCobo 行を更新。
     """
     param_dir = config.PARAM_DIR
     tpcprm_e72 = param_dir / "TPCPRM" / "e72"
     tpcprm_e72.mkdir(parents=True, exist_ok=True)
     out_prm = tpcprm_e72 / f"TPCParam_e72_run{run_num:05d}"
-    base_prm = param_dir / "TPCPRM" / "TPCParam_0_yoffset_adjusted"
+    base_prm = param_dir / "TPCPRM" / "TPCParam_example"
+
 
     if not out_prm.exists():
         if not base_prm.is_file():
@@ -144,14 +148,6 @@ def update_tpcprm_phase_stamp(
             return
         shutil.copy2(base_prm, out_prm)
         print(colored(f"[INFO] Created {out_prm.name} from {base_prm.name}", "green"))
-
-    conf_phase = phase_path_for_analyzer_conf(phase_path, param_dir)
-    stamp_block = (
-        f"{TPCPHASE_STAMP_BEGIN}\n"
-        f"# TPCPHASE_FOR_CONF={conf_phase}\n"
-        f"# (analyzer conf では TPCPHASE:\\t{conf_phase} のように指定)\n"
-        f"{TPCPHASE_STAMP_END}\n"
-    )
 
     raw = out_prm.read_text(encoding="utf-8", errors="replace")
     lines = raw.splitlines(keepends=True)
@@ -172,10 +168,9 @@ def update_tpcprm_phase_stamp(
     body = "".join(out_lines).rstrip("\n")
     if patch_kcobo and phase_path.is_file():
         body = patch_tpcprm_kcobo_from_phase(body, phase_path).rstrip("\n")
-    new_text = (body + "\n\n" + stamp_block) if body else stamp_block
+    new_text = (body + "\n") if body else ""
     out_prm.write_text(new_text, encoding="utf-8")
     print(colored(f"[INFO] TPCPRM updated: {out_prm}", "green"))
-    print(colored(f"       TPCPHASE_FOR_CONF={conf_phase}", "green"))
 
 
 def get_run_number_from_root(root_path: Path) -> int:
@@ -207,7 +202,7 @@ def get_run_number_from_root(root_path: Path) -> int:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="TPC helper frontend. Usage: run_tpc.py <root> phase|offset [options]"
+        description="TPC helper frontend. Usage: run_tpc.py <root> phase|offset|gain [options]"
     )
     parser.add_argument(
         "root_file",
@@ -216,8 +211,8 @@ def main():
     )
     parser.add_argument(
         "cmd",
-        choices=["phase", "offset"],
-        help="Subcommand: phase (tpc_phase_from_tpcbcout + plot) or offset (tpc_time_offset_calib).",
+        choices=["phase", "offset", "gain"],
+        help="Subcommand: phase (tpc_phase_from_tpcbcout + plot), offset (tpc_time_offset_calib), or gain (tpc_gain_calib).",
     )
     # phase 用オプション
     parser.add_argument(
@@ -240,6 +235,18 @@ def main():
         default=None,
         metavar="N",
         help="[phase] Moving average half-window for tpc_phase_from_tpcbcout.",
+    )
+    parser.add_argument(
+        "--step-width",
+        type=float,
+        default=None,
+        metavar="W",
+        help="[phase] Fixed step width [ns] for fit function (smaller => steeper edge).",
+    )
+    parser.add_argument(
+        "--free",
+        action="store_true",
+        help="[phase] Free the step width in fit (default: fixed).",
     )
     parser.add_argument(
         "--plot-only",
@@ -373,6 +380,84 @@ def main():
         metavar="B",
         help="[offset] Peak locality in bins (±B); taller peak wins, ties→|x| smaller (C++ --local-peak-sep).",
     )
+    parser.add_argument(
+        "--ave",
+        action="store_true",
+        help="[offset] Fill non-fitted pads with mean p0 of fitted pads in the same ASAD (exclude center-frame pads).",
+    )
+    # gain 用オプション
+    parser.add_argument(
+        "--target-mpv",
+        type=float,
+        default=None,
+        metavar="M",
+        help="[gain] Target MPV for gain scaling (C++ --target-mpv, default 200.0).",
+    )
+    parser.add_argument(
+        "--fit-nsigma",
+        type=float,
+        default=None,
+        metavar="N",
+        help="[gain] Fit range = peak ± nsigma * local RMS (C++ --fit-nsigma).",
+    )
+    parser.add_argument(
+        "--local-peak-half",
+        type=float,
+        default=None,
+        metavar="W",
+        help="[gain] Half width [ADC] for local RMS around peak (C++ --local-peak-half).",
+    )
+    parser.add_argument(
+        "--min-width",
+        type=float,
+        default=None,
+        metavar="W",
+        help="[gain] Minimum Landau width accepted (C++ --min-width).",
+    )
+    parser.add_argument(
+        "--rebin",
+        type=int,
+        default=None,
+        metavar="N",
+        help="[gain] Rebin factor for TPCCl_dE histograms before fit (C++ --rebin).",
+    )
+    parser.add_argument(
+        "--mpv-min",
+        type=float,
+        default=None,
+        metavar="X",
+        help="[gain] Minimum allowed MPV for fit acceptance/seed (C++ --mpv-min, default 100).",
+    )
+    parser.add_argument(
+        "--mpv-max",
+        type=float,
+        default=None,
+        metavar="X",
+        help="[gain] Maximum allowed MPV for fit acceptance/seed (C++ --mpv-max; <=0 disables).",
+    )
+    de_source_group = parser.add_mutually_exclusive_group()
+    de_source_group.add_argument(
+        "--de-source",
+        type=str,
+        choices=["all", "pion"],
+        default=None,
+        help="[gain] dE histogram source: all (TPCCl_dE_*) or pion (TPCCl_dE_Pion_*).",
+    )
+    de_source_group.add_argument(
+        "--pion",
+        action="store_true",
+        help="[gain] Shortcut of --de-source pion.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Dry-run mode: run fit/plot but do not update parameter files.",
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="[gain] Replace gain by target_mpv/MPV instead of multiplying old gain.",
+    )
 
     parser.set_defaults(update_tpcprm=None)
     args = parser.parse_args()
@@ -432,6 +517,10 @@ def main():
                     f"{exe_fit} {bcout_path} {phase_path} --fit-step {args.fit_step}"
                     f"{vdrift_opt}{smooth_opt}{mode_opt}"
                 )
+            if args.step_width is not None:
+                cmd_fit += f" --step-width {args.step_width}"
+            if args.free:
+                cmd_fit += " --free"
             print(colored(">>> Step 1: TPC phase fit (tpc_phase_from_tpcbcout)", "cyan"))
             run_command(cmd_fit)
 
@@ -443,6 +532,8 @@ def main():
         do_tpcprm = args.update_tpcprm
         if do_tpcprm is None:
             do_tpcprm = not args.plot_only
+        if args.debug:
+            do_tpcprm = False
         if do_tpcprm:
             if not phase_path.is_file():
                 print(
@@ -521,9 +612,78 @@ def main():
             opts += ["--local-peak-mm", str(args.local_peak_mm)]
         if args.local_peak_sep is not None:
             opts += ["--local-peak-sep", str(args.local_peak_sep)]
+        if args.ave:
+            opts += ["--ave"]
+        if args.debug:
+            opts += ["--debug"]
 
         cmd = " ".join(opts)
         print(colored(f">>> TPC time offset calib (tpc_time_offset_calib), run={run_num}", "cyan"))
+        run_command(cmd)
+
+    elif args.cmd == "gain":
+        input_root = args.root_file.resolve()
+        if not input_root.exists():
+            print(colored(f"[Error] File not found: {input_root}", "red"))
+            sys.exit(1)
+
+        run_num = args.run if args.run is not None else get_run_number_from_root(input_root)
+        if run_num < 0:
+            print(
+                colored(
+                    "[Error] Could not get run number (use --run or ensure tpc/run_number is present).",
+                    "red",
+                )
+            )
+            sys.exit(1)
+
+        exe_gain = bin_dir / "tpc_gain_calib"
+        if not exe_gain.exists():
+            print(colored(f"[Error] Binary not found: {exe_gain}. Please build the project.", "red"))
+            sys.exit(1)
+
+        opts = [str(exe_gain), str(input_root), str(run_num)]
+        if args.mode:
+            opts += ["--mode", args.mode]
+        if args.target_mpv is not None:
+            opts += ["--target-mpv", str(args.target_mpv)]
+        if args.threshold is not None:
+            opts += ["--threshold", str(args.threshold)]
+        if args.stat_range is not None:
+            opts += ["--stat-range", str(args.stat_range)]
+        if args.min_peak_ratio is not None:
+            opts += ["--min-peak-ratio", str(args.min_peak_ratio)]
+        if args.max_chi2_ndf is not None:
+            opts += ["--max-chi2-ndf", str(args.max_chi2_ndf)]
+        if args.min_fit_ndf is not None:
+            opts += ["--min-fit-ndf", str(args.min_fit_ndf)]
+        if args.min_fit_prob is not None:
+            opts += ["--min-fit-prob", str(args.min_fit_prob)]
+        if args.fit_nsigma is not None:
+            opts += ["--fit-nsigma", str(args.fit_nsigma)]
+        if args.local_peak_half is not None:
+            opts += ["--local-peak-half", str(args.local_peak_half)]
+        if args.min_width is not None:
+            opts += ["--min-width", str(args.min_width)]
+        if args.rebin is not None:
+            opts += ["--rebin", str(args.rebin)]
+        if args.mpv_min is not None:
+            opts += ["--mpv-min", str(args.mpv_min)]
+        if args.mpv_max is not None:
+            opts += ["--mpv-max", str(args.mpv_max)]
+        de_source = "all"
+        if args.pion:
+            de_source = "pion"
+        elif args.de_source is not None:
+            de_source = args.de_source
+        opts += ["--de-source", de_source]
+        if args.debug:
+            opts += ["--debug"]
+        if args.replace:
+            opts += ["--replace"]
+
+        cmd = " ".join(opts)
+        print(colored(f">>> TPC gain calib (tpc_gain_calib), run={run_num}", "cyan"))
         run_command(cmd)
 
 

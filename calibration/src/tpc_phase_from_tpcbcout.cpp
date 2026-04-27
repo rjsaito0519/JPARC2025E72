@@ -50,6 +50,8 @@
 #include <TMath.h>
 #include <TString.h>
 #include <TTree.h>
+#include <TTreeReader.h>
+#include <TTreeReaderValue.h>
 #include <TCanvas.h>
 #include <TStyle.h>
 #include <TLegend.h>
@@ -70,6 +72,11 @@
 //_____________________________________________________________________________
 // HistTools.cc / DetectorID.hh と合わせる
 static const Int_t NumOfSegCOBO = 8;
+
+// StepSum フィットに使う clock 窓（t0 推定値の周り）[ns]
+static const Double_t kPhaseStepFitHalfWindowNs = 40.0;
+// 各 clock ビンの Y 射影に対する Gauss 窓の半幅の下限（±40 ns を ResY に換算）[mm]
+static const Double_t kPhaseSliceGaussHalfWidthNsEquiv = 40.0;
 
 // TPCParamMan が期待する TF1 名（補正用）
 static const char* PHASE_NAME_FMT = "TpcPhase_Cobo%d";
@@ -328,6 +335,8 @@ static TF1* FitStepSum(Int_t nstep, std::vector<Double_t>& x_center,
                        const StepGuess* guess = nullptr,
                        Double_t run_amp_ref_ns = 0.0,
                        Double_t amp_override_ns = 0.0,
+                       Double_t step_width_ns = 0.005,
+                       Bool_t free_step_width = kFALSE,
                        TF1** initial_out = nullptr)
 {
   if (nstep <= 0 || x_center.empty() || delta_clock.size() != x_center.size())
@@ -440,7 +449,7 @@ static TF1* FitStepSum(Int_t nstep, std::vector<Double_t>& x_center,
   f->FixParameter(0, (Double_t)nstep);
   
   // パラメータ2以降: 各ステップの振幅、位置、幅
-  const Double_t fixed_width = 0.01;      // 固定幅 [ns]: 超急峻
+  const Double_t fixed_width = (step_width_ns > 0.0) ? step_width_ns : 0.005;  // 固定幅 [ns]
   // 位置調整範囲 [ns]。ステップ位置は物理的に |ClockTime|≲35ns の範囲内にある前提。
   const Double_t position_range = 35.0;
   const Double_t min_step_amp = 2.0;      // 振幅の絶対値の下限 [ns]
@@ -496,11 +505,18 @@ static TF1* FitStepSum(Int_t nstep, std::vector<Double_t>& x_center,
     if (t0 >  position_range) t0 =  position_range;
     f->SetParameter(2 + 3 * i, t0);    // 位置（初期値）
     f->SetParLimits(2 + 3 * i, -position_range, position_range);
-    f->FixParameter(3 + 3 * i, fixed_width);          // 幅（固定）
+    if (free_step_width) {
+      f->SetParameter(3 + 3 * i, fixed_width);
+      // 幅を可変にする場合は、過度に縛らず緩めのレンジで探索させる
+      f->SetParLimits(3 + 3 * i, 0.0005, 0.50);
+    } else {
+      f->FixParameter(3 + 3 * i, fixed_width);        // 幅（固定）
+    }
   }
   
-  std::cout << "    Fit settings: width=" << fixed_width 
-            << " ns (fixed), position range=±" << position_range << " ns\n";
+  std::cout << "    Fit settings: width=" << fixed_width
+            << " ns (" << (free_step_width ? "free" : "fixed")
+            << "), position range=±" << position_range << " ns\n";
 
   // 初期パラメータのスナップショットを保存（デバッグ・可視化用）
   if (initial_out) {
@@ -522,17 +538,28 @@ static TF1* FitStepSum(Int_t nstep, std::vector<Double_t>& x_center,
     std::cerr << "  Range: x=[" << xmin << ", " << xmax << "], y=[" << ymin << ", " << ymax << "]\n";
     std::cerr << "  Points=" << n << ", Steps=" << nstep << "\n";
   } else {
+    const Double_t chi2 = f->GetChisquare();
+    const Int_t ndf = f->GetNDF();
+    const Double_t chi2ndf = (ndf > 0) ? (chi2 / (Double_t)ndf) : -1.0;
+    const Double_t prob = (ndf > 0) ? TMath::Prob(chi2, ndf) : 0.0;
     std::cout << "    Fit successful!\n";
+    std::cout << "    Fit quality: chi2=" << chi2
+              << ", ndf=" << ndf
+              << ", chi2/ndf=" << chi2ndf
+              << ", prob=" << prob << "\n";
     // フィット結果の概要を出力（ステップ位置・振幅など）
     std::cout << "    Fitted parameters:\n";
     for (Int_t i = 0; i < nstep; ++i) {
       const Double_t A = f->GetParameter(1 + 3 * i);
       const Double_t t = f->GetParameter(2 + 3 * i);
       const Double_t w = f->GetParameter(3 + 3 * i);
+      const Double_t eA = f->GetParError(1 + 3 * i);
+      const Double_t et = f->GetParError(2 + 3 * i);
+      const Double_t ew = f->GetParError(3 + 3 * i);
       std::cout << "      Step " << i
-                << ": A=" << A << " [ns]"
-                << ", t=" << t << " [ns]"
-                << ", w=" << w << " [ns]\n";
+                << ": A=" << A << " +- " << eA << " [ns]"
+                << ", t=" << t << " +- " << et << " [ns]"
+                << ", w=" << w << " +- " << ew << " [ns]\n";
     }
   }
  
@@ -694,6 +721,8 @@ int main(int argc, char* argv[])
               << "\n"
               << "  --smooth N       : moving average half-window (default: 0 = no smoothing)\n"
               << "  --vdrift V      : drift velocity [mm/ns] (default: 0.055)\n"
+              << "  --step-width W  : fixed step width [ns] (smaller => steeper, default: 0.005)\n"
+              << "  --free          : free step width in fit (default: fixed)\n"
               << "  --min-entries N : min entries per bin for profile (default: 5)\n"
               << "  --graph-points N: number of points in output TGraph (default: 10000)\n"
               << "  --mode hit|trk  : input 2D hist priority (trk: TPCTrk_ResY_vs_ClockTime_... first)\n";
@@ -707,6 +736,8 @@ int main(int argc, char* argv[])
   Int_t fit_nstep = 0;
   Int_t min_entries = 5;
   Int_t graph_points = DEFAULT_GRAPH_POINTS;
+  Double_t step_width_ns = 0.005;
+  Bool_t free_step_width = kFALSE;
   std::string mode = "hit";
 
   // 非オプション引数を収集。1個=phaseのみ(--fit-step 0用)、2個=tpcbcout,phase(従来互換)
@@ -721,6 +752,11 @@ int main(int argc, char* argv[])
     } else if (a == "--smooth" && i + 1 < argc) {
       smooth_half_window = std::atoi(argv[++i]);
       if (smooth_half_window < 0) smooth_half_window = 0;
+    } else if (a == "--step-width" && i + 1 < argc) {
+      step_width_ns = std::atof(argv[++i]);
+      if (!(step_width_ns > 0.0)) step_width_ns = 0.005;
+    } else if (a == "--free") {
+      free_step_width = kTRUE;
     } else if (a == "--fit-step") {
       fit_nstep = 1;  // デフォルト1個
       if (i + 1 < argc) {
@@ -819,6 +855,9 @@ int main(int argc, char* argv[])
   std::cout << "Histogram mode   : " << mode << std::endl;
   if (!flat_zero_mode) {
     std::cout << "Fit steps        : " << fit_nstep << std::endl;
+    std::cout << "Step width [ns]  : " << step_width_ns
+              << (free_step_width ? " (initial, free)" : " (fixed)") << std::endl;
+    std::cout << "Free width fit   : " << (free_step_width ? "ON" : "OFF") << std::endl;
     std::cout << "Smooth window    : " << smooth_half_window << " (half-width)" << std::endl;
     std::cout << "Drift velocity   : " << vdrift << " mm/ns" << std::endl;
     std::cout << "Min entries/bin  : " << min_entries << std::endl;
@@ -832,6 +871,20 @@ int main(int argc, char* argv[])
     if (!fin || fin->IsZombie()) {
       std::cerr << "Error: cannot open " << tpcbcout_path << std::endl;
       return 1;
+    }
+    // params.h の tpc_phase_step_init は "runNNNNN-cobo" キー。複合ファイルではファイル名が不正確なことがあるので、
+    // tpc ツリーの先頭イベントの run_number を優先する（無ければ従来どおりファイル名由来の run_id）。
+    TTree* tr = (TTree*)fin->Get("tpc");
+    if (tr && tr->GetBranch("run_number")) {
+      try {
+        TTreeReader rd(tr);
+        TTreeReaderValue<UInt_t> rv(rd, "run_number");
+        if (rd.Next()) {
+          run_id = TString::Format("%05u", *rv).Data();
+          std::cout << "run_id for params.h (from tpc/run_number, first entry): " << run_id << std::endl;
+        }
+      } catch (...) {
+      }
     }
   }
 
@@ -1024,7 +1077,7 @@ int main(int argc, char* argv[])
       }
     }
 
-    // ステップでフィット（X 範囲を t0 初期値 ±10ns のコア領域に絞る）
+    // ステップでフィット（X 範囲を絶対座標 [-40, +40] ns に固定）
     Double_t xmin_all = *std::min_element(x_center.begin(), x_center.end());
     Double_t xmax_all = *std::max_element(x_center.begin(), x_center.end());
     Double_t x_range  = xmax_all - xmin_all;
@@ -1037,25 +1090,11 @@ int main(int argc, char* argv[])
     Double_t fit_xmin = xmin_all;
     Double_t fit_xmax = xmax_all;
 
-    // 推定ステップ位置 guess.t0 がレンジ内にあれば、その±10ns を基本ウィンドウとする
-    const Double_t half_window = 10.0;   // [ns]
-    const Double_t min_width   = 8.0;    // 最低でもこの幅は確保
-    if (guess.t0 > xmin_all && guess.t0 < xmax_all) {
-      fit_xmin = guess.t0 - half_window;
-      fit_xmax = guess.t0 + half_window;
-
-      // 全体レンジからはみ出さないようにクリップ
-      if (fit_xmin < xmin_all) fit_xmin = xmin_all;
-      if (fit_xmax > xmax_all) fit_xmax = xmax_all;
-
-      // 幅が狭すぎる場合は、中心を保ったまま最小幅まで広げる
-      if (fit_xmax - fit_xmin < min_width) {
-        const Double_t center = 0.5 * (fit_xmin + fit_xmax);
-        fit_xmin = std::max(xmin_all, center - 0.5 * min_width);
-        fit_xmax = std::min(xmax_all, center + 0.5 * min_width);
-      }
-    } else {
-      // t0 がレンジ外などの場合は、端10%を削った中央域を fallback として使う
+    const Double_t half_window = kPhaseStepFitHalfWindowNs;  // [ns]
+    fit_xmin = std::max(xmin_all, -half_window);
+    fit_xmax = std::min(xmax_all, +half_window);
+    if (fit_xmax - fit_xmin < 10.0) {
+      // 入力レンジが狭すぎるときだけ最小限のフォールバック
       fit_xmin = xmin_all + 0.10 * x_range;
       fit_xmax = xmax_all - 0.10 * x_range;
     }
@@ -1125,8 +1164,10 @@ int main(int argc, char* argv[])
         if (used_rebin)
           rms_resy = TMath::Max(rms_resy, 0.25);
 
-        const Double_t fit_min_resy = peak_resy - gaussian_fit_nsigma * rms_resy;
-        const Double_t fit_max_resy = peak_resy + gaussian_fit_nsigma * rms_resy;
+        const Double_t half_resy_mm =
+            TMath::Max(gaussian_fit_nsigma * rms_resy, kPhaseSliceGaussHalfWidthNsEquiv * vdrift);
+        const Double_t fit_min_resy = peak_resy - half_resy_mm;
+        const Double_t fit_max_resy = peak_resy + half_resy_mm;
 
         if (!(fit_min_resy < fit_max_resy)) {
           if (used_rebin)
@@ -1207,7 +1248,7 @@ int main(int argc, char* argv[])
     TF1* init_func = nullptr;
     TF1* fit_func = FitStepSum(fit_nstep, x_fit, dclk_fit,
                                xmin, xmax, &err_fit, &guess,
-                               run_amp_ref_ns, amp_override_ns, &init_func);
+                               run_amp_ref_ns, amp_override_ns, step_width_ns, free_step_width, &init_func);
 
     fout->cd();
     fb_cobo = cobo;

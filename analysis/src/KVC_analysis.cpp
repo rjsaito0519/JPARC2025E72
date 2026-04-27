@@ -154,13 +154,17 @@ void analyze(Int_t run_num){
     TTree* tree = new TTree("tree", "KVC results");
     Int_t pid, is_t1, total_count, hit_count;
     Double_t constant, mean, sigma, eff;
+    Double_t constant_err, mean_err, sigma_err;
     tree->Branch("pid", &pid, "pid/I"); 
     tree->Branch("is_t1", &is_t1, "is_t1/I"); // 0: raw, 1: t1
     tree->Branch("total_count", &total_count, "total_count/I");
     tree->Branch("hit_count", &hit_count, "hit_count/I");
     tree->Branch("constant", &constant, "constant/D");
+    tree->Branch("constant_err", &constant_err, "constant_err/D");
     tree->Branch("mean", &mean, "mean/D");
+    tree->Branch("mean_err", &mean_err, "mean_err/D");
     tree->Branch("sigma", &sigma, "sigma/D");
+    tree->Branch("sigma_err", &sigma_err, "sigma_err/D");
     tree->Branch("eff", &eff, "eff/D");
 
     for (Int_t p = 0; p < 2; ++p) {
@@ -188,6 +192,9 @@ void analyze(Int_t run_num){
                 total_count = n_hit[p]; hit_count = n_hit_with_kvc[p];
                 eff = (total_count > 0) ? (Double_t)hit_count / total_count : 0.0;
                 constant = f0->GetParameter(0); mean = f0->GetParameter(1); sigma = f0->GetParameter(2);
+                constant_err = f0->GetParError(0);
+                mean_err = f0->GetParError(1);
+                sigma_err = f0->GetParError(2);
                 tree->Fill();
             }
         }
@@ -204,6 +211,9 @@ void analyze(Int_t run_num){
                 total_count = n_hit[p]; hit_count = n_hit_with_kvc[p];
                 eff = (total_count > 0) ? (Double_t)hit_count / total_count : 0.0;
                 constant = f1->GetParameter(0); mean = f1->GetParameter(1); sigma = f1->GetParameter(2);
+                constant_err = f1->GetParError(0);
+                mean_err = f1->GetParError(1);
+                sigma_err = f1->GetParError(2);
                 tree->Fill();
             }
         }

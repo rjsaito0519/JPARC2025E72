@@ -1,5 +1,12 @@
 import os
-import conf
+import sys
+from pathlib import Path
+
+# --- Setup sys.path to include project root ---
+project_root = Path(__file__).resolve().parent.parent.parent
+sys.path.append(str(project_root))
+
+from lib import conf
 
 # --- ユーザーが設定する項目 ---
 hdprm_dir = f"{conf.param_dir}/HDPRM"
@@ -17,7 +24,10 @@ DETECTOR_CONFIG = {
      8: 8,  # CId 8 CVC
      9: 1,  # CId 9 SAC3
     10: 6,  # CId 10 SFV
-    11: 8   # CId 11 COBO
+    11: 8,  # CId 11 COBO
+    12: 1,  # CId 12 T2
+    13: 64, # CId 13 SCH
+    14: 1   # CId 14 T3
 }
 
 DETECTOR_NAME = {
@@ -30,7 +40,10 @@ DETECTOR_NAME = {
      8: "CVC",  # CId 8 CVC
      9: "SAC3",  # CId 9 SAC3
     10: "SFV",  # CId 10 SFV
-    11: "COBO"   # CId 11 COBO
+    11: "COBO",   # CId 11 COBO
+    12: "T2",   # CId 12 T2
+    13: "SCH",   # CId 13 SCH
+    14: "T3",   # CId 14 T3
 }
 
 # PlIdのリスト (今回は [0] で固定)
@@ -57,6 +70,13 @@ AT_UD_COMBINATIONS_BY_CID = {
     10: [(1, 0)],
     # COBO: TDC(ch 0)
     11: [(1, 0)],
+    # T2: (ch 0)
+    12:  [(0, 0), (1, 0)],
+    # SCH: (ch 0)
+    13:  [(0, 0), (1, 0)],
+    # T3: TDC(ch 0)
+    14: [(1, 0)],
+    
 }
 
 def get_initial_params(CId, PlId, SegId, AorT, UorD):

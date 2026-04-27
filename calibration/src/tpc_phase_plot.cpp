@@ -230,11 +230,10 @@ static void DrawCoboPage(TFile* f, TCanvas* c, Bool_t corrected,
           }
         }
 
-        // Fit-used core: マーカーは間引き（多すぎると見づらい）
-        static const Int_t kFitUsedMaxMarkers = 28;
+        // Fit-used core: プロファイル（青線）と同じく全点を描く（間引きしない）
         TGraphErrors* g_fitused = (TGraphErrors*)phase_file->Get(Form("TpcPhase_ProfileFitUsed_Cobo%d", cobo));
         if (g_fitused) {
-          TGraph* g_resy = MakeResyGraphFromDclock(g_fitused, vdrift, kFitUsedMaxMarkers);
+          TGraph* g_resy = MakeResyGraphFromDclock(g_fitused, vdrift, 0);
           if (g_resy) {
             g_resy->SetMarkerStyle(24);
             g_resy->SetMarkerSize(0.75);

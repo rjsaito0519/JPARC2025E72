@@ -1,6 +1,13 @@
 import os
 import datetime
-import conf
+import sys
+from pathlib import Path
+
+# --- Setup sys.path to include project root ---
+project_root = Path(__file__).resolve().parent.parent.parent
+sys.path.append(str(project_root))
+
+from lib import conf
 
 # --- ユーザーが設定する項目 ---
 hdphc_dir = f"{conf.param_dir}/HDPHC"
@@ -12,7 +19,7 @@ DETECTOR_CONFIG = {
      5: 34, # CId 5 HTOF
      7:  1, # CId 7 T1
      8:  8, # CId 8 CVC
-     11: 8  # CId 11 COBO
+     11: 8  # CId 11 COBO    
 }
 
 DETECTOR_NAME = {

@@ -10,7 +10,7 @@ namespace ana_helper {
         TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
         FitResult result;
 
-        Double_t tdc_width = 50.0;
+        Double_t tdc_width = 80.0;
         Double_t fit_range_min = h->GetXaxis()->GetBinCenter( h->GetMaximumBin() ) - 5.0;
         Double_t fit_range_max = fit_range_min + tdc_width;
 

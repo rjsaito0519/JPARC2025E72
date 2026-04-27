@@ -93,7 +93,12 @@ for suffix in args.suffix:
     conf_dir = config.PARAM_DIR / "conf"
     conf_target_file = conf_dir / SUB_DIR / f"analyzer_run{args.run_num:0=5}_{mode_label}_{suffix_head}.conf"
     if not conf_target_file.exists():
-        example_base = "analyzer_e72_example1.conf" if args.run_num < 2568 else "analyzer_e72_example2.conf"
+        if args.run_num < 2568:
+            example_base = "analyzer_e72_example1.conf"
+        elif args.run_num < 3642:
+            example_base = "analyzer_e72_example2.conf"
+        else:
+            example_base = "analyzer_e72_example3.conf"
         shutil.copy(conf_dir / example_base, conf_target_file)
 
     buf = []
