@@ -586,17 +586,17 @@ int main(Int_t argc, char** argv) {
         }
     }
 
-    // --- 未更新パッド補完（同一ASADの更新済み平均） ---
+    // --- 未更新パッド補完（同一レイヤーかつ同一 ASAD の更新済み平均） ---
     std::set<std::pair<Int_t, Int_t>> pads_filled_by_asad;
     if (use_asad_mean_fill) {
-        std::map<Int_t, std::pair<Double_t, Int_t>> asad_stats;  // asad -> (sum, count)
+        std::map<std::pair<Int_t, Int_t>, std::pair<Double_t, Int_t>> lasad_stats;  // (layer, asad) -> (sum, count)
         for (const auto& e : entries) {
             if (e.is_comment || e.aty != 2 || e.p.empty()) continue;
             if (tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
             const auto key = std::make_pair(e.layer, e.row);
             if (!pads_updated.count(key)) continue;
             const Int_t asad = tpc::GetASADId(e.layer, e.row);
-            auto& st = asad_stats[asad];
+            auto& st = lasad_stats[{e.layer, asad}];
             st.first += e.p[0];
             st.second += 1;
         }
@@ -607,18 +607,18 @@ int main(Int_t argc, char** argv) {
             const auto key = std::make_pair(e.layer, e.row);
             if (pads_updated.count(key)) continue;
             const Int_t asad = tpc::GetASADId(e.layer, e.row);
-            const auto it = asad_stats.find(asad);
-            if (it == asad_stats.end() || it->second.second <= 0) continue;
+            const auto it = lasad_stats.find({e.layer, asad});
+            if (it == lasad_stats.end() || it->second.second <= 0) continue;
 
             const Double_t old_p0 = e.p[0];
-            const Double_t asad_mean = it->second.first / static_cast<Double_t>(it->second.second);
-            e.p[0] = asad_mean;
+            const Double_t lasad_mean = it->second.first / static_cast<Double_t>(it->second.second);
+            e.p[0] = lasad_mean;
             pads_filled_by_asad.insert(key);
             n_filled_by_asad++;
 
             const Int_t bin_idx = tpc::GetPadId(e.layer, e.row) + 1;
-            hSummary->SetBinContent(bin_idx, 70.0);  // 100:fit更新, 70:ASAD平均補完
-            std::cout << Form("  ASAD-mean fill: L=%2d R=%3d (ASAD=%2d, n=%3d) p0: %10.4f -> %10.4f",
+            hSummary->SetBinContent(bin_idx, 70.0);  // 100:fit更新, 70:layer+ASAD 平均補完
+            std::cout << Form("  layer+ASAD-mean fill: L=%2d R=%3d (ASAD=%2d, n=%3d) p0: %10.4f -> %10.4f",
                               e.layer, e.row, asad, it->second.second, old_p0, e.p[0]) << std::endl;
         }
     }
@@ -799,7 +799,7 @@ int main(Int_t argc, char** argv) {
 
     std::cout << "Done! Updated " << n_updated << " out of " << n_total_pads << " pads." << std::endl;
     if (use_asad_mean_fill) {
-        std::cout << "ASAD-mean filled pads: " << n_filled_by_asad << std::endl;
+        std::cout << "layer+ASAD-mean filled pads: " << n_filled_by_asad << std::endl;
     }
     if (debug_mode) {
         std::cout << "Debug mode: parameter file was NOT updated." << std::endl;

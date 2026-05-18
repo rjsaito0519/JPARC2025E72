@@ -383,7 +383,7 @@ def main():
     parser.add_argument(
         "--ave",
         action="store_true",
-        help="[offset] Fill non-fitted pads with mean p0 of fitted pads in the same ASAD (exclude center-frame pads).",
+        help="[offset|gain] Fill pads not updated by fit with mean of updated pads on same layer and ASAD (center-frame excluded).",
     )
     # gain 用オプション
     parser.add_argument(
@@ -457,6 +457,44 @@ def main():
         "--replace",
         action="store_true",
         help="[gain] Replace gain by target_mpv/MPV instead of multiplying old gain.",
+    )
+    parser.add_argument(
+        "--tree",
+        action="store_true",
+        help="[gain] Helix tpc tree から dE ヒストを作り gain 較正（pad 別; --layer で layer 別）.",
+    )
+    parser.add_argument(
+        "--layer",
+        action="store_true",
+        help="[gain] --tree 時にレイヤー単位 fit（未指定なら従来どおり pad 別）.",
+    )
+    parser.add_argument(
+        "--tree-name",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="[gain] TTree name for --tree (default: tpc).",
+    )
+    parser.add_argument(
+        "--clsize-min",
+        type=int,
+        default=1,
+        metavar="N",
+        help="[gain] Minimum track_cluster_size for tree fill (default: 1).",
+    )
+    parser.add_argument(
+        "--clsize-max",
+        type=int,
+        default=1,
+        metavar="N",
+        help="[gain] Maximum track_cluster_size for tree fill (default: 1).",
+    )
+    parser.add_argument(
+        "--min-abs-cos-theta",
+        type=float,
+        default=0.95,
+        metavar="X",
+        help="[gain] Minimum |cos(theta_diff)| for tree fill (default: 0.95).",
     )
 
     parser.set_defaults(update_tpcprm=None)
@@ -663,6 +701,8 @@ def main():
             opts += ["--fit-nsigma", str(args.fit_nsigma)]
         if args.local_peak_half is not None:
             opts += ["--local-peak-half", str(args.local_peak_half)]
+        if args.local_peak_sep is not None:
+            opts += ["--local-peak-sep", str(args.local_peak_sep)]
         if args.min_width is not None:
             opts += ["--min-width", str(args.min_width)]
         if args.rebin is not None:
@@ -681,6 +721,18 @@ def main():
             opts += ["--debug"]
         if args.replace:
             opts += ["--replace"]
+        if args.ave:
+            opts += ["--ave"]
+        if args.tree:
+            opts += ["--tree"]
+        if args.layer:
+            opts += ["--layer"]
+        if args.tree_name is not None:
+            opts += ["--tree-name", args.tree_name]
+        if args.tree or args.layer:
+            opts += ["--clsize-min", str(args.clsize_min)]
+            opts += ["--clsize-max", str(args.clsize_max)]
+            opts += ["--min-abs-cos-theta", str(args.min_abs_cos_theta)]
 
         cmd = " ".join(opts)
         print(colored(f">>> TPC gain calib (tpc_gain_calib), run={run_num}", "cyan"))
