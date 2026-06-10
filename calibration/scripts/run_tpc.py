@@ -3,7 +3,8 @@
 run_tpc: TPC 周りの便利フロントエンド
 
 使い方:
-  ./run_tpc.py <root_file> phase  [--fit-step N] [--vdrift V] [--smooth N] [--mode hit|trk]
+  ./run_tpc.py <root_file> phase  [--fit-step N] [--vdrift V] [--smooth N] [--rebin N] [--mode hit|trk]
+  ./run_tpc.py <root_file> phase --base   # 定数項なし（従来 fit）
   ./run_tpc.py <root_file> phase --plot-only [--vdrift V]
   ./run_tpc.py <root_file> offset [--run N] [--mode hit|trk] [...]
   ./run_tpc.py <root_file> gain [--run N] [--target-mpv 200] [...]
@@ -249,6 +250,11 @@ def main():
         help="[phase] Free the step width in fit (default: fixed).",
     )
     parser.add_argument(
+        "--base",
+        action="store_true",
+        help="[phase] Legacy fit without baseline constant (default: baseline term ON for flatness).",
+    )
+    parser.add_argument(
         "--plot-only",
         action="store_true",
         help="[phase] Skip Step1 (tpc_phase_from_tpcbcout) and run plot-only using existing TpcPhase_*.root.",
@@ -419,7 +425,7 @@ def main():
         type=int,
         default=None,
         metavar="N",
-        help="[gain] Rebin factor for TPCCl_dE histograms before fit (C++ --rebin).",
+        help="[phase] Rebin 2D clock axis before gaus profile; [gain] dE hist rebin (C++ --rebin).",
     )
     parser.add_argument(
         "--mpv-min",
@@ -451,7 +457,7 @@ def main():
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Dry-run mode: run fit/plot but do not update parameter files.",
+        help="[phase/gain] Skip writing TPCPRM (phase) or dry-run style (gain uses C++ --debug).",
     )
     parser.add_argument(
         "--replace",
@@ -559,6 +565,10 @@ def main():
                 cmd_fit += f" --step-width {args.step_width}"
             if args.free:
                 cmd_fit += " --free"
+            if args.base:
+                cmd_fit += " --base"
+            if args.rebin is not None:
+                cmd_fit += f" --rebin {args.rebin}"
             print(colored(">>> Step 1: TPC phase fit (tpc_phase_from_tpcbcout)", "cyan"))
             run_command(cmd_fit)
 

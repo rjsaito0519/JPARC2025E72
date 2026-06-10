@@ -25,6 +25,8 @@
  *   --vdrift V        : drift velocity [mm/ns]（デフォルト 0.055）
  *   --fit-step [N]     : ステップ関数 Freq の N 重ね合わせでフィット（N=0 で全ゼロの初期ファイル作成、省略時 N=1）
  *   --min-entries N   : Profile で使う最小エントリ数（デフォルト 5、統計が少ないビンをスキップ）
+ *   --rebin N         : 2D ヒストの clock 軸（X）を N ビンまとめてから各 X ビンで gaus+pol0 profile
+ *                       （N=1: 従来 ProfileX + コア点のみ再 fit、N>1: X rebin + 全ビン Gaussian）
  *   --graph-points N  : TGraph の点数（デフォルト 10000）
  *   --mode hit|trk    : 入力 2D ヒストの優先順（trk: TPCTrk_ResY_vs_ClockTime_... を先に、デフォルト hit）
  *
@@ -73,8 +75,14 @@
 // HistTools.cc / DetectorID.hh と合わせる
 static const Int_t NumOfSegCOBO = 8;
 
-// StepSum フィットに使う clock 窓（t0 推定値の周り）[ns]
-static const Double_t kPhaseStepFitHalfWindowNs = 40.0;
+// フィットに使う profile 点の窓: t0 ± この半幅 [ns]（データ端でクリップ）
+static const Double_t kPhaseStepFitHalfWindowNs = 20.0;
+// c0/A 初期値: fit 窓の左右それぞれこの幅 [ns] でガウス fit
+static const Double_t kPhaseSideGaussHalfWindowNs = 10.0;
+// TF1 / TpcPhase_Cobo TGraph の定義域 [ns]
+static const Double_t kPhaseGraphHalfRangeNs = 60.0;
+// ステップ振幅 A・ベースライン c0 のパラメータ上限 [ns]
+static const Double_t kPhaseAmpMaxNs = 400.0;
 // 各 clock ビンの Y 射影に対する Gauss 窓の半幅の下限（±40 ns を ResY に換算）[mm]
 static const Double_t kPhaseSliceGaussHalfWidthNsEquiv = 40.0;
 
@@ -125,12 +133,75 @@ static Double_t StepSumFunc(Double_t* x, Double_t* p)
   return s;
 }
 
+// 1 段 + 定数項: c0 + A*Freq((x-t)/w)  （decode 用に c0 は保存しない）
+static Double_t OneStepWithBaseFunc(Double_t* x, Double_t* p)
+{
+  const Double_t w = std::max(p[3], 1e-6);
+  return p[0] + p[1] * TMath::Freq((x[0] - p[2]) / w);
+}
+
+// decode / TPCPRM 互換: A*Freq((x-t)/w)
+static Double_t LegacyOneStepFunc(Double_t* x, Double_t* p)
+{
+  const Double_t w = std::max(p[2], 1e-6);
+  return p[0] * TMath::Freq((x[0] - p[1]) / w);
+}
+
+static Double_t EstimateBaselineC0(const std::vector<Double_t>& delta_clock)
+{
+  if (delta_clock.empty()) return 0.0;
+  std::vector<Double_t> ys = delta_clock;
+  const size_t nlo = std::max((size_t)1, ys.size() / 3);
+  std::partial_sort(ys.begin(), ys.begin() + nlo, ys.end());
+  Double_t sum = 0.0;
+  for (size_t i = 0; i < nlo; ++i) sum += ys[i];
+  return sum / static_cast<Double_t>(nlo);
+}
+
+// ステップ手前 (x < t0) のプラトーから c0 を推定
+static Double_t EstimateC0BeforeStep(const std::vector<Double_t>& x,
+                                     const std::vector<Double_t>& y,
+                                     Double_t t0, Double_t margin_ns = 2.0)
+{
+  std::vector<Double_t> pres;
+  pres.reserve(x.size());
+  for (size_t i = 0; i < x.size(); ++i) {
+    if (x[i] < t0 - margin_ns) pres.push_back(y[i]);
+  }
+  if (pres.size() >= 3) {
+    const size_t mid = pres.size() / 2;
+    std::nth_element(pres.begin(), pres.begin() + mid, pres.end());
+    return pres[mid];
+  }
+  return EstimateBaselineC0(y);
+}
+
 // ステップ初期値推定用
 struct StepGuess {
-  Double_t c_left;   // 左プラトー Δclock
-  Double_t c_right;  // 右プラトー Δclock
+  Double_t c_left;   // 左プラトー Δclock [ns]
+  Double_t c_right;  // 右プラトー Δclock [ns]
   Double_t t0;       // ステップ位置 [ns]
+  Bool_t fix_t0;     // true なら fit で t を固定
 };
+
+// folded-only 成功後: 手前プラトー c0（decode 用 A,t,w はそのまま）
+static Double_t PickC0ForFoldedFit(const StepGuess* guess, Double_t A_fold,
+                                   const std::vector<Double_t>& x,
+                                   const std::vector<Double_t>& y,
+                                   Double_t t_step)
+{
+  Double_t c0_pts = EstimateC0BeforeStep(x, y, t_step);
+  if (!guess) return c0_pts;
+  const Double_t span = guess->c_right - guess->c_left;
+  if (std::fabs(span) < 2.0) return c0_pts;
+  // A>0: 段差上昇 → 手前は低い方、A<0: 手前は高い方
+  const Double_t c0_guess = (A_fold > 0.0)
+                                ? std::min(guess->c_left, guess->c_right)
+                                : std::max(guess->c_left, guess->c_right);
+  if (std::fabs(c0_pts) < 0.15 * std::fabs(span))
+    return c0_guess;
+  return 0.5 * (c0_pts + c0_guess);
+}
 
 // 前方宣言: ResY[mm] -> Δclock[ns] 変換
 static Double_t ResYToDeltaClock(Double_t mean_resy_mm, Double_t vdrift_mm_ns);
@@ -139,7 +210,7 @@ static Double_t ResYToDeltaClock(Double_t mean_resy_mm, Double_t vdrift_mm_ns);
 static StepGuess
 EstimateStepFromProjectionY(const TH2D* h, Double_t vdrift)
 {
-  StepGuess g{0.0, 0.0, 0.0};
+  StepGuess g{0.0, 0.0, 0.0, kFALSE};
   if (!h || vdrift <= 0.0) return g;
 
   // X 全体をいくつかのセグメントに分け、それぞれで Y 射影をとって
@@ -337,6 +408,8 @@ static TF1* FitStepSum(Int_t nstep, std::vector<Double_t>& x_center,
                        Double_t amp_override_ns = 0.0,
                        Double_t step_width_ns = 0.005,
                        Bool_t free_step_width = kFALSE,
+                       Bool_t use_baseline_term = kTRUE,
+                       TF1** raw_out = nullptr,
                        TF1** initial_out = nullptr)
 {
   if (nstep <= 0 || x_center.empty() || delta_clock.size() != x_center.size())
@@ -437,24 +510,104 @@ static TF1* FitStepSum(Int_t nstep, std::vector<Double_t>& x_center,
     
     std::sort(step_positions.begin(), step_positions.end());
   }
+
+  const Double_t fixed_width = (step_width_ns > 0.0) ? step_width_ns : 0.005;
+  const Double_t position_range = kPhaseGraphHalfRangeNs;
+  const Double_t min_step_amp = 2.0;
+  const Double_t amp_rel_limit = 0.50;
+  const Double_t domain_lo = -kPhaseGraphHalfRangeNs;
+  const Double_t domain_hi = +kPhaseGraphHalfRangeNs;
+
+  // nstep==1 かつ baseline あり: t 固定、c0/A を fit（c0 は TPCPRM には渡さない）
+  if (nstep == 1 && use_baseline_term) {
+    Double_t t0 = step_positions.empty() ? 0.0 : step_positions[0];
+    if (guess && std::abs(guess->t0) > 0.0) t0 = guess->t0;
+    t0 = std::max(-position_range, std::min(position_range, t0));
+    const Bool_t fix_t = (guess && guess->fix_t0);
+
+    Double_t c0_init = EstimateC0BeforeStep(x_center, delta_clock, t0);
+    if (guess && std::isfinite(guess->c_left))
+      c0_init = guess->c_left;
+
+    Double_t A_init = (ymax - ymin);
+    if (guess && std::isfinite(guess->c_right) && std::isfinite(guess->c_left))
+      A_init = guess->c_right - guess->c_left;
+    if (!step_amplitudes.empty())
+      A_init = step_amplitudes[0];
+    if (std::fabs(amp_override_ns) > 0.0) {
+      A_init = amp_override_ns;
+    } else if (run_amp_ref_ns > 0.0) {
+      const Double_t sign = (A_init >= 0.0) ? 1.0 : -1.0;
+      A_init = sign * std::max(run_amp_ref_ns, min_step_amp);
+    }
+
+    TF1* f_raw = new TF1("step_one_base", OneStepWithBaseFunc, domain_lo, domain_hi, 4);
+    f_raw->SetParNames("c0", "A", "t", "w");
+    f_raw->SetParameters(c0_init, A_init, t0, fixed_width);
+    f_raw->SetParLimits(0, -kPhaseAmpMaxNs, kPhaseAmpMaxNs);
+    f_raw->SetParLimits(1, -kPhaseAmpMaxNs, kPhaseAmpMaxNs);
+    f_raw->SetParLimits(2, -position_range, position_range);
+    if (fix_t) f_raw->FixParameter(2, t0);
+    if (free_step_width)
+      f_raw->SetParLimits(3, 0.0005, 0.50);
+    else
+      f_raw->FixParameter(3, fixed_width);
+
+    if (initial_out) *initial_out = (TF1*)f_raw->Clone("step_one_base_initial");
+
+    auto fit_graph = [&](TF1* func, const char* opts) -> Int_t {
+      if (err_delta && err_delta->size() == (size_t)n) {
+        TGraphErrors gr(n, x_center.data(), delta_clock.data(), nullptr, err_delta->data());
+        return gr.Fit(func, opts);
+      }
+      TGraph gr(n, x_center.data(), delta_clock.data());
+      return gr.Fit(func, opts);
+    };
+
+    Int_t fit_status = fit_graph(f_raw, "QRN0MS");
+    if (fit_status != 0) fit_status = fit_graph(f_raw, "QRN0");
+
+    TF1* f_legacy = nullptr;
+    if (fit_status == 0) {
+      const Double_t c0 = f_raw->GetParameter(0);
+      const Double_t A = f_raw->GetParameter(1);
+      const Double_t t = f_raw->GetParameter(2);
+      const Double_t w = f_raw->GetParameter(3);
+      f_legacy = new TF1("step_sum", LegacyOneStepFunc, domain_lo, domain_hi, 3);
+      f_legacy->SetParNames("A", "t", "w");
+      f_legacy->SetParameters(A, t, w);
+      std::cout << "    Baseline fit (t" << (fix_t ? " fixed" : " free")
+                << "): c0=" << c0 << " (not stored), A=" << A
+                << ", t=" << t << ", w=" << w << "\n";
+      if (raw_out) {
+        if (*raw_out) {
+          delete *raw_out;
+          *raw_out = nullptr;
+        }
+        *raw_out = (TF1*)f_raw->Clone("step_one_base_raw");
+      }
+    } else {
+      std::cerr << "Warning: Baseline fit failed (status=" << fit_status << ")\n";
+    }
+    delete f_raw;
+    if (f_legacy) {
+      for (size_t i = 0; i < x_center.size(); ++i)
+        delta_clock[i] = f_legacy->Eval(x_center[i]);
+    }
+    return f_legacy;
+  }
   
   // ============================================================
   // フィット関数の設定
   // ============================================================
   const Int_t npar = 1 + 3 * nstep;  // N, A_i, t_i, w_i
-  TF1* f = new TF1("step_sum", StepSumFunc, xmin, xmax, npar);
+  TF1* f = new TF1("step_sum", StepSumFunc, domain_lo, domain_hi, npar);
   
   // パラメータ0: ステップ数（固定）
   f->SetParName(0, "N");
   f->FixParameter(0, (Double_t)nstep);
   
   // パラメータ2以降: 各ステップの振幅、位置、幅
-  const Double_t fixed_width = (step_width_ns > 0.0) ? step_width_ns : 0.005;  // 固定幅 [ns]
-  // 位置調整範囲 [ns]。ステップ位置は物理的に |ClockTime|≲35ns の範囲内にある前提。
-  const Double_t position_range = 35.0;
-  const Double_t min_step_amp = 2.0;      // 振幅の絶対値の下限 [ns]
-  const Double_t amp_rel_limit = 0.25;    // 振幅微調整の相対許容幅 (±25%)
-  
   for (Int_t i = 0; i < nstep; ++i) {
     f->SetParName(1 + 3 * i, Form("A%d", i));
     f->SetParName(2 + 3 * i, Form("t%d", i));
@@ -650,6 +803,170 @@ static Double_t ResYToDeltaClock(Double_t mean_resy_mm, Double_t vdrift_mm_ns)
 }
 
 //_____________________________________________________________________________
+// 2D ヒストの clock 軸（X）だけ rebin。ngroup<=1 なら h をそのまま返す。
+static TH2D* RebinHist2DX(TH2D* h, Int_t ngroup, const char* newname)
+{
+  if (!h || ngroup <= 1)
+    return h;
+  TH2D* h2 = (TH2D*)h->RebinX(ngroup, newname);
+  if (!h2)
+    return h;
+  delete h;
+  return h2;
+}
+
+static TH1D* RebinnedProjectionForGaussFit(TH1D* py, Int_t cobo, Int_t k, Bool_t* out_rebinned);
+
+//_____________________________________________________________________________
+// Y 射影 1 スライスに gaus+pol0 を当て、mean ResY [mm] と誤差を返す
+static Bool_t FitSliceGaussMean(TH1D* py, Int_t cobo, Int_t slice_idx, Double_t vdrift,
+                                Double_t& mean_resy, Double_t& mean_err)
+{
+  mean_resy = 0.0;
+  mean_err = 0.0;
+  if (!py || py->GetEntries() <= 0.0 || vdrift <= 0.0)
+    return kFALSE;
+
+  const Double_t gaussian_fit_nsigma = 2.0;
+  const Double_t min_step_gauss_sigma = 0.01;
+  const Double_t kMinPeakRatioGauss = 1.05;
+  const Double_t kMinPeakRatioGaussRebinned = 1.08;
+
+  Bool_t used_rebin = kFALSE;
+  TH1D* py_fit = RebinnedProjectionForGaussFit(py, cobo, slice_idx, &used_rebin);
+  const Double_t peak_ratio_cut =
+      used_rebin ? kMinPeakRatioGaussRebinned : kMinPeakRatioGauss;
+
+  const Double_t max_content = py_fit->GetMaximum();
+  const Double_t mean_content_bins =
+      (py_fit->GetNbinsX() > 0) ? (py_fit->Integral() / py_fit->GetNbinsX()) : 0.0;
+  if (mean_content_bins <= 0.0 || max_content < mean_content_bins * peak_ratio_cut) {
+    if (used_rebin)
+      delete py_fit;
+    return kFALSE;
+  }
+
+  const Int_t max_bin = py_fit->GetMaximumBin();
+  const Double_t peak_resy = py_fit->GetBinCenter(max_bin);
+  Double_t rms_resy = py_fit->GetRMS();
+  if (rms_resy < 0.1) rms_resy = 0.5;
+  if (rms_resy > 5.0) rms_resy = 2.5;
+  if (used_rebin)
+    rms_resy = TMath::Max(rms_resy, 0.25);
+
+  const Double_t half_resy_mm =
+      TMath::Max(gaussian_fit_nsigma * rms_resy, kPhaseSliceGaussHalfWidthNsEquiv * vdrift);
+  const Double_t fit_min_resy = peak_resy - half_resy_mm;
+  const Double_t fit_max_resy = peak_resy + half_resy_mm;
+  if (!(fit_min_resy < fit_max_resy)) {
+    if (used_rebin)
+      delete py_fit;
+    return kFALSE;
+  }
+
+  TF1 sliceFit(Form("tpc_phase_sliceFit_c%d_%d", cobo, slice_idx),
+               "gaus(0)+pol0(3)", fit_min_resy, fit_max_resy);
+  sliceFit.SetParameters(max_content, peak_resy,
+                         std::max(rms_resy * 0.5, min_step_gauss_sigma), 0.0);
+  sliceFit.SetParNames("Constant", "Mean", "Sigma", "Background");
+  sliceFit.SetParLimits(2, min_step_gauss_sigma, 20.0);
+
+  const Int_t fit_status = py_fit->Fit(&sliceFit, "Q");
+  Bool_t ok = kFALSE;
+  if (fit_status == 0) {
+    mean_resy = sliceFit.GetParameter(1);
+    mean_err = sliceFit.GetParError(1);
+    if (used_rebin && mean_err > 0.0)
+      mean_err *= 1.15;
+    ok = std::isfinite(mean_resy) && std::isfinite(mean_err) && mean_err > 0.0;
+  }
+  if (used_rebin)
+    delete py_fit;
+  return ok;
+}
+
+// fit 窓の左右 side_ns [ns] をまとめて Y 射影し、gaus+pol0 の中心を Δclock で返す
+static Bool_t FitRegionGaussDclk(const TH2D* h, Double_t xlo, Double_t xhi,
+                                 Int_t cobo, Int_t region_tag, Double_t vdrift,
+                                 Double_t& dclk_center)
+{
+  dclk_center = 0.0;
+  if (!h || !(xhi > xlo) || vdrift <= 0.0) return kFALSE;
+  const Int_t bx1 = h->GetXaxis()->FindFixBin(xlo);
+  const Int_t bx2 = h->GetXaxis()->FindFixBin(xhi);
+  if (bx1 <= 0 || bx2 <= 0) return kFALSE;
+  Int_t bin1 = bx1, bin2 = bx2;
+  if (bin2 < bin1) std::swap(bin1, bin2);
+  TH1D* py = h->ProjectionY(Form("tpc_phase_sideY_c%d_%d", cobo, region_tag),
+                            bin1, bin2);
+  if (!py) return kFALSE;
+  Double_t mean_resy = 0.0, mean_err = 0.0;
+  const Bool_t ok = FitSliceGaussMean(py, cobo, region_tag, vdrift, mean_resy, mean_err);
+  if (ok) dclk_center = ResYToDeltaClock(mean_resy, vdrift);
+  delete py;
+  return ok;
+}
+
+// fit 窓 [fit_xmin, fit_xmax] の左・右 side_ns それぞれでガウス fit → c0, A 初期値
+static Bool_t EstimatePlateauFromFitWindowSides(const TH2D* h,
+                                                Double_t fit_xmin, Double_t fit_xmax,
+                                                Double_t side_ns, Int_t cobo,
+                                                Double_t vdrift,
+                                                Double_t& c0_init, Double_t& amp_init)
+{
+  c0_init = 0.0;
+  amp_init = 0.0;
+  if (!h || !(fit_xmax > fit_xmin) || side_ns <= 0.0) return kFALSE;
+  const Double_t span = fit_xmax - fit_xmin;
+  const Double_t side = std::min(side_ns, 0.5 * span);
+  const Double_t x_left_hi = fit_xmin + side;
+  const Double_t x_right_lo = fit_xmax - side;
+  if (!(x_left_hi > fit_xmin) || !(fit_xmax > x_right_lo)) return kFALSE;
+
+  Double_t c_left = 0.0, c_right = 0.0;
+  if (!FitRegionGaussDclk(h, fit_xmin, x_left_hi, cobo, 1000, vdrift, c_left))
+    return kFALSE;
+  if (!FitRegionGaussDclk(h, x_right_lo, fit_xmax, cobo, 1001, vdrift, c_right))
+    return kFALSE;
+  c0_init = c_left;
+  amp_init = c_right - c_left;
+  return (std::isfinite(c0_init) && std::isfinite(amp_init) &&
+          std::fabs(amp_init) > 0.5);
+}
+
+//_____________________________________________________________________________
+// X rebin 後: 各 clock ビンで ProjectionY → gaus+pol0 により profile を構築
+static void ProfileXGauss(const TH2D* h, std::vector<Double_t>& x_center,
+                        std::vector<Double_t>& mean_y, std::vector<Double_t>& err_y,
+                        Int_t cobo, Double_t vdrift, Int_t min_entries = 5)
+{
+  x_center.clear();
+  mean_y.clear();
+  err_y.clear();
+  if (!h || vdrift <= 0.0)
+    return;
+
+  const Int_t nxbins = h->GetNbinsX();
+  for (Int_t ix = 1; ix <= nxbins; ++ix) {
+    const Double_t xc = h->GetXaxis()->GetBinCenter(ix);
+    TH1D* py = h->ProjectionY(Form("tpc_phase_profy_c%d_%d", cobo, ix), ix, ix);
+    if (!py)
+      continue;
+    if (py->GetEntries() < min_entries) {
+      delete py;
+      continue;
+    }
+    Double_t mean_resy = 0.0, mean_err = 0.0;
+    if (FitSliceGaussMean(py, cobo, ix, vdrift, mean_resy, mean_err)) {
+      x_center.push_back(xc);
+      mean_y.push_back(mean_resy);
+      err_y.push_back(mean_err);
+    }
+    delete py;
+  }
+}
+
+//_____________________________________________________________________________
 // スライス統計が少ないとき Y 軸をまとめてからガウスフィット（ビン統計のガタつき低減）
 // 返り値: フィットに使うヒスト（rebin 無しなら py 本体）。*out_rebinned が true なら
 //         呼び出し側は (rebinned を delete) と py の両方を解放すること。
@@ -723,7 +1040,9 @@ int main(int argc, char* argv[])
               << "  --vdrift V      : drift velocity [mm/ns] (default: 0.055)\n"
               << "  --step-width W  : fixed step width [ns] (smaller => steeper, default: 0.005)\n"
               << "  --free          : free step width in fit (default: fixed)\n"
+              << "  --base          : legacy fit without baseline constant (default: baseline ON)\n"
               << "  --min-entries N : min entries per bin for profile (default: 5)\n"
+              << "  --rebin N       : rebin 2D hist X (clock) by N; N>1 uses gaus profile per bin\n"
               << "  --graph-points N: number of points in output TGraph (default: 10000)\n"
               << "  --mode hit|trk  : input 2D hist priority (trk: TPCTrk_ResY_vs_ClockTime_... first)\n";
     return 1;
@@ -738,6 +1057,8 @@ int main(int argc, char* argv[])
   Int_t graph_points = DEFAULT_GRAPH_POINTS;
   Double_t step_width_ns = 0.005;
   Bool_t free_step_width = kFALSE;
+  Bool_t use_baseline_term = kTRUE;
+  Int_t rebin_x = 1;
   std::string mode = "hit";
 
   // 非オプション引数を収集。1個=phaseのみ(--fit-step 0用)、2個=tpcbcout,phase(従来互換)
@@ -757,6 +1078,8 @@ int main(int argc, char* argv[])
       if (!(step_width_ns > 0.0)) step_width_ns = 0.005;
     } else if (a == "--free") {
       free_step_width = kTRUE;
+    } else if (a == "--base") {
+      use_baseline_term = kFALSE;
     } else if (a == "--fit-step") {
       fit_nstep = 1;  // デフォルト1個
       if (i + 1 < argc) {
@@ -773,6 +1096,9 @@ int main(int argc, char* argv[])
     } else if (a == "--graph-points" && i + 1 < argc) {
       graph_points = std::atoi(argv[++i]);
       if (graph_points < 100) graph_points = DEFAULT_GRAPH_POINTS;
+    } else if (a == "--rebin" && i + 1 < argc) {
+      rebin_x = std::atoi(argv[++i]);
+      if (rebin_x < 1) rebin_x = 1;
     } else if (a.find("-") != 0) {
       positionals.push_back(a);
     }
@@ -855,12 +1181,15 @@ int main(int argc, char* argv[])
   std::cout << "Histogram mode   : " << mode << std::endl;
   if (!flat_zero_mode) {
     std::cout << "Fit steps        : " << fit_nstep << std::endl;
+    std::cout << "Baseline term    : " << (use_baseline_term ? "ON" : "OFF (--base)") << std::endl;
     std::cout << "Step width [ns]  : " << step_width_ns
               << (free_step_width ? " (initial, free)" : " (fixed)") << std::endl;
     std::cout << "Free width fit   : " << (free_step_width ? "ON" : "OFF") << std::endl;
     std::cout << "Smooth window    : " << smooth_half_window << " (half-width)" << std::endl;
     std::cout << "Drift velocity   : " << vdrift << " mm/ns" << std::endl;
     std::cout << "Min entries/bin  : " << min_entries << std::endl;
+    std::cout << "X rebin factor   : " << rebin_x
+              << (rebin_x > 1 ? " (gauss profile per bin)" : " (ProfileX + core gauss)") << std::endl;
   }
   std::cout << "Graph points     : " << graph_points << std::endl;
   std::cout << "========================================" << std::endl;
@@ -901,6 +1230,7 @@ int main(int argc, char* argv[])
   Int_t fb_cobo = 0;
   Int_t fb_nstep_fit = 0;
   Double_t fb_p0 = 0.0, fb_p1 = 0.0, fb_p2 = 1.0;
+  Double_t fb_t0_init = 0.0, fb_amp_init = 0.0;
   TTree* t_cobo_fb = new TTree("TpcPhase_CoboFallback",
                                 "TPCPRM kCobo fallback; p0,p1,p2 for PhaseShift when nstep_fit==1");
   t_cobo_fb->Branch("cobo", &fb_cobo, "cobo/I");
@@ -908,6 +1238,8 @@ int main(int argc, char* argv[])
   t_cobo_fb->Branch("p0", &fb_p0, "p0/D");
   t_cobo_fb->Branch("p1", &fb_p1, "p1/D");
   t_cobo_fb->Branch("p2", &fb_p2, "p2/D");
+  t_cobo_fb->Branch("t0_init", &fb_t0_init, "t0_init/D");
+  t_cobo_fb->Branch("amp_init", &fb_amp_init, "amp_init/D");
 
   // PDF出力は将来の実装のため、現在は無効化
 
@@ -931,7 +1263,13 @@ int main(int argc, char* argv[])
         if (raw) break;
       }
       if (!raw) continue;
-      StepGuess g = EstimateStepFromProjectionY(raw, vdrift);
+      TH2D* raw_guess = (TH2D*)raw->Clone(Form("tpc_phase_guess_c%d", cobo));
+      if (rebin_x > 1) {
+        raw_guess = RebinHist2DX(raw_guess, rebin_x,
+                                 Form("tpc_phase_guess_c%d_rebx%d", cobo, rebin_x));
+      }
+      StepGuess g = EstimateStepFromProjectionY(raw_guess, vdrift);
+      delete raw_guess;
 
       // params.h に run-cobo 指定の t0 / 高さ初期値があればそれを優先
       if (!run_id.empty()) {
@@ -946,7 +1284,7 @@ int main(int argc, char* argv[])
           const auto& v = it->second;
           // v[0]: t0[ns]（有効なら）
           if (v.size() >= 1 && std::isfinite(v[0])) {
-            g.t0 = std::clamp(v[0], -35.0, 35.0);
+            g.t0 = std::clamp(v[0], -kPhaseGraphHalfRangeNs, kPhaseGraphHalfRangeNs);
           }
           // v[1]: 高さ[mm]（上 − 下）。有効なら c_left/c_right を上書き。
           if (v.size() >= 2 && std::isfinite(v[1]) && vdrift > 0.0) {
@@ -981,9 +1319,9 @@ int main(int argc, char* argv[])
       TGraph* g_flat = new TGraph(graph_points);
       g_flat->SetName(Form(PHASE_NAME_FMT, cobo));
       g_flat->SetTitle(Form("TPC Phase CoBo %d (flat zero);Clock Time [ns];#Delta clock [ns]", cobo));
-      Double_t dx = 100.0 / (graph_points - 1);  // -50 to 50 ns
+      Double_t dx = (2.0 * kPhaseGraphHalfRangeNs) / (graph_points - 1);
       for (Int_t i = 0; i < graph_points; ++i) {
-        Double_t x = -50.0 + i * dx;
+        Double_t x = -kPhaseGraphHalfRangeNs + i * dx;
         g_flat->SetPoint(i, x, 0.0);
       }
       g_flat->Write();
@@ -993,6 +1331,8 @@ int main(int argc, char* argv[])
       fb_p0 = 0.0;
       fb_p1 = 0.0;
       fb_p2 = 1.0;
+      fb_t0_init = 0.0;
+      fb_amp_init = 0.0;
       t_cobo_fb->Fill();
       std::cout << "  CoBo " << cobo << ": Flat zero created" << std::endl;
       ++n_created;
@@ -1022,15 +1362,22 @@ int main(int argc, char* argv[])
     }
     std::cout << "    Found " << hname << ". Processing..." << std::flush;
     TH2D* h = (TH2D*)raw->Clone(Form("%s_tmp", hname.Data()));
+    if (rebin_x > 1) {
+      h = RebinHist2DX(h, rebin_x, Form("%s_rebx%d", h->GetName(), rebin_x));
+      std::cout << " (X rebin x" << rebin_x << ", " << h->GetNbinsX() << " bins)" << std::flush;
+    }
 
     // 事前に推定した Y 射影ベースのステップ初期値（なければゼロ初期値）
-    StepGuess guess{0.0, 0.0, 0.0};
+    StepGuess guess{0.0, 0.0, 0.0, kFALSE};
     if (cobo >= 0 && cobo < NumOfSegCOBO && has_guess[cobo]) {
       guess = step_guesses[cobo];
     }
 
     std::vector<Double_t> x_center, mean_y, err_y;
-    ProfileX(h, x_center, mean_y, err_y, min_entries);
+    if (rebin_x > 1)
+      ProfileXGauss(h, x_center, mean_y, err_y, cobo, vdrift, min_entries);
+    else
+      ProfileX(h, x_center, mean_y, err_y, min_entries);
 
     Int_t npts = (Int_t)x_center.size();
     if (npts < 1) {
@@ -1077,7 +1424,7 @@ int main(int argc, char* argv[])
       }
     }
 
-    // ステップでフィット（X 範囲を絶対座標 [-40, +40] ns に固定）
+    // フィット窓: params.h の t0（なければ Y 射影 + profile 推定）の ±kPhaseStepFitHalfWindowNs
     Double_t xmin_all = *std::min_element(x_center.begin(), x_center.end());
     Double_t xmax_all = *std::max_element(x_center.begin(), x_center.end());
     Double_t x_range  = xmax_all - xmin_all;
@@ -1087,16 +1434,36 @@ int main(int argc, char* argv[])
       continue;
     }
 
-    Double_t fit_xmin = xmin_all;
-    Double_t fit_xmax = xmax_all;
+    Double_t t0_ref = guess.t0;
+    if (std::fabs(t0_ref) < 1e-6) {
+      Double_t t0_prof = EstimateStepPositionFromProfile(x_center, delta_clock);
+      if (std::fabs(t0_prof) > 1e-6) t0_ref = t0_prof;
+    }
 
-    const Double_t half_window = kPhaseStepFitHalfWindowNs;  // [ns]
-    fit_xmin = std::max(xmin_all, -half_window);
-    fit_xmax = std::min(xmax_all, +half_window);
-    if (fit_xmax - fit_xmin < 10.0) {
-      // 入力レンジが狭すぎるときだけ最小限のフォールバック
-      fit_xmin = xmin_all + 0.10 * x_range;
-      fit_xmax = xmax_all - 0.10 * x_range;
+    const Double_t half_window = kPhaseStepFitHalfWindowNs;
+    Double_t fit_xmin = std::max(xmin_all, t0_ref - half_window);
+    Double_t fit_xmax = std::min(xmax_all, t0_ref + half_window);
+    if (fit_xmax - fit_xmin < 4.0) {
+      fit_xmin = std::max(xmin_all, t0_ref - half_window);
+      fit_xmax = std::min(xmax_all, t0_ref + half_window);
+      if (fit_xmax - fit_xmin < 4.0) {
+        fit_xmin = xmin_all + 0.10 * x_range;
+        fit_xmax = xmax_all - 0.10 * x_range;
+      }
+    }
+    std::cout << "    Fit window: t0=" << t0_ref << " ±" << half_window
+              << " ns -> [" << fit_xmin << ", " << fit_xmax << "]"
+              << (has_manual_param[cobo] ? " (t0 from params)" : "") << "\n";
+
+    guess.fix_t0 = (std::fabs(t0_ref) > 1e-6);
+    Double_t c0_side = 0.0, amp_side = 0.0;
+    if (EstimatePlateauFromFitWindowSides(h, fit_xmin, fit_xmax,
+                                          kPhaseSideGaussHalfWindowNs, cobo, vdrift,
+                                          c0_side, amp_side)) {
+      guess.c_left = c0_side;
+      guess.c_right = c0_side + amp_side;
+      std::cout << "    Side gauss init: c0=" << c0_side
+                << " ns, A=" << amp_side << " ns\n";
     }
 
     // 実際にフィットに使う点だけ抽出
@@ -1112,95 +1479,23 @@ int main(int argc, char* argv[])
     }
 
     // --- gauss + constant をコア点（x_fit）だけで y スライスに対して当て直す ---
-    // 目的:
-    //   delta_clock(x) 作成時の「左右非対称な分布」由来の mean_ResY 偏りを、各スライスの
-    //   gauss(peak) + pol0(定数ベースライン) で吸収し、StepSumFunc のフィットを安定化する。
-    //
-    // 注意:
-    //   ProfileX は別途保存・可視化されるので、ここで更新するのは StepSumFunc に投入する
-    //   dclk_fit/err_fit のみ。
-    {
-      const Double_t gaussian_fit_nsigma = 2.0;
-      const Double_t min_step_gauss_sigma = 0.01;
-      const Double_t kMinPeakRatioGauss = 1.05; // ほぼ平坦スライスは避ける
-      // rebin 後はビンが粗く peak 比の判定が緩むので、しきい値をわずかに上げる
-      const Double_t kMinPeakRatioGaussRebinned = 1.08;
-
+    // --rebin>1 のときは ProfileXGauss で既に gaus profile 済みなのでスキップ。
+    if (rebin_x <= 1) {
       for (Int_t k = 0; k < (Int_t)x_fit.size(); ++k) {
         const Int_t i = idx_fit.empty() ? k : idx_fit[k];
         const Double_t x = x_center[i];
         const Int_t binx = h->GetXaxis()->FindFixBin(x);
 
-        // x ビン 1個だけの Projection を作ってガウス + 定数背景を当て直す
         TH1D* py = h->ProjectionY(Form("tpc_phase_py_c%d_%d", cobo, k), binx, binx);
         if (!py) continue;
-        if (py->GetEntries() <= 0) {
-          delete py;
-          continue;
+        Double_t mean_resy = 0.0, mean_err = 0.0;
+        if (FitSliceGaussMean(py, cobo, k, vdrift, mean_resy, mean_err)) {
+          dclk_fit[k] = ResYToDeltaClock(mean_resy, vdrift);
+          err_fit[k] = mean_err / vdrift;
         }
-
-        Bool_t used_rebin = kFALSE;
-        TH1D* py_fit = RebinnedProjectionForGaussFit(py, cobo, k, &used_rebin);
-        const Double_t peak_ratio_cut =
-            used_rebin ? kMinPeakRatioGaussRebinned : kMinPeakRatioGauss;
-
-        // ほぼ平坦スライスは避ける（=無駄な fit を減らす）
-        const Double_t max_content = py_fit->GetMaximum();
-        const Double_t mean_content_bins =
-            (py_fit->GetNbinsX() > 0) ? (py_fit->Integral() / py_fit->GetNbinsX()) : 0.0;
-        if (mean_content_bins <= 0.0 || max_content < mean_content_bins * peak_ratio_cut) {
-          if (used_rebin)
-            delete py_fit;
-          delete py;
-          continue;
-        }
-
-        const Int_t max_bin = py_fit->GetMaximumBin();
-        const Double_t peak_resy = py_fit->GetBinCenter(max_bin);
-        Double_t rms_resy = py_fit->GetRMS();
-        if (rms_resy < 0.1) rms_resy = 0.5;
-        if (rms_resy > 5.0) rms_resy = 2.5;
-        // rebin 後は RMS がやや小さめに出ることがあるので、フィット窓の下限を確保
-        if (used_rebin)
-          rms_resy = TMath::Max(rms_resy, 0.25);
-
-        const Double_t half_resy_mm =
-            TMath::Max(gaussian_fit_nsigma * rms_resy, kPhaseSliceGaussHalfWidthNsEquiv * vdrift);
-        const Double_t fit_min_resy = peak_resy - half_resy_mm;
-        const Double_t fit_max_resy = peak_resy + half_resy_mm;
-
-        if (!(fit_min_resy < fit_max_resy)) {
-          if (used_rebin)
-            delete py_fit;
-          delete py;
-          continue;
-        }
-
-        TF1 sliceFit(Form("tpc_phase_sliceFit_c%d_%d", cobo, k),
-                     "gaus(0)+pol0(3)", fit_min_resy, fit_max_resy);
-        sliceFit.SetParameters(max_content, peak_resy,
-                                std::max(rms_resy * 0.5, min_step_gauss_sigma),
-                                0.0);
-        sliceFit.SetParNames("Constant", "Mean", "Sigma", "Background");
-        sliceFit.SetParLimits(2, min_step_gauss_sigma, 20.0);
-
-        const Int_t fit_status = py_fit->Fit(&sliceFit, "Q");
-        if (fit_status == 0) {
-          const Double_t mean_resy = sliceFit.GetParameter(1);
-          Double_t mean_err = sliceFit.GetParError(1);
-          if (used_rebin && mean_err > 0.0)
-            mean_err *= 1.15; // 相関をざっくり反映した誤差の下限寄せ
-          if (vdrift > 0.0 && std::isfinite(mean_resy) && std::isfinite(mean_err) && mean_err > 0.0) {
-            dclk_fit[k] = ResYToDeltaClock(mean_resy, vdrift);
-            err_fit[k] = mean_err / vdrift;
-          }
-        }
-        if (used_rebin)
-          delete py_fit;
         delete py;
       }
 
-      // コア点列に沿った移動平均（プロット・StepSum への入力のガタつき低減）
       static const Int_t kSmoothAfterGaussHalfWin = 1;
       SmoothMovingAverage(dclk_fit, kSmoothAfterGaussHalfWin, &err_fit);
     }
@@ -1226,8 +1521,8 @@ int main(int argc, char* argv[])
       continue;
     }
 
-    Double_t xmin = *std::min_element(x_fit.begin(), x_fit.end());
-    Double_t xmax = *std::max_element(x_fit.begin(), x_fit.end());
+    const Double_t xmin = -kPhaseGraphHalfRangeNs;
+    const Double_t xmax = +kPhaseGraphHalfRangeNs;
 
     // run-cobo ごとの振幅初期値（ResidualY[mm] → Δclock[ns] に変換）
     Double_t amp_override_ns = 0.0;
@@ -1245,10 +1540,17 @@ int main(int argc, char* argv[])
       }
     }
 
+    fb_t0_init = t0_ref;
+    fb_amp_init = (std::fabs(amp_override_ns) > 0.0)
+                      ? amp_override_ns
+                      : (guess.c_right - guess.c_left);
+
     TF1* init_func = nullptr;
+    TF1* fit_raw_func = nullptr;
     TF1* fit_func = FitStepSum(fit_nstep, x_fit, dclk_fit,
                                xmin, xmax, &err_fit, &guess,
-                               run_amp_ref_ns, amp_override_ns, step_width_ns, free_step_width, &init_func);
+                               run_amp_ref_ns, amp_override_ns, step_width_ns, free_step_width,
+                               use_baseline_term, &fit_raw_func, &init_func);
 
     fout->cd();
     fb_cobo = cobo;
@@ -1256,25 +1558,29 @@ int main(int argc, char* argv[])
       fb_nstep_fit = -1;
       fb_p0 = fb_p1 = 0.0;
       fb_p2 = 1.0;
+      // fb_t0_init / fb_amp_init は上で設定済み
       t_cobo_fb->Fill();
     } else {
-      // TF1 を細かく Eval して TGraph に変換
+      // TF1 を細かく Eval して TGraph に変換（baseline ありなら c0 込み raw を保存）
+      TF1* graph_src = fit_raw_func ? fit_raw_func : fit_func;
       TGraph* g_save = new TGraph(graph_points);
       g_save->SetName(Form(PHASE_NAME_FMT, cobo));
       g_save->SetTitle(Form("TPC Phase CoBo %d;Clock Time [ns];#Delta clock [ns]", cobo));
-      Double_t dx = (xmax_all - xmin_all) / (graph_points - 1);
+      const Double_t x_graph_lo = -kPhaseGraphHalfRangeNs;
+      const Double_t x_graph_hi = +kPhaseGraphHalfRangeNs;
+      Double_t dx = (x_graph_hi - x_graph_lo) / (graph_points - 1);
       for (Int_t i = 0; i < graph_points; ++i) {
-        Double_t x = xmin_all + i * dx;
-        Double_t y = fit_func->Eval(x);
+        Double_t x = x_graph_lo + i * dx;
+        Double_t y = graph_src->Eval(x);
         g_save->SetPoint(i, x, y);
       }
       g_save->Write();
 
       if (fit_nstep == 1) {
         fb_nstep_fit = 1;
-        fb_p0 = fit_func->GetParameter(1);
-        fb_p1 = fit_func->GetParameter(2);
-        fb_p2 = fit_func->GetParameter(3);
+        fb_p0 = fit_func->GetParameter(0);
+        fb_p1 = fit_func->GetParameter(1);
+        fb_p2 = fit_func->GetParameter(2);
       } else {
         fb_nstep_fit = fit_nstep;
         fb_p0 = fb_p1 = 0.0;
@@ -1282,21 +1588,9 @@ int main(int argc, char* argv[])
       }
       t_cobo_fb->Fill();
 
-      // フィット関数自体も参照用に保存
-      if (fit_nstep > 0) {
-        TF1* f_fit = (TF1*)fit_func->Clone(Form(FIT_NAME_FMT, cobo));
-        f_fit->SetTitle(Form("TPC Phase Fit CoBo %d;Clock Time [ns];#Delta clock [ns]", cobo));
-        f_fit->Write();
-        if (init_func) {
-          TF1* f_init = (TF1*)init_func->Clone(Form("TpcPhase_Init_Cobo%d", cobo));
-          f_init->SetTitle(Form("TPC Phase Init CoBo %d;Clock Time [ns];#Delta clock [ns]", cobo));
-          f_init->Write();
-          delete f_init;
-        }
-      }
-
       delete g_save;
       if (init_func) delete init_func;
+      if (fit_raw_func) delete fit_raw_func;
       delete fit_func;
       std::cout << " Done (" << npts << " profile points -> " << graph_points << " graph points)" << std::endl;
     }

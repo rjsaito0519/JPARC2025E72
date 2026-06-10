@@ -1194,6 +1194,12 @@ int main(Int_t argc, char** argv) {
     hDeltaGainMap->SetMaximum(+max_abs_delta_gain);
   }
 
+  // 外れ gain でスケールが潰れないよう、pad map の z 上限を固定（データ自体はそのまま）
+  constexpr Double_t kGainMapZMax = 3.0;
+  constexpr Double_t kGainMapZMin = 0.0;
+  hGainMap->SetMinimum(kGainMapZMin);
+  hGainMap->SetMaximum(kGainMapZMax);
+
   canvas->Clear();
   canvas->Divide(2, 2);
   canvas->cd(1);

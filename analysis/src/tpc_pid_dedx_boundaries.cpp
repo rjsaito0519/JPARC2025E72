@@ -13,13 +13,17 @@
 // img2pdf (else ROOT Print). Page 1: linear dE/dx + log Z; page 2: log dE/dx + log Z; both signed qp.
 //
 // Usage: tpc_pid_dedx_boundaries <input.root> [-o <out.pdf>] [-r <run>]
+//   [--pi-baseline] [--p-baseline] [--p-align-sigma <n>]
+//   Default: pi mean = Bethe_pi - 3*sigma_pi; p mean = Bethe_p - 1*sigma_p (modest).
+//   --pi-baseline / --p-baseline: E42 Bethe centers for that species.
 //   ROOT: TH2 "PID_dEdx_vs_SignedMom" or TTree "tpc" (ntTpc, charge, mom0, dEdx)
-//   -r: output under OUTPUT_DIR/img/runXXXXX/ (default: try to parse run##### from path)
+//   Plot-only; does not change Kinematics.cc / DST pid
 
 #include "ana_helper.h"
 #include "paths.h"
 
 #include <TCanvas.h>
+#include <TDatabasePDG.h>
 #include <TFile.h>
 #include <TGraph.h>
 #include <TLegend.h>
@@ -27,6 +31,8 @@
 #include <TH2.h>
 #include <TH2D.h>
 #include <TMath.h>
+#include <TPDGCode.h>
+#include <TParticlePDG.h>
 #include <TROOT.h>
 #include <TString.h>
 #include <TStyle.h>
@@ -59,7 +65,20 @@ void SanitizePdfTitlesSignedQ(TH1* h)
 constexpr Double_t kBinsSignedP[3] = {600., -3.0, 3.0};
 constexpr Double_t kBinsDe[3] = {400., 0., 800.};
 
-// copied from JPARC2025E72/src/Kinematics.cc (anonymous namespace constants ~L60-69)
+// Mass helpers: same convention as Kinematics.cc (pdg::ProtonMass() [GeV/c^2], Bethe: 1000.0 * …)
+constexpr int kPdgDeuteron = 1000010020;
+
+Double_t PdgMassGeV(int pdg_code)
+{
+  if (pdg_code == kPdgDeuteron) return 1.875613;
+  TParticlePDG* p = TDatabasePDG::Instance()->GetParticle(pdg_code);
+  return p ? p->Mass() : -1.;
+}
+
+Double_t PionMass() { return PdgMassGeV(kPiMinus); }
+Double_t KaonMass() { return PdgMassGeV(kKMinus); }
+Double_t ProtonMass() { return PdgMassGeV(kProton); }
+
 constexpr Double_t conversion_factor = 12171.3;
 constexpr Double_t sigma_dedx_pi[5] = {3.94842, 0.0138502, -0.110281, 12.6065, -10.9347};
 constexpr Double_t sigma_dedx_k[5] = {6.24543, -3.21037, 1.52683, 127.099, -9.1004};
@@ -132,22 +151,104 @@ Double_t CalcTPCdEdxSigma(const Double_t sigma_par[5], Double_t poq)
          sigma_par[3] * TMath::Exp(sigma_par[4] * abspoq);
 }
 
-Double_t HypTPCdEdxPionCurve(Double_t poq)
+Double_t HypTPCdEdxPionCurve(Double_t poq) { return HypTPCBethe(poq, 1000.0 * PionMass()); }
+
+Double_t HypTPCdEdxKaonCurve(Double_t poq) { return HypTPCBethe(poq, 1000.0 * KaonMass()); }
+
+Double_t HypTPCdEdxProtonCurve(Double_t poq) { return HypTPCBethe(poq, 1000.0 * ProtonMass()); }
+
+/** Plot-only pi alignment: put legacy -3sigma band on the mean curve. */
+struct PiAlign {
+  bool center_at_legacy_minus3sigma = true;
+
+  bool IsAligned() const { return center_at_legacy_minus3sigma; }
+
+  TString Summary() const
+  {
+    return center_at_legacy_minus3sigma ? "pi center = legacy -3sigma (Bethe - 3*sigma_pi)"
+                                        : "pi E42 baseline (Bethe center)";
+  }
+
+  void LegacyPiExpectation(Double_t poq, Double_t& dedx_bethe, Double_t& sigma_pi) const
+  {
+    dedx_bethe = HypTPCdEdxPionCurve(poq);
+    sigma_pi = CalcTPCdEdxSigma(sigma_dedx_pi, poq);
+  }
+
+  Double_t PiCenter(Double_t poq) const
+  {
+    Double_t dedx_bethe = 0.;
+    Double_t sigma_pi = 0.;
+    LegacyPiExpectation(poq, dedx_bethe, sigma_pi);
+    return center_at_legacy_minus3sigma ? dedx_bethe - 3. * sigma_pi : dedx_bethe;
+  }
+};
+
+void PrintPiAlignReference(const PiAlign& align)
 {
-  constexpr Double_t mpi = 139.57039;
-  return HypTPCBethe(poq, mpi);
+  if (!align.IsAligned())
+    return;
+  std::cerr << "Pi alignment (plot-only): center(p) = Bethe_pi(p) - 3*sigma_pi(p); "
+            << "new +/-3sigma band around that center (Kinematics.cc unchanged)\n";
+  for (const double absp : {0.3, 0.5, 1.0, 1.5}) {
+    for (const double sign : {+1., -1.}) {
+      const double poq = sign * absp;
+      Double_t dedx_bethe = 0.;
+      Double_t sigma_pi = 0.;
+      align.LegacyPiExpectation(poq, dedx_bethe, sigma_pi);
+      const double center = dedx_bethe - 3. * sigma_pi;
+      std::cerr << "  qp=" << poq << " GeV/c: Bethe=" << dedx_bethe << " sigma=" << sigma_pi
+                << " legacy_-3sigma=" << center << " (new center)\n";
+    }
+  }
 }
 
-Double_t HypTPCdEdxKaonCurve(Double_t poq)
-{
-  constexpr Double_t mk = 493.677;
-  return HypTPCBethe(poq, mk);
-}
+/** Plot-only proton alignment: modest downward shift vs pi (default 1*sigma_p). */
+struct ProtonAlign {
+  bool enabled = true;
+  Double_t sigma_shift = 1.0;
 
-Double_t HypTPCdEdxProtonCurve(Double_t poq)
+  bool IsAligned() const { return enabled && sigma_shift > 1e-12; }
+
+  TString Summary() const
+  {
+    if (!IsAligned())
+      return "p E42 baseline (Bethe center)";
+    return Form("p center = Bethe - %.2g*sigma_p", sigma_shift);
+  }
+
+  void LegacyProtonExpectation(Double_t poq, Double_t& dedx_bethe, Double_t& sigma_p) const
+  {
+    dedx_bethe = HypTPCdEdxProtonCurve(poq);
+    sigma_p = CalcTPCdEdxSigma(sigma_dedx_p, poq);
+  }
+
+  Double_t ProtonCenter(Double_t poq) const
+  {
+    Double_t dedx_bethe = 0.;
+    Double_t sigma_p = 0.;
+    LegacyProtonExpectation(poq, dedx_bethe, sigma_p);
+    return IsAligned() ? dedx_bethe - sigma_shift * sigma_p : dedx_bethe;
+  }
+};
+
+void PrintProtonAlignReference(const ProtonAlign& align)
 {
-  constexpr Double_t mp = 938.2720813;
-  return HypTPCBethe(poq, mp);
+  if (!align.IsAligned())
+    return;
+  std::cerr << "Proton alignment (plot-only): center(p) = Bethe_p(p) - " << align.sigma_shift
+            << "*sigma_p(p); bands still -4/+6 sigma around center\n";
+  for (const double absp : {0.3, 0.5, 1.0, 1.5}) {
+    for (const double sign : {+1., -1.}) {
+      const double poq = sign * absp;
+      Double_t dedx_bethe = 0.;
+      Double_t sigma_p = 0.;
+      align.LegacyProtonExpectation(poq, dedx_bethe, sigma_p);
+      const double center = dedx_bethe - align.sigma_shift * sigma_p;
+      std::cerr << "  qp=" << poq << " GeV/c: Bethe=" << dedx_bethe << " sigma=" << sigma_p
+                << " new_center=" << center << "\n";
+    }
+  }
 }
 
 Double_t PpiSeparationCut(Double_t poq)
@@ -230,9 +331,35 @@ TH2* LoadOrBuildHistogram(const TString& path)
 void usage(const char* a0)
 {
   std::cerr << "Usage: " << a0 << " <input.root> [-o <out.pdf>] [-r <run>]\n"
+            << "  [--pi-baseline] [--p-baseline] [--p-align-sigma <n>]\n"
+            << "  Default: pi center = Bethe_pi - 3*sigma_pi; p center = Bethe_p - 1*sigma_p.\n"
+            << "  --pi-baseline / --p-baseline: E42 Bethe center for that species.\n"
+            << "  --p-align-sigma: proton downward shift in units of sigma_p (default 1).\n"
             << "  Reads TH2 PID_dEdx_vs_SignedMom or TTree tpc (charge,mom0,dEdx).\n"
             << "  Output: 2-page PDF (PNG->img2pdf when available). COLZ then curves Draw(\"L same\") on one pad per page.\n"
             << "  OUTPUT_DIR/img/runXXXXX/ (run from -r or first run##### in path; else 0)\n";
+}
+
+void AppendAlignSubtitle(TH1* h, const PiAlign& pi_align, const ProtonAlign& p_align)
+{
+  if (!h || (!pi_align.IsAligned() && !p_align.IsAligned()))
+    return;
+  TString tag;
+  if (pi_align.IsAligned())
+    tag = pi_align.Summary();
+  if (p_align.IsAligned()) {
+    if (!tag.IsNull())
+      tag += "; ";
+    tag += p_align.Summary();
+  }
+  TString t(h->GetTitle());
+  const Ssiz_t sep = t.First(';');
+  const TString bracket = Form(" [%s]", tag.Data());
+  if (sep >= 0)
+    t.Insert(sep, bracket);
+  else
+    t += bracket;
+  h->SetTitle(t);
 }
 
 /** First run followed by digits in path/filename (e.g. .../run01234/...), else 0. */
@@ -285,29 +412,36 @@ void ConfigureLogZForColz(TH2* h);
 
 /** Upper-right legend (NDC). Heap-allocated so it survives until PDF flush (stack TLegend vanishes). */
 TLegend* BuildPidLegendUpperRight(TGraph& gr_pi, TGraph& gr_k, TGraph& gr_p, TGraph& gr_cut, TGraph& gr_pilo,
-                                  TGraph& gr_klo, TGraph& gr_plo)
+                                  TGraph& gr_klo, TGraph& gr_plo, const PiAlign& pi_align, const ProtonAlign& p_align)
 {
-  auto* leg = new TLegend(0.62, 0.78, 0.93, 0.93);
+  const Bool_t extra = pi_align.IsAligned() || p_align.IsAligned();
+  const Double_t y1 = extra ? 0.66 : 0.78;
+  auto* leg = new TLegend(0.62, y1, 0.93, 0.93);
   leg->SetFillColorAlpha(kWhite, 0.92);
   leg->SetFillStyle(1001);
   leg->SetBorderSize(1);
   leg->SetTextSize(0.017);
-  leg->SetEntrySeparation(0.22);
+  leg->SetEntrySeparation(0.20);
   // ASCII only (Acrobat-safe with vector PDF)
-  leg->AddEntry(&gr_pi, "pi mean (Bethe)", "l");
+  leg->AddEntry(&gr_pi, pi_align.IsAligned() ? "pi mean (legacy -3sigma)" : "pi mean (Bethe)", "l");
   leg->AddEntry(&gr_k, "K mean (Bethe)", "l");
-  leg->AddEntry(&gr_p, "p mean (Bethe)", "l");
+  leg->AddEntry(&gr_p, p_align.IsAligned() ? "p mean (aligned)" : "p mean (Bethe)", "l");
   leg->AddEntry(&gr_cut, "pi/p separation cut", "l");
   leg->AddEntry(&gr_pilo, "pi +/- 3 sigma", "l");
   leg->AddEntry(&gr_klo, "K +/- 3 sigma", "l");
   leg->AddEntry(&gr_plo, "p band (-4..+6 sigma)", "l");
+  if (pi_align.IsAligned())
+    leg->AddEntry(static_cast<TObject*>(nullptr), pi_align.Summary(), "");
+  if (p_align.IsAligned())
+    leg->AddEntry(static_cast<TObject*>(nullptr), p_align.Summary(), "");
   return leg;
 }
 
 /** One pad: COLZ then curves + legend with "same" (export this canvas to PNG/PDF). */
 void DrawPidPageColzSamePad(TCanvas& cv, TH2* hist, Bool_t logx, Bool_t logy, Bool_t logz, TGraph& gr_pi,
                             TGraph& gr_k, TGraph& gr_p, TGraph& gr_cut, TGraph& gr_pilo, TGraph& gr_pihi,
-                            TGraph& gr_klo, TGraph& gr_khi, TGraph& gr_plo, TGraph& gr_phi)
+                            TGraph& gr_klo, TGraph& gr_khi, TGraph& gr_plo, TGraph& gr_phi, const PiAlign& pi_align,
+                            const ProtonAlign& p_align)
 {
   cv.Clear();
   StylePidCanvas(cv);
@@ -319,7 +453,7 @@ void DrawPidPageColzSamePad(TCanvas& cv, TH2* hist, Bool_t logx, Bool_t logy, Bo
   cv.SetLogy(logy);
   cv.SetLogz(logz);
   DrawBoundaryCurves(gr_pi, gr_k, gr_p, gr_cut, gr_pilo, gr_pihi, gr_klo, gr_khi, gr_plo, gr_phi);
-  TLegend* leg = BuildPidLegendUpperRight(gr_pi, gr_k, gr_p, gr_cut, gr_pilo, gr_klo, gr_plo);
+  TLegend* leg = BuildPidLegendUpperRight(gr_pi, gr_k, gr_p, gr_cut, gr_pilo, gr_klo, gr_plo, pi_align, p_align);
   leg->Draw();
   cv.Update();
 }
@@ -398,6 +532,8 @@ int main(int argc, char** argv)
   Int_t run = -1; // -1 = not set by -r; use parse or 0
   TString inPath;
   TString outPdf;
+  PiAlign pi_align;
+  ProtonAlign proton_align;
 
   for (int i = 1; i < argc; ++i) {
     TString a(argv[i]);
@@ -405,6 +541,13 @@ int main(int argc, char** argv)
       run = TString(argv[++i]).Atoi();
     } else if (a == "-o" && i + 1 < argc) {
       outPdf = argv[++i];
+    } else if (a == "--pi-baseline") {
+      pi_align.center_at_legacy_minus3sigma = false;
+    } else if (a == "--p-baseline") {
+      proton_align.enabled = false;
+    } else if (a == "--p-align-sigma" && i + 1 < argc) {
+      proton_align.sigma_shift = TString(argv[++i]).Atof();
+      proton_align.enabled = true;
     } else if (a == "-h" || a == "--help") {
       usage(argv[0]);
       return 0;
@@ -435,6 +578,9 @@ int main(int argc, char** argv)
   gROOT->SetBatch(kTRUE);
   gStyle->SetOptStat(0);
 
+  PrintPiAlignReference(pi_align);
+  PrintProtonAlignReference(proton_align);
+
   TH2* h = LoadOrBuildHistogram(inPath);
   if (!h) {
     std::cerr << "Could not load histogram or fill from tree in " << inPath << std::endl;
@@ -450,11 +596,13 @@ int main(int argc, char** argv)
     const Double_t t = static_cast<Double_t>(i) / static_cast<Double_t>(ngrid - 1);
     const Double_t poq = pmin + t * (pmax - pmin);
     gx[i] = poq;
-    gpi[i] = HypTPCdEdxPionCurve(poq);
+    Double_t dedx_bethe = 0.;
+    Double_t spi = 0.;
+    pi_align.LegacyPiExpectation(poq, dedx_bethe, spi);
+    gpi[i] = pi_align.PiCenter(poq);
     gk[i] = HypTPCdEdxKaonCurve(poq);
-    gp[i] = HypTPCdEdxProtonCurve(poq);
+    gp[i] = proton_align.ProtonCenter(poq);
     gcut[i] = PpiSeparationCut(poq);
-    const Double_t spi = CalcTPCdEdxSigma(sigma_dedx_pi, poq);
     const Double_t spk = CalcTPCdEdxSigma(sigma_dedx_k, poq);
     const Double_t spp = CalcTPCdEdxSigma(sigma_dedx_p, poq);
     gpi_lo[i] = gpi[i] - 3. * spi;
@@ -498,17 +646,24 @@ int main(int argc, char** argv)
   gr_phi.SetLineStyle(3);
 
   const TString imgDir = ana_helper::get_img_dir(OUTPUT_DIR, runOut);
-  if (outPdf.IsNull())
-    outPdf = Form("%s/PID_dEdx_vs_SignedMom_boundaries_run%05d.pdf", imgDir.Data(), runOut);
+  const Bool_t any_align = pi_align.IsAligned() || proton_align.IsAligned();
+  if (outPdf.IsNull()) {
+    if (any_align)
+      outPdf = Form("%s/PID_dEdx_vs_SignedMom_boundaries_aligned_run%05d.pdf", imgDir.Data(), runOut);
+    else
+      outPdf = Form("%s/PID_dEdx_vs_SignedMom_boundaries_run%05d.pdf", imgDir.Data(), runOut);
+  }
 
   TH2* h_p1 = static_cast<TH2*>(h->Clone("h_pid_p1"));
   h_p1->SetDirectory(nullptr);
   SanitizePdfTitlesSignedQ(h_p1);
+  AppendAlignSubtitle(h_p1, pi_align, proton_align);
 
   TH2* h_p2 = static_cast<TH2*>(h->Clone("h_pid_p2"));
   h_p2->SetDirectory(nullptr);
   SanitizePdfTitlesSignedQ(h_p2);
   h_p2->SetTitle("PID dE/dx (signed qp log Y);qp [GeV/c];dE/dx (a.u.)");
+  AppendAlignSubtitle(h_p2, pi_align, proton_align);
   const Double_t yLogMax = kBinsDe[2];
   const Double_t yLogMin = TMath::Max(1e-6, LogYAxisMin(h_p2));
   h_p2->GetYaxis()->SetRangeUser(yLogMin, yLogMax);
@@ -521,11 +676,11 @@ int main(int argc, char** argv)
 
   TCanvas c1("c_pid_p1", "", kCanvasW, kCanvasH);
   DrawPidPageColzSamePad(c1, h_p1, kFALSE, kFALSE, kTRUE, gr_pi, gr_k, gr_p, gr_cut, gr_pilo, gr_pihi, gr_klo, gr_khi,
-                        gr_plo, gr_phi);
+                        gr_plo, gr_phi, pi_align, proton_align);
 
   TCanvas c2("c_pid_p2", "", kCanvasW, kCanvasH);
   DrawPidPageColzSamePad(c2, h_p2, kFALSE, kTRUE, kTRUE, gr_pi, gr_k, gr_p, gr_cut, gr_pilo, gr_pihi, gr_klo, gr_khi,
-                        gr_plo, gr_phi);
+                        gr_plo, gr_phi, pi_align, proton_align);
 
   const TString tmpP1 = Form("/tmp/tpc_pid_dedx_boundaries_%d_p1.png", static_cast<int>(getpid()));
   const TString tmpP2 = Form("/tmp/tpc_pid_dedx_boundaries_%d_p2.png", static_cast<int>(getpid()));
