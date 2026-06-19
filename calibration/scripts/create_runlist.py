@@ -78,7 +78,7 @@ PARAM_DEFS = {
     "HDPRM:":  {"dir": "HDPRM",  "prefix": "HodoParam_run",        "tpl": "HodoParam_e72_example"},
     "HDPHC:":  {"dir": "HDPHC",  "prefix": "HodoPHCParam_run",     "tpl": "HodoPHCParam_e72_example"},
     "DCTDC:":  {"dir": "DCTDC",  "prefix": "DCTdcParam_run",       "tpl": "DCTdcParam_e72_example"},
-    "DCDRFT:": {"dir": "DCDRFT", "prefix": "DCDriftParam_run",     "tpl": "DCDriftParam_01928.root"},
+    "DCDRFT:": {"dir": "DCDRFT", "prefix": "DCDriftParam_run",     "tpl": "DCDriftParam_260602.root"},
     "DCGEO:":  {"dir": "DCGEO",  "prefix": "DCGeomParam_run",      "tpl": "DCGeomParam_e72_example"},
 }
 
@@ -151,7 +151,7 @@ for suffix in args.suffix:
         unit = 100000
     elif args.bcin:
         binary = "./bin/BcInTracking"
-        unit = 50000
+        unit = 25000
     else:
         binary = "./bin/BcOutTracking"
         unit = 50000
