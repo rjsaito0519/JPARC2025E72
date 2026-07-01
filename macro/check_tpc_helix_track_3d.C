@@ -21,7 +21,7 @@
 //   SetHelixPreferHitTheta(kTRUE)  // 螺旋 θ 区間を helix_t 優先（ビームの長い線を抑制）
 //   SetHelixDisplayTargetOrigin(kTRUE)  // 縦軸 z をターゲット中心 (z'=0) で表示
 //   SetHelixDrawCalpos(kTRUE)      // calpos_* を小十字で重ね描画（座標検証）
-//   SetHelixDrawLayerRings(kTRUE)  // 底面 (y=-310) に TPC レイヤー円（既定 ON）
+//   SetHelixDrawLayerRings(kTRUE)  // 底面にレイヤー区切り 33 本（既定 ON）
 //
 // 必須枝: run_number, event_number, ntTpc, nhtrack, pid,
 //         helix_cx, helix_cy, helix_z0, helix_r, helix_dz, helix_t,
@@ -46,7 +46,8 @@
 //      Z = y_tpc
 //  角の矢印ラベルは TPC 軸名: 赤=z, 緑=x, 青=y（ROOT 標準の X/Y/Z ラベルではない）
 //
-//  フレーム: 八角形は TPC 機械中心 (x,z)=(0,0) 基準。ターゲット円は z=Z_TARGET に固定。
+//  フレーム: 八角形は TPC 機械中心 (x,z)=(0,0) 基準。ターゲット円筒は z=Z_TARGET、
+//  サイズは TPCPadHelper の TARGET_RADIUS / TARGET_HALF_Y（ホルダー+クリアランス込み）。
 // PID 色: K=青, p=赤, pi=緑（複数ビット時 K > p > pi）。
 
 #include <TFile.h>
@@ -73,6 +74,9 @@
 #include <vector>
 
 static constexpr Double_t kTPC_Z_TARGET = -143.0;
+// TPCPadHelper: raw r=40 + holder 10 + clearance 10; raw half-y=50 + clearance 10
+static constexpr Double_t kTPC_TARGET_RADIUS = 60.0;
+static constexpr Double_t kTPC_TARGET_HALF_Y = 60.0;
 
 TFile* gHlxFile = nullptr;
 TTreeReader* gHlxReader = nullptr;
@@ -90,15 +94,18 @@ static Bool_t gHlxHelixPreferHitTheta = kTRUE;
 static Bool_t gHlxDisplayTargetOrigin = kFALSE;
 // calpos_* 枝があれば螺旋上の参照点を重ね描画（座標変換の目視検証）
 static Bool_t gHlxDrawCalpos = kTRUE;
-// 底面に TPC パッドレイヤー半径の円を描画（ターゲット中心 z=Z_TARGET 基準）
+// 底面に TPC レイヤー区切り（パッド内外境界）の円を描画
 static Bool_t gHlxDrawLayerRings = kTRUE;
 
-// TPCPadHelper::padParameter[][kRadius] と同じ（マクロ単体で .L 可能にするため埋め込み）
+// TPCPadHelper::padParameter と同じ（マクロ単体で .L 可能にするため埋め込み）
 static const Int_t kHelixNumTpcLayers = 32;
 static const Double_t kHelixTpcLayerRadius[kHelixNumTpcLayers] = {
   14.75, 24.25, 33.75, 43.25, 52.75, 62.25, 71.75, 81.25, 90.75, 100.25, 111.5, 124.5, 137.5,
   150.5, 163.5, 176.5, 189.5, 202.5, 215.5, 228.5, 241.5, 254.5, 267.5, 280.5, 293.5, 306.5,
   319.5, 332.5, 345.5, 358.5, 371.5, 384.5};
+static const Double_t kHelixTpcLayerLength[kHelixNumTpcLayers] = {
+  9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5,
+  12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5};
 
 struct HelixBranchFlags {
   Bool_t has_is_beam = kFALSE;
@@ -190,6 +197,18 @@ HelixTrackSubscript(Int_t track)
   std::ostringstream ss;
   ss << "tr_{" << track << "}";
   return ss.str();
+}
+
+// 32 レイヤー → 33 本の区切り円: 最内 r_in(L0) + 各層の外縁 r_out(L0..31)
+static std::vector<Double_t>
+HelixLayerBoundaryRadii()
+{
+  std::vector<Double_t> radii;
+  radii.reserve(kHelixNumTpcLayers + 1);
+  radii.push_back(kHelixTpcLayerRadius[0] - 0.5 * kHelixTpcLayerLength[0]);
+  for(Int_t layer = 0; layer < kHelixNumTpcLayers; ++layer)
+    radii.push_back(kHelixTpcLayerRadius[layer] + 0.5 * kHelixTpcLayerLength[layer]);
+  return radii;
 }
 
 std::vector<TPolyLine3D*> gHlxHelixLines;
@@ -416,7 +435,7 @@ helix_status()
             << (gHlxDisplayTargetOrigin ? "yes" : "no") << std::endl;
   std::cout << "  draw calpos overlay: " << (gHlxDrawCalpos ? "yes" : "no")
             << (gHlxBranches.has_calpos ? "" : "  [calpos MISSING]") << std::endl;
-  std::cout << "  draw layer rings (bottom): " << (gHlxDrawLayerRings ? "yes" : "no") << std::endl;
+  std::cout << "  draw layer rings (bottom): " << (gHlxDrawLayerRings ? "yes (33 boundaries)" : "no") << std::endl;
   std::cout << "  prefer helix_t theta: " << (gHlxHelixPreferHitTheta ? "yes" : "no") << std::endl;
   std::cout << "===========================\n" << std::endl;
 }
@@ -531,7 +550,7 @@ void
 SetHelixDrawLayerRings(Bool_t on = kTRUE)
 {
   gHlxDrawLayerRings = on;
-  std::cout << "[helix] SetHelixDrawLayerRings: " << (on ? "yes (bottom y=-310)" : "no") << std::endl;
+  std::cout << "[helix] SetHelixDrawLayerRings: " << (on ? "yes (33 layer boundaries on bottom)" : "no") << std::endl;
 }
 
 void
@@ -550,7 +569,8 @@ helix_coords_help()
             << "      Y = x_tpc\n"
             << "      Z = y_tpc   (drift)\n"
             << "\nCorner arrows: red=TPC z, green=TPC x, blue=TPC y\n"
-            << "Frame: octagon at (x,z)=(0,0); target cylinder at z=Z_TARGET.\n"
+            << "Frame: octagon at (x,z)=(0,0); target cylinder (holder incl.) at z=Z_TARGET, r="
+            << kTPC_TARGET_RADIUS << " mm.\n"
             << "====================================================\n" << std::endl;
 }
 
@@ -953,16 +973,17 @@ draw_tpc_frame_and_corner_axes()
   if(gHlxDrawLayerRings) {
     const Int_t nLayerSeg = 72;
     const Double_t yBot = -frameHalfHeight;
-    for(Int_t layer = 0; layer < kHelixNumTpcLayers; ++layer) {
-      const Double_t rPad = kHelixTpcLayerRadius[layer];
+    const std::vector<Double_t> layerBounds = HelixLayerBoundaryRadii();
+    for(std::size_t ib = 0; ib < layerBounds.size(); ++ib) {
+      const Double_t rBound = layerBounds[ib];
       TPolyLine3D* ring = new TPolyLine3D(nLayerSeg + 1);
-      ring->SetLineColor(kTeal - 4);
+      ring->SetLineColor(kGray + 1);
       ring->SetLineStyle(3);
       ring->SetLineWidth(1);
       for(Int_t i = 0; i <= nLayerSeg; ++i) {
         const Double_t theta = 2.0 * TMath::Pi() * i / nLayerSeg;
-        const Double_t x_orig = rPad * TMath::Sin(theta);
-        const Double_t z_orig = rPad * TMath::Cos(theta) + kTPC_Z_TARGET;
+        const Double_t x_orig = rBound * TMath::Sin(theta);
+        const Double_t z_orig = rBound * TMath::Cos(theta) + kTPC_Z_TARGET;
         ring->SetPoint(i, HelixPlotLongZ(z_orig), x_orig, yBot);
       }
       push_line(ring);
@@ -970,9 +991,8 @@ draw_tpc_frame_and_corner_axes()
   }
 
   const Double_t targetZ_orig = kTPC_Z_TARGET;
-  const Double_t targetHeight = 100.0;
-  const Double_t targetHalfHeight = targetHeight / 2.0;
-  const Double_t targetRadius = 40.0;
+  const Double_t targetHalfHeight = kTPC_TARGET_HALF_Y;
+  const Double_t targetRadius = kTPC_TARGET_RADIUS;
   const Int_t nCirclePoints = 64;
   const Int_t nVerticalLines = 8;
 
