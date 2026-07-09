@@ -87,8 +87,18 @@ namespace ana_helper {
     FitResult phc_fit(TH2D *h, TCanvas *c, Int_t n_c);
 
     // -- dcana -----
-    FitResult dc_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
-    TGraph* make_drift_function(TH1D *h, TCanvas *c, Int_t n_c, Int_t plane);
+    struct DcTdcFitSeed {
+        Bool_t valid = kFALSE;
+        Double_t range_min = 0.0;
+        Double_t range_max = 0.0;
+        Double_t par1 = 0.0; // Erfc transition center [1]
+        Double_t par2 = 10.0; // Erfc width [2]
+        Double_t par3 = 0.0; // background [3]
+    };
+    DcTdcFitSeed dc_tdc_seed(TH1D *h);
+    FitResult dc_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c, const DcTdcFitSeed *seed = nullptr);
+    TGraph* make_drift_function(TH1D *h, TCanvas *c, Int_t n_c, Int_t plane,
+                                const char* wire_range_suffix = nullptr);
     FitResult residual_fit(TH1D *h, TCanvas *c, Int_t n_c); // same as t0 offset fit
 
     // -- opg -----

@@ -86,14 +86,19 @@ void analyze(TString path, TString particle){
     // +-------------------+
     // | prepare histogram |
     // +-------------------+    
-    // -- tdc ----------
-    TH1D *h_blca_tdc[conf.num_of_ch.at("blc")];
-    TH1D *h_blcb_tdc[conf.num_of_ch.at("blc")];
+    // Halfwise TDC from 2D CTDC_vs_HitPat (segment vs channel)
+    TH2D *h2_blca_tdc[conf.num_of_ch.at("blc")];
+    TH2D *h2_blcb_tdc[conf.num_of_ch.at("blc")];
     for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++ ) {
-        h_blca_tdc[i] = (TH1D*)f->Get(Form("BLC%sa_CTDC_plane%d_%s", in_or_out.Data(), i, particle.Data()));
-        h_blcb_tdc[i] = (TH1D*)f->Get(Form("BLC%sb_CTDC_plane%d_%s", in_or_out.Data(), i, particle.Data()));
+        h2_blca_tdc[i] = (TH2D*)f->Get(Form("BLC%sa_CTDC_vs_HitPat_plane%d_%s", in_or_out.Data(), i, particle.Data()));
+        h2_blcb_tdc[i] = (TH2D*)f->Get(Form("BLC%sb_CTDC_vs_HitPat_plane%d_%s", in_or_out.Data(), i, particle.Data()));
+        if (!h2_blca_tdc[i] || !h2_blcb_tdc[i]) {
+            std::cerr << "Error: missing CTDC_vs_HitPat histogram for plane " << i
+                      << " (BLC" << in_or_out << "a/b, particle=" << particle << ")" << std::endl;
+            return;
+        }
     }
- 
+
     // +--------------+
     // | fit and plot |
     // +--------------+
@@ -105,28 +110,113 @@ void analyze(TString path, TString particle){
     TString pdf_path = Form("%s/run%05d_BLC%s_TDC_%s.pdf", img_base_dir.Data(), run_num, in_or_out.Data(), particle.Data());
 
     // -- container -----
-    std::vector<FitResult> blca_tdc;
-    std::vector<FitResult> blcb_tdc;
+    // index: 0=lo (wire 0-15), 1=hi (wire 16-31)
+    std::vector<FitResult> blca_tdc_lo;
+    std::vector<FitResult> blca_tdc_hi;
+    std::vector<FitResult> blcb_tdc_lo;
+    std::vector<FitResult> blcb_tdc_hi;
 
     auto c_blc = new TCanvas("blc", "", 1500, 1200);
     c_blc->Divide(cols, rows);
     c_blc->Print(pdf_path + "["); // start
     nth_pad = 1;
     for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++) {
-        if (nth_pad > max_pads) {
-            c_blc->Print(pdf_path);
-            c_blc->Clear();
-            c_blc->Divide(cols, rows);
-            nth_pad = 1;
-        }
+        // Determine bin ranges for wire 0-15 and 16-31 on the X axis
+        TH2D* h2a = h2_blca_tdc[i];
+        TH2D* h2b = h2_blcb_tdc[i];
+        auto* xax = h2a->GetXaxis();
 
-        FitResult result = ana_helper::dc_tdc_fit(h_blca_tdc[i], c_blc, nth_pad);
-        blca_tdc.push_back(result);
-        nth_pad++;
+        // Use wire bin edges (wire integer centers are usually at 0..31 with edges -0.5..31.5)
+        Int_t bLo1  = xax->FindBin(-0.5);
+        Int_t bHi1  = xax->FindBin(15.5);
+        Int_t bLo2  = xax->FindBin(16.5);
+        Int_t bHi2  = xax->FindBin(31.5);
+        Int_t bLoAll = xax->FindBin(-0.5);
+        Int_t bHiAll = xax->FindBin(31.5);
 
-        result = ana_helper::dc_tdc_fit(h_blcb_tdc[i], c_blc, nth_pad);
-        blcb_tdc.push_back(result);
-        nth_pad++;
+        // Reserve pads in order: a_lo, a_hi, b_lo, b_hi
+        auto get_pad = [&]() -> Int_t {
+            if (nth_pad > max_pads) {
+                c_blc->Print(pdf_path);
+                c_blc->Clear();
+                c_blc->Divide(cols, rows);
+                nth_pad = 1;
+            }
+            return nth_pad++;
+        };
+
+        Int_t pad_a_lo = get_pad();
+        Int_t pad_a_hi = get_pad();
+        Int_t pad_b_lo = get_pad();
+        Int_t pad_b_hi = get_pad();
+
+        // Project all four halves first, then decide fit/copy to avoid Fit on empty hist
+        TH1D* h_a_lo = h2a->ProjectionY(Form("BLC%sa_CTDC_plane%d_lo_%s", in_or_out.Data(), i, particle.Data()),
+                                           bLo1, bHi1);
+        TH1D* h_a_hi = h2a->ProjectionY(Form("BLC%sa_CTDC_plane%d_hi_%s", in_or_out.Data(), i, particle.Data()),
+                                           bLo2, bHi2);
+        TH1D* h_b_lo = h2b->ProjectionY(Form("BLC%sb_CTDC_plane%d_lo_%s", in_or_out.Data(), i, particle.Data()),
+                                           bLo1, bHi1);
+        TH1D* h_b_hi = h2b->ProjectionY(Form("BLC%sb_CTDC_plane%d_hi_%s", in_or_out.Data(), i, particle.Data()),
+                                           bLo2, bHi2);
+        TH1D* h_a_all = h2a->ProjectionY(Form("BLC%sa_CTDC_plane%d_all_%s", in_or_out.Data(), i, particle.Data()),
+                                            bLoAll, bHiAll);
+        TH1D* h_b_all = h2b->ProjectionY(Form("BLC%sb_CTDC_plane%d_all_%s", in_or_out.Data(), i, particle.Data()),
+                                            bLoAll, bHiAll);
+
+        auto empty_result = [&]() -> FitResult {
+            FitResult r;
+            r.par.assign(4, 0.0);
+            r.err.assign(4, 0.0);
+            r.chi_square = 0.0;
+            r.ndf = 0;
+            r.additional.assign(1, 0.0); // must exist: [0]
+            return r;
+        };
+
+        // Seed fit range / Erfc init from full-wire projection (traditional method)
+        ana_helper::DcTdcFitSeed seed_a = ana_helper::dc_tdc_seed(h_a_all);
+        ana_helper::DcTdcFitSeed seed_b = ana_helper::dc_tdc_seed(h_b_all);
+        const ana_helper::DcTdcFitSeed* pseed_a = seed_a.valid ? &seed_a : nullptr;
+        const ana_helper::DcTdcFitSeed* pseed_b = seed_b.valid ? &seed_b : nullptr;
+
+        auto fit_halfwise = [&](TH1D* h_lo, TH1D* h_hi, TH1D* h_all,
+                                Int_t pad_lo, Int_t pad_hi,
+                                const ana_helper::DcTdcFitSeed* pseed,
+                                FitResult& lo_fit, FitResult& hi_fit) {
+            bool lo_ok = (h_lo && h_lo->GetEntries() > 0);
+            bool hi_ok = (h_hi && h_hi->GetEntries() > 0);
+            bool all_ok = (h_all && h_all->GetEntries() > 0);
+
+            if (lo_ok && hi_ok) {
+                lo_fit = ana_helper::dc_tdc_fit(h_lo, c_blc, pad_lo, pseed);
+                hi_fit = ana_helper::dc_tdc_fit(h_hi, c_blc, pad_hi, pseed);
+            } else if (lo_ok && !hi_ok) {
+                lo_fit = ana_helper::dc_tdc_fit(h_lo, c_blc, pad_lo, pseed);
+                hi_fit = lo_fit;
+            } else if (!lo_ok && hi_ok) {
+                hi_fit = ana_helper::dc_tdc_fit(h_hi, c_blc, pad_hi, pseed);
+                lo_fit = hi_fit;
+            } else if (all_ok) {
+                FitResult all_fit = ana_helper::dc_tdc_fit(h_all, c_blc, pad_lo, nullptr);
+                lo_fit = all_fit;
+                hi_fit = all_fit;
+            } else {
+                lo_fit = empty_result();
+                hi_fit = empty_result();
+            }
+        };
+
+        FitResult a_lo_fit, a_hi_fit;
+        fit_halfwise(h_a_lo, h_a_hi, h_a_all, pad_a_lo, pad_a_hi, pseed_a, a_lo_fit, a_hi_fit);
+
+        FitResult b_lo_fit, b_hi_fit;
+        fit_halfwise(h_b_lo, h_b_hi, h_b_all, pad_b_lo, pad_b_hi, pseed_b, b_lo_fit, b_hi_fit);
+
+        blca_tdc_lo.push_back(a_lo_fit);
+        blca_tdc_hi.push_back(a_hi_fit);
+        blcb_tdc_lo.push_back(b_lo_fit);
+        blcb_tdc_hi.push_back(b_hi_fit);
     }
     c_blc->Print(pdf_path);
     c_blc->Print(pdf_path + "]"); // end
@@ -144,9 +234,11 @@ void analyze(TString path, TString particle){
         ch = i;
         tdc_p0_val.clear();
     
-        // -- tdc -----
-        tdc_p0_val.push_back(blca_tdc[i].additional[0]);
-        tdc_p0_val.push_back(blcb_tdc[i].additional[0]);
+        // -- tdc (halfwise): [a_lo, a_hi, b_lo, b_hi] -----
+        tdc_p0_val.push_back(blca_tdc_lo[i].additional[0]);
+        tdc_p0_val.push_back(blca_tdc_hi[i].additional[0]);
+        tdc_p0_val.push_back(blcb_tdc_lo[i].additional[0]);
+        tdc_p0_val.push_back(blcb_tdc_hi[i].additional[0]);
     
         tree->Fill();
     }    

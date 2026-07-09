@@ -25,13 +25,30 @@ def make_dictdata(root_file_path):
     for i in range(len(tree["tdc_p0_val"])):
         # Cid - Plid - WireId
         ch = tree["ch"][i]
+        vals = tree["tdc_p0_val"][i]
+        nvals = len(vals)
+
         for WireId in range(32):
+            # Decide p0 for a/b depending on available schema
+            if nvals >= 4:
+                # [a_lo, a_hi, b_lo, b_hi]
+                if WireId < 16:
+                    p0_a = vals[0]
+                    p0_b = vals[2]
+                else:
+                    p0_a = vals[1]
+                    p0_b = vals[3]
+            else:
+                # Backward compatibility: treat as single value per side
+                p0_a = vals[0]
+                p0_b = vals[1] if nvals > 1 else vals[0]
+
             # -- TDC BLCa -----
             key = f"{detector_id}-{ch:.0f}-{WireId:.0f}"
-            data[key] = [ tree["tdc_p0_val"][i][0], -0.8333333333 ]
+            data[key] = [ p0_a, -0.8333333333 ]
             # -- TDC BLCb -----
             key = f"{detector_id+1}-{ch:.0f}-{WireId:.0f}"
-            data[key] = [ tree["tdc_p0_val"][i][1], -0.8333333333 ]
+            data[key] = [ p0_b, -0.8333333333 ]
 
     return data
 # ---------------------------------------------------------------------------

@@ -1,68 +1,162 @@
 #include "ana_helper.h"
 
+#include <cmath>
+#include <iostream>
+
 namespace ana_helper {
 
-    // ____________________________________________________________________________________________    
-    FitResult dc_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c) {
-        Config& conf = Config::getInstance();
+namespace {
 
-        c->cd(n_c);
-        TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
-        FitResult result;
+constexpr Double_t kTdcFitWidth = 80.0;
 
-        Double_t tdc_width = 80.0;
-        Double_t fit_range_min = h->GetXaxis()->GetBinCenter( h->GetMaximumBin() ) - 5.0;
-        Double_t fit_range_max = fit_range_min + tdc_width;
+std::pair<Double_t, Double_t> dc_tdc_default_range(TH1D *h)
+{
+    Double_t fit_range_min = h->GetXaxis()->GetBinCenter(h->GetMaximumBin()) - 5.0;
+    return {fit_range_min, fit_range_min + kTdcFitWidth};
+}
 
-        TF1 *fit_f = new TF1( Form("dc_t0_%s", h->GetName()), "[0]*TMath::Erfc( (x-[1])/[2] ) + [3]", fit_range_min, fit_range_max);
-        fit_f->SetParameter(0, h->GetMaximum() / 2.0);
-        fit_f->SetParameter(1, h->GetXaxis()->GetBinCenter( h->GetMaximumBin() ) + 10.0);
+TF1 *make_dc_tdc_tf1(const char *name, Double_t fit_range_min, Double_t fit_range_max)
+{
+    return new TF1(name, "[0]*TMath::Erfc( (x-[1])/[2] ) + [3]", fit_range_min, fit_range_max);
+}
+
+void set_dc_tdc_init_params(TF1 *fit_f, TH1D *h, const DcTdcFitSeed *seed)
+{
+    fit_f->SetParameter(0, h->GetMaximum() / 2.0);
+    if (seed && seed->valid) {
+        fit_f->SetParameter(1, seed->par1);
+        fit_f->SetParameter(2, seed->par2);
+        fit_f->SetParameter(3, seed->par3);
+    } else {
+        fit_f->SetParameter(1, h->GetXaxis()->GetBinCenter(h->GetMaximumBin()) + 10.0);
         fit_f->SetParameter(2, 10.0);
         fit_f->SetParameter(3, 0.0);
-        fit_f->SetLineColor(kOrange);
-        fit_f->SetLineWidth(1);
-        h->Fit(fit_f, fit_option.Data(), "", fit_range_min, fit_range_max);
+    }
+}
 
-        for (Int_t i = 0; i < 4; i++) {
-            result.par.push_back(fit_f->GetParameter(i));
-            result.err.push_back(fit_f->GetParError(i));
-        }
-        result.chi_square = fit_f->GetChisquare();
-        result.ndf        = fit_f->GetNDF();
+Double_t dc_tdc_t0_from_fit(TF1 *fit_f, Double_t fit_range_max)
+{
+    std::vector<Double_t> par(4);
+    for (Int_t i = 0; i < 4; i++) {
+        par[i] = fit_f->GetParameter(i);
+    }
 
-        // 数値的に解を求めるためのRootFinderの設定, t0の値を調べる
-        Double_t target_value_ratio = 0.005;
-        Double_t target_value = 2.0*result.par[0] * target_value_ratio;
-        ROOT::Math::RootFinder rootFinder(ROOT::Math::RootFinder::kBRENT);
-        ROOT::Math::Functor1D erfc_func([=](Double_t x) { return result.par[0]*TMath::Erfc( (x-result.par[1])/result.par[2] ) - target_value; });
-        rootFinder.SetFunction(erfc_func, result.par[1], fit_range_max); // 探索範囲が第2, 3引数
-        Bool_t is_success = rootFinder.Solve();
-        Double_t t0 = is_success ? rootFinder.Root() : 0.0;
-        result.additional.push_back(t0);
+    Double_t target_value_ratio = 0.005;
+    Double_t target_value = 2.0 * par[0] * target_value_ratio;
+    ROOT::Math::RootFinder rootFinder(ROOT::Math::RootFinder::kBRENT);
+    ROOT::Math::Functor1D erfc_func([=](Double_t x) {
+        return par[0] * TMath::Erfc((x - par[1]) / par[2]) - target_value;
+    });
+    rootFinder.SetFunction(erfc_func, par[1], fit_range_max);
+    return rootFinder.Solve() ? rootFinder.Root() : 0.0;
+}
 
-        // draw
-        h->GetXaxis()->SetRangeUser(fit_range_min - tdc_width/2.0, fit_range_max);
-        h->Draw();
-        fit_f->Draw("same");
-
-        // 縦の点線を引くためのラインオブジェクトの作成
-        // TLine *line = new TLine(par[1]+par[2], 0, par[1]+par[2], h->GetMaximum());
-        TLine *line = new TLine(t0, 0.0, t0, h->GetMaximum());
-        line->SetLineStyle(2); // 点線に設定
-        line->SetLineColor(kRed); // 色を赤に設定
-        
-        // ラインを描画
-        line->Draw("same");
-
+FitResult dc_tdc_fit_impl(TH1D *h, TCanvas *c, Int_t n_c, const DcTdcFitSeed *seed, Bool_t draw)
+{
+    FitResult result;
+    if (!h || h->GetEntries() <= 0) {
+        result.par.assign(4, 0.0);
+        result.err.assign(4, 0.0);
+        result.chi_square = 0.0;
+        result.ndf = 0;
+        result.additional.assign(1, 0.0);
         return result;
     }
 
-    // ____________________________________________________________________________________________    
-    TGraph* make_drift_function(TH1D *h, TCanvas *c, Int_t n_c, Int_t plane)
+    Double_t fit_range_min = 0.0;
+    Double_t fit_range_max = 0.0;
+    if (seed && seed->valid) {
+        fit_range_min = seed->range_min;
+        fit_range_max = seed->range_max;
+    } else {
+        std::tie(fit_range_min, fit_range_max) = dc_tdc_default_range(h);
+    }
+
+    if (draw) {
+        c->cd(n_c);
+    }
+
+    TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
+    TF1 *fit_f = make_dc_tdc_tf1(Form("dc_t0_%s", h->GetName()), fit_range_min, fit_range_max);
+    set_dc_tdc_init_params(fit_f, h, seed);
+    fit_f->SetLineColor(kOrange);
+    fit_f->SetLineWidth(1);
+    h->Fit(fit_f, fit_option.Data(), "", fit_range_min, fit_range_max);
+
+    for (Int_t i = 0; i < 4; i++) {
+        result.par.push_back(fit_f->GetParameter(i));
+        result.err.push_back(fit_f->GetParError(i));
+    }
+    result.chi_square = fit_f->GetChisquare();
+    result.ndf = fit_f->GetNDF();
+
+    Double_t t0 = dc_tdc_t0_from_fit(fit_f, fit_range_max);
+    result.additional.push_back(t0);
+
+    if (draw) {
+        Double_t xrange_min = fit_range_min - kTdcFitWidth / 2.0;
+        Double_t xrange_max = fit_range_max;
+        if (t0 > 0.0 && std::isfinite(t0)) {
+            if (t0 < xrange_min) xrange_min = t0 - 10.0;
+            if (t0 > xrange_max) xrange_max = t0 + 10.0;
+        } else {
+            std::cerr << "Warning: dc_tdc_fit could not determine t0 for "
+                      << h->GetName() << std::endl;
+        }
+
+        h->GetXaxis()->SetRangeUser(xrange_min, xrange_max);
+        h->Draw();
+        fit_f->Draw("same");
+        c->Update();
+
+        if (t0 > 0.0 && std::isfinite(t0)) {
+            TLine *line = new TLine(t0, gPad->GetUymin(), t0, gPad->GetUymax());
+            line->SetLineStyle(2);
+            line->SetLineColor(kRed);
+            line->Draw("same");
+        }
+    }
+
+    // fit_f is owned by the histogram after h->Fit(); do not delete here.
+    return result;
+}
+
+} // namespace
+
+    // ____________________________________________________________________________________________
+    DcTdcFitSeed dc_tdc_seed(TH1D *h)
+    {
+        DcTdcFitSeed seed;
+        if (!h || h->GetEntries() <= 0) {
+            return seed;
+        }
+
+        FitResult seed_fit = dc_tdc_fit_impl(h, nullptr, 0, nullptr, kFALSE);
+        if (seed_fit.par.size() < 4) {
+            return seed;
+        }
+
+        std::tie(seed.range_min, seed.range_max) = dc_tdc_default_range(h);
+        seed.par1 = seed_fit.par[1];
+        seed.par2 = seed_fit.par[2];
+        seed.par3 = seed_fit.par[3];
+        seed.valid = kTRUE;
+        return seed;
+    }
+
+    // ____________________________________________________________________________________________
+    FitResult dc_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c, const DcTdcFitSeed *seed)
+    {
+        return dc_tdc_fit_impl(h, c, n_c, seed, kTRUE);
+    }
+
+    // ____________________________________________________________________________________________
+    TGraph* make_drift_function(TH1D *h, TCanvas *c, Int_t n_c, Int_t plane,
+                                const char* wire_range_suffix)
     {
         Config& conf = Config::getInstance();
         if (!h) return nullptr;
-        c->cd(n_c);
+        if (c) c->cd(n_c);
     
         Double_t max_dt = conf.max_drift_time.at(conf.detector.Data()); // ns
         Double_t max_dl = conf.max_drift_length.at(conf.detector.Data()); // mm
@@ -101,11 +195,22 @@ namespace ana_helper {
         TGraph* g = new TGraph(npoints, dt.data(), dl.data());
 
         // 名前とタイトルを設定
-        TString gname = Form("%s_Hit_DriftFunction_plane%d", conf.detector.Data(), plane);
+        TString gname;
+        if (wire_range_suffix && wire_range_suffix[0] != '\0') {
+            gname = Form("%s_Hit_DriftFunction_plane%d%s", conf.detector.Data(), plane, wire_range_suffix);
+        } else {
+            gname = Form("%s_Hit_DriftFunction_plane%d", conf.detector.Data(), plane);
+        }
         gname.ReplaceAll("DriftTime", "DriftFunction");  // 名前の一部を置き換え
 
         TString gtitle;
-        gtitle.Form("DriftFunction %s plane%d;Drift Time [ns];Drift Length [mm]", conf.detector.Data(), plane);
+        if (wire_range_suffix && wire_range_suffix[0] != '\0') {
+            gtitle.Form("DriftFunction %s plane%d%s;Drift Time [ns];Drift Length [mm]",
+                        conf.detector.Data(), plane, wire_range_suffix);
+        } else {
+            gtitle.Form("DriftFunction %s plane%d;Drift Time [ns];Drift Length [mm]",
+                        conf.detector.Data(), plane);
+        }
 
         g->SetName(gname);
         g->SetTitle(gtitle);
@@ -117,7 +222,7 @@ namespace ana_helper {
         g->SetMarkerStyle(8);
         g->SetMarkerSize(0.4);
 
-        g->Draw("APC");
+        if (c) g->Draw("APC");
 
         return g;
     }

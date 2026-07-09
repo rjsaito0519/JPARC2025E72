@@ -1,5 +1,6 @@
 // -*- C++ -*-
 // DstTPCHelixTracking 出力（ツリー "tpc"）の 3D 目視レビュー。ベースは check_tpc_track_3d.C。
+// vtx 探索・ターゲット跨ぎ断片の整理: ../docs/tpc_helix_vertex_and_target_fragment.md
 //
 // Usage:
 //   root -l
