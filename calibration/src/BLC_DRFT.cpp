@@ -24,7 +24,6 @@
 #include <TDatime.h>
 #include <TNamed.h>
 #include <TGraph.h>
-#include <TPad.h>
 
 // Custom headers
 #include "config.h"
@@ -53,34 +52,27 @@ void push_if(TGraph* g, std::vector<TGraph*>& out)
     if (g) out.push_back(g);
 }
 
-// One canvas pad: DriftTime hist (left) + DriftFunction graph (right).
-TGraph* draw_drift_half(TH1D* h, TCanvas* c, Int_t pad, Int_t plane, const char* wire_range_suffix)
+void draw_drift_hist(TH1D* h, TCanvas* c, Int_t pad)
 {
-    if (!h || h->GetEntries() <= 0) return nullptr;
-
-    TGraph* g = ana_helper::make_drift_function(h, nullptr, 0, plane, wire_range_suffix);
-    if (!c) return g;
-
+    if (!h || !c || h->GetEntries() <= 0) return;
     c->cd(pad);
-    TString tag = Form("plane%d%s", plane, wire_range_suffix);
-    auto* pad_hist = new TPad(Form("hist_%s", tag.Data()), "", 0.02, 0.02, 0.48, 0.98);
-    auto* pad_graph = new TPad(Form("graph_%s", tag.Data()), "", 0.52, 0.02, 0.98, 0.98);
-    pad_hist->Draw();
-    pad_graph->Draw();
-
-    pad_hist->cd();
     h->Draw();
-
-    if (g) {
-        pad_graph->cd();
-        g->Draw("APC");
-    }
-    return g;
 }
 
-void make_halfwise_drift(TH1D* h_lo, TH1D* h_hi, TH1D* h_all,
-                         TCanvas* c, Int_t pad_lo, Int_t pad_hi,
-                         Int_t plane, std::vector<TGraph*>& out)
+TGraph* draw_drift_graph(TH1D* h, TCanvas* c, Int_t pad, Int_t plane, const char* wire_range_suffix)
+{
+    if (!h || h->GetEntries() <= 0) return nullptr;
+    return ana_helper::make_drift_function(h, c, pad, plane, wire_range_suffix);
+}
+
+// Legacy PDF layout per 2x2 page:
+//   [lo DriftTime hist] [lo DriftFunction]
+//   [hi DriftTime hist] [hi DriftFunction]
+void make_halfwise_drift_page(TH1D* h_lo, TH1D* h_hi, TH1D* h_all,
+                              TCanvas* c,
+                              Int_t pad_lo_hist, Int_t pad_lo_graph,
+                              Int_t pad_hi_hist, Int_t pad_hi_graph,
+                              Int_t plane, std::vector<TGraph*>& out)
 {
     const bool lo_ok  = (h_lo  && h_lo->GetEntries() > 0);
     const bool hi_ok  = (h_hi  && h_hi->GetEntries() > 0);
@@ -90,21 +82,33 @@ void make_halfwise_drift(TH1D* h_lo, TH1D* h_hi, TH1D* h_all,
     TGraph* g_hi = nullptr;
 
     if (lo_ok && hi_ok) {
-        g_lo = draw_drift_half(h_lo, c, pad_lo, plane, "-w0-15");
-        g_hi = draw_drift_half(h_hi, c, pad_hi, plane, "-w16-31");
+        draw_drift_hist(h_lo, c, pad_lo_hist);
+        g_lo = draw_drift_graph(h_lo, c, pad_lo_graph, plane, "-w0-15");
+        draw_drift_hist(h_hi, c, pad_hi_hist);
+        g_hi = draw_drift_graph(h_hi, c, pad_hi_graph, plane, "-w16-31");
     } else if (lo_ok && !hi_ok) {
-        g_lo = draw_drift_half(h_lo, c, pad_lo, plane, "-w0-15");
+        draw_drift_hist(h_lo, c, pad_lo_hist);
+        g_lo = draw_drift_graph(h_lo, c, pad_lo_graph, plane, "-w0-15");
         g_hi = clone_drift_graph(g_lo, plane, "-w16-31");
     } else if (!lo_ok && hi_ok) {
-        g_hi = draw_drift_half(h_hi, c, pad_hi, plane, "-w16-31");
+        draw_drift_hist(h_hi, c, pad_hi_hist);
+        g_hi = draw_drift_graph(h_hi, c, pad_hi_graph, plane, "-w16-31");
         g_lo = clone_drift_graph(g_hi, plane, "-w0-15");
     } else if (all_ok) {
-        g_lo = draw_drift_half(h_all, c, pad_lo, plane, "-w0-15");
+        draw_drift_hist(h_all, c, pad_lo_hist);
+        g_lo = draw_drift_graph(h_all, c, pad_lo_graph, plane, "-w0-15");
         g_hi = clone_drift_graph(g_lo, plane, "-w16-31");
     }
 
     push_if(g_lo, out);
     push_if(g_hi, out);
+}
+
+void print_drift_page(TCanvas* c, const TString& pdf_path)
+{
+    c->Print(pdf_path);
+    c->Clear();
+    c->Divide(2, 2);
 }
 
 } // namespace
@@ -191,19 +195,14 @@ void analyze(TString path, TString particle){
     // +--------------+
     // | fit and plot |
     // +--------------+
-    Int_t nth_pad = 1;
-    // 2x2 per plane: a_lo, a_hi, b_lo, b_hi (each pad: hist | graph inside)
-    Int_t rows = 2, cols = 2;
-    Int_t max_pads = rows * cols;
     TString img_base_dir = ana_helper::get_img_dir(OUTPUT_DIR, run_num);
     TString pdf_path = Form("%s/run%05d_BLC%s_DRIFT_%s.pdf", img_base_dir.Data(), run_num, in_or_out.Data(), particle.Data());
 
     std::vector<TGraph*> drift_graphs;
 
     auto c_blc = new TCanvas("blc", "", 1500, 1200);
-    c_blc->Divide(cols, rows);
+    c_blc->Divide(2, 2);
     c_blc->Print(pdf_path + "["); // start
-    nth_pad = 1;
 
     for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++) {
         TH2D* h2a = h2_blca_drift[i];
@@ -216,21 +215,6 @@ void analyze(TString path, TString particle){
         Int_t bHi2  = xax->FindBin(31.5);
         Int_t bLoAll = xax->FindBin(-0.5);
         Int_t bHiAll = xax->FindBin(31.5);
-
-        auto get_pad = [&]() -> Int_t {
-            if (nth_pad > max_pads) {
-                c_blc->Print(pdf_path);
-                c_blc->Clear();
-                c_blc->Divide(cols, rows);
-                nth_pad = 1;
-            }
-            return nth_pad++;
-        };
-
-        Int_t pad_a_lo = get_pad();
-        Int_t pad_a_hi = get_pad();
-        Int_t pad_b_lo = get_pad();
-        Int_t pad_b_hi = get_pad();
 
         TH1D* h_a_lo = h2a->ProjectionY(Form("BLC%sa_Hit_DriftTime_plane%d_w0-15_%s", in_or_out.Data(), i, particle.Data()),
                                         bLo1, bHi1);
@@ -245,21 +229,26 @@ void analyze(TString path, TString particle){
         TH1D* h_b_all = h2b->ProjectionY(Form("BLC%sb_Hit_DriftTime_plane%d_all_%s", in_or_out.Data(), i, particle.Data()),
                                           bLoAll, bHiAll);
 
-        // --- a side: plane-level fallback TGraph (param only) + halfwise (default) ---
         conf.detector = Form("BLC%sa", in_or_out.Data());
         if (h_blca_drift[i]) {
             push_if(ana_helper::make_drift_function(h_blca_drift[i], nullptr, 0, i, nullptr), drift_graphs);
         }
-        make_halfwise_drift(h_a_lo, h_a_hi, h_a_all, c_blc, pad_a_lo, pad_a_hi, i, drift_graphs);
 
-        // --- b side ---
+        // PDF page (2x2): a side — same pad order as legacy [lo hist][lo graph] / [hi hist][hi graph]
+        c_blc->Clear();
+        c_blc->Divide(2, 2);
+        make_halfwise_drift_page(h_a_lo, h_a_hi, h_a_all, c_blc, 1, 2, 3, 4, i, drift_graphs);
+        print_drift_page(c_blc, pdf_path);
+
         conf.detector = Form("BLC%sb", in_or_out.Data());
         if (h_blcb_drift[i]) {
             push_if(ana_helper::make_drift_function(h_blcb_drift[i], nullptr, 0, i, nullptr), drift_graphs);
         }
-        make_halfwise_drift(h_b_lo, h_b_hi, h_b_all, c_blc, pad_b_lo, pad_b_hi, i, drift_graphs);
+
+        // PDF page (2x2): b side
+        make_halfwise_drift_page(h_b_lo, h_b_hi, h_b_all, c_blc, 1, 2, 3, 4, i, drift_graphs);
+        print_drift_page(c_blc, pdf_path);
     }
-    c_blc->Print(pdf_path);
     c_blc->Print(pdf_path + "]"); // end
     delete c_blc;
 

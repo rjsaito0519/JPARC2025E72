@@ -34,6 +34,30 @@ void set_dc_tdc_init_params(TF1 *fit_f, TH1D *h, const DcTdcFitSeed *seed)
     }
 }
 
+void clear_hist_fit_functions(TH1D *h)
+{
+    if (!h) return;
+    TObject* obj = nullptr;
+    while ((obj = h->GetListOfFunctions()->First())) {
+        h->GetListOfFunctions()->Remove(obj);
+        delete obj;
+    }
+}
+
+Double_t dc_tdc_fixed_amplitude(TH1D *h, Double_t bg)
+{
+    Double_t signal_max = h->GetMaximum() - bg;
+    if (signal_max < 1.0) signal_max = h->GetMaximum();
+    return signal_max / 2.0;
+}
+
+TF1 *run_dc_tdc_fit(TH1D *h, TF1 *fit_f, const char *fit_option,
+                    Double_t fit_range_min, Double_t fit_range_max)
+{
+    h->Fit(fit_f, fit_option, "", fit_range_min, fit_range_max);
+    return fit_f;
+}
+
 Double_t dc_tdc_t0_from_fit(TF1 *fit_f, Double_t fit_range_max)
 {
     std::vector<Double_t> par(4);
@@ -77,11 +101,30 @@ FitResult dc_tdc_fit_impl(TH1D *h, TCanvas *c, Int_t n_c, const DcTdcFitSeed *se
     }
 
     TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
+
+    // Stage 1: free 4-parameter fit to estimate shape / background.
+    TF1 *prefit = make_dc_tdc_tf1(Form("dc_t0_%s_prefit", h->GetName()),
+                                  fit_range_min, fit_range_max);
+    set_dc_tdc_init_params(prefit, h, seed);
+    run_dc_tdc_fit(h, prefit, fit_option.Data(), fit_range_min, fit_range_max);
+
+    Double_t pre_par[4] = {0.0, 0.0, 10.0, 0.0};
+    for (Int_t i = 0; i < 4; ++i) {
+        pre_par[i] = prefit->GetParameter(i);
+    }
+
+    // Stage 2: fix amplitude at (peak - background) / 2, inherit other inits from stage 1.
+    clear_hist_fit_functions(h);
+    Double_t amp_fixed = dc_tdc_fixed_amplitude(h, pre_par[3]);
     TF1 *fit_f = make_dc_tdc_tf1(Form("dc_t0_%s", h->GetName()), fit_range_min, fit_range_max);
-    set_dc_tdc_init_params(fit_f, h, seed);
+    fit_f->SetParameter(0, amp_fixed);
+    fit_f->SetParameter(1, pre_par[1]);
+    fit_f->SetParameter(2, pre_par[2]);
+    fit_f->SetParameter(3, pre_par[3]);
+    fit_f->FixParameter(0, amp_fixed);
     fit_f->SetLineColor(kOrange);
     fit_f->SetLineWidth(1);
-    h->Fit(fit_f, fit_option.Data(), "", fit_range_min, fit_range_max);
+    run_dc_tdc_fit(h, fit_f, fit_option.Data(), fit_range_min, fit_range_max);
 
     for (Int_t i = 0; i < 4; i++) {
         result.par.push_back(fit_f->GetParameter(i));

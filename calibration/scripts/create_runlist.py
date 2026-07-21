@@ -78,7 +78,7 @@ PARAM_DEFS = {
     "HDPRM:":  {"dir": "HDPRM",  "prefix": "HodoParam_run",        "tpl": "HodoParam_e72_example"},
     "HDPHC:":  {"dir": "HDPHC",  "prefix": "HodoPHCParam_run",     "tpl": "HodoPHCParam_e72_example"},
     "DCTDC:":  {"dir": "DCTDC",  "prefix": "DCTdcParam_run",       "tpl": "DCTdcParam_e72_example"},
-    "DCDRFT:": {"dir": "DCDRFT", "prefix": "DCDriftParam_run",     "tpl": "DCDriftParam_260602.root"},
+    "DCDRFT:": {"dir": "DCDRFT", "prefix": "DCDriftParam_run",     "tpl": "DCDriftParam_e72_example.root"},
     "DCGEO:":  {"dir": "DCGEO",  "prefix": "DCGeomParam_run",      "tpl": "DCGeomParam_e72_example"},
 }
 
@@ -146,22 +146,26 @@ for suffix in args.suffix:
         print(f"Warning: Failed to create symlink: {e}")
 
     # Collect for runlist
+    option = ""
     if mode_label == "hodo":
         binary = "./bin/Hodoscope"
         unit = 100000
     elif args.bcin:
         binary = "./bin/BcInTracking"
-        unit = 25000
+        unit = 50000
+        option = "-n 2" 
     else:
         binary = "./bin/BcOutTracking"
         unit = 50000
+        option = "-n 2" 
     all_runs_info.append({
         "label": f"run{args.run_num:05d}_{suffix}_{mode_label}:",
         "bin": binary,
         "conf": f"param/conf/{SUB_DIR}/{conf_target_file.name}",
         "data": f"rawdata/run{args.run_num:05d}.dat",
         "root": str(actual_root_abs),
-        "unit": unit
+        "unit": unit,
+        "option": option
     })
 
 # 4. Update Runlist (Always recover WORKDIR and DEFAULT from myexample.yml)
@@ -185,6 +189,7 @@ with open(runlist_target_file, "w") as f_out:
         f_out.write(f"    data: {r['data']}\n")
         f_out.write(f"    root: {r['root']}\n")
         f_out.write(f"    unit: {r['unit']}\n")
+        f_out.write(f"    option: {r['option']}\n")
 
 # Output Report
 print(colored(f"\n[SUCCESS] Setup for Run {args.run_num} {args.suffix} ({prefix})", "green"))

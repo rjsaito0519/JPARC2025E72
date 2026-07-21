@@ -34,6 +34,8 @@ def main():
     group.add_argument('--bcout', action="store_true", help='Set mode to BcOut calibration (default if no flag is set)')
     group.add_argument('--bcin', action="store_true", help='Set mode to BcIn calibration')
     parser.add_argument('--kaon', action="store_true", help='Use Kaon (K) suffix instead of Pion (Pi)')
+    parser.add_argument('--guess', action="store_true",
+                        help='Use full-wire projection as Erfc fit seed for TDC (legacy; t0 mode only)')
     
     args = parser.parse_args()
 
@@ -86,7 +88,8 @@ def main():
             sys.exit(1)
             
         print(colored(">>> Step 1: Running BLC_TDC", "cyan"))
-        run_command(f"{executable} {input_root_file} {suffix}")
+        guess_flag = " --guess" if args.guess else ""
+        run_command(f"{executable} {input_root_file} {suffix}{guess_flag}")
         
         print(colored(">>> Step 2: Updating Parameters (DCTDC)", "cyan"))
         det_flag = "--bcin" if args.bcin else "--bcout"

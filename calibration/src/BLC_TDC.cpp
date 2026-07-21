@@ -29,7 +29,7 @@
 
 Config& conf = Config::getInstance();
 
-void analyze(TString path, TString particle){    
+void analyze(TString path, TString particle, Bool_t use_guess){    
     // +---------+
     // | setting |
     // +---------+
@@ -174,11 +174,18 @@ void analyze(TString path, TString particle){
             return r;
         };
 
-        // Seed fit range / Erfc init from full-wire projection (traditional method)
-        ana_helper::DcTdcFitSeed seed_a = ana_helper::dc_tdc_seed(h_a_all);
-        ana_helper::DcTdcFitSeed seed_b = ana_helper::dc_tdc_seed(h_b_all);
-        const ana_helper::DcTdcFitSeed* pseed_a = seed_a.valid ? &seed_a : nullptr;
-        const ana_helper::DcTdcFitSeed* pseed_b = seed_b.valid ? &seed_b : nullptr;
+        // Default: each half uses its own init (nullptr seed).
+        // --guess: borrow Erfc init / fit range from full-wire projection.
+        ana_helper::DcTdcFitSeed seed_a;
+        ana_helper::DcTdcFitSeed seed_b;
+        const ana_helper::DcTdcFitSeed* pseed_a = nullptr;
+        const ana_helper::DcTdcFitSeed* pseed_b = nullptr;
+        if (use_guess) {
+            seed_a = ana_helper::dc_tdc_seed(h_a_all);
+            seed_b = ana_helper::dc_tdc_seed(h_b_all);
+            pseed_a = seed_a.valid ? &seed_a : nullptr;
+            pseed_b = seed_b.valid ? &seed_b : nullptr;
+        }
 
         auto fit_halfwise = [&](TH1D* h_lo, TH1D* h_hi, TH1D* h_all,
                                 Int_t pad_lo, Int_t pad_hi,
@@ -252,7 +259,7 @@ Int_t main(int argc, char** argv) {
 
     // -- check argments -----
     if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <root file path> <particle>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <root file path> <particle> [--guess]" << std::endl;
         return 1;
     }
     TString path = argv[1];
@@ -262,6 +269,17 @@ Int_t main(int argc, char** argv) {
         return 1;
     }
 
-    analyze(path, particle);
+    Bool_t use_guess = kFALSE;
+    for (Int_t i = 3; i < argc; ++i) {
+        if (TString(argv[i]) == "--guess") {
+            use_guess = kTRUE;
+        } else {
+            std::cerr << "Error: Unknown option: " << argv[i] << std::endl;
+            std::cerr << "Usage: " << argv[0] << " <root file path> <particle> [--guess]" << std::endl;
+            return 1;
+        }
+    }
+
+    analyze(path, particle, use_guess);
     return 0;
 }
