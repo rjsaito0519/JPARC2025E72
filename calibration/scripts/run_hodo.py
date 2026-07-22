@@ -30,6 +30,11 @@ def main():
     parser.add_argument("mode", type=str, choices=["hdprm", "t0", "hdphc"], help="Calibration Mode")
     parser.add_argument('--kaon', action="store_true", help='Use Kaon (K) suffix instead of Pion (Pi)')
     parser.add_argument('--ftof', action="store_true", help='Include FTOF-related detectors (CVC, SFV, SAC3 for hdprm; CVC for hdphc)')
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Skip parameter update; run analysis and produce PDFs only",
+    )
 
     args = parser.parse_args()
 
@@ -52,6 +57,8 @@ def main():
     print(colored(f"[INFO] Mode: {mode} (Suffix: {suffix})", "green"))
     if args.ftof:
         print(colored("[INFO] FTOF detectors included", "green"))
+    if args.debug:
+        print(colored("[INFO] DEBUG mode: parameter update will be skipped", "yellow"))
 
     bin_dir = project_root / "bin"
     script_dir = Path(__file__).parent
@@ -72,8 +79,11 @@ def main():
             else:
                 print(colored(f"[Warning] Binary {binary.name} not found. Skipping.", "yellow"))
         
-        print(colored(">>> Step 2: Updating Parameters (HDPRM)", "cyan"))
-        run_command(f"python3 {update_script} {run_num} {suffix} hdprm")
+        if not args.debug:
+            print(colored(">>> Step 2: Updating Parameters (HDPRM)", "cyan"))
+            run_command(f"python3 {update_script} {run_num} {suffix} hdprm")
+        else:
+            print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
         
     elif mode == "t0":
         # Run T0_Offset -> update_param.py t0
@@ -85,8 +95,11 @@ def main():
         print(colored(">>> Step 1: Running T0_Offset", "cyan"))
         run_command(f"{executable} {input_root_file} {suffix}")
         
-        print(colored(">>> Step 2: Updating Parameters (T0)", "cyan"))
-        run_command(f"python3 {update_script} {run_num} {suffix} t0")
+        if not args.debug:
+            print(colored(">>> Step 2: Updating Parameters (T0)", "cyan"))
+            run_command(f"python3 {update_script} {run_num} {suffix} t0")
+        else:
+            print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
         
     elif mode == "hdphc":
         # Run BHT_PHC, BH2_PHC, HTOF_PHC, T1_PHC, CVC_PHC
@@ -101,8 +114,11 @@ def main():
             else:
                 print(colored(f"[Warning] Binary {binary.name} not found. Skipping.", "yellow"))
         
-        print(colored(">>> Step 2: Updating Parameters (HDPHC)", "cyan"))
-        run_command(f"python3 {update_script} {run_num} {suffix} hdphc")
+        if not args.debug:
+            print(colored(">>> Step 2: Updating Parameters (HDPHC)", "cyan"))
+            run_command(f"python3 {update_script} {run_num} {suffix} hdphc")
+        else:
+            print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
 
     print(colored(f"\n[DONE] Hodo Calibration Complete for mode: {mode}", "green", attrs=["bold"]))
 

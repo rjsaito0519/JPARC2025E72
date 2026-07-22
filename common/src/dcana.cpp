@@ -282,7 +282,7 @@ FitResult dc_tdc_fit_impl(TH1D *h, TCanvas *c, Int_t n_c, const DcTdcFitSeed *se
 
         Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
         Double_t width    = h->GetStdDev();
-        std::pair<Double_t, Double_t> peak_n_sigma(2.0, 2.0);
+        std::pair<Double_t, Double_t> peak_n_sigma(1.3, 1.3);
         
         // -- first fit -----
         Double_t lower = std::max(peak_pos-peak_n_sigma.first*width,  h->GetXaxis()->GetXmin());

@@ -20,7 +20,7 @@ def colored(text, color):
 
 parser = argparse.ArgumentParser(
     prog="make_runlist",
-    usage="python3 create_runlist.py <run_num> <suffix> [--bcout | --bcin]",
+    usage="python3 create_runlist.py <run_num> <suffix> [--bcout | --bcin] [--ref RUN]",
     description="Tool to create analyzer .conf and .yml runlist files with smart storage management.",
     add_help=True,
 )
@@ -31,11 +31,17 @@ parser.add_argument("suffix",  type=str, help="Input suffixes (e.g. Pi_hdprm K_t
 group = parser.add_mutually_exclusive_group()
 group.add_argument('--bcout', action="store_true", help='Set mode to BcOut calibration')
 group.add_argument('--bcin', action="store_true", help='Set mode to BcIn calibration')
+parser.add_argument(
+    "--ref", type=int, default=None,
+    help="Use calibrated params from this run (default: run_num)",
+)
 
 args = parser.parse_args()
 # ---------------------------------------------------------------------------
 
 SUB_DIR = config.SUB_DIR
+param_run = args.ref if args.ref is not None else args.run_num
+use_ref = args.ref is not None
 
 # 0. Ensure directory structures exist
 (config.OUTPUT_DIR / "root" / f"run{args.run_num:05d}").mkdir(parents=True, exist_ok=True)
@@ -108,7 +114,7 @@ for suffix in args.suffix:
             if len(s_list) > 1 and s_list[0] in PARAM_DEFS:
                 p_key = s_list[0]
                 p_info = PARAM_DEFS[p_key]
-                filename = f"{p_info['prefix']}{args.run_num:05d}"
+                filename = f"{p_info['prefix']}{param_run:05d}"
                 if p_key != "USER:": filename += f"_{suffix_head}"
                 if p_key == "DCDRFT:": filename += ".root"
                 
@@ -116,6 +122,12 @@ for suffix in args.suffix:
                 target_path_abs = config.PARAM_DIR / p_info['dir'] / SUB_DIR / filename
                 if target_path_abs.exists():
                     rel_path = f"param/{p_info['dir']}/{SUB_DIR}/{filename}"
+                elif use_ref:
+                    print(colored(
+                        f"Error: --ref {param_run} param not found: {target_path_abs}",
+                        "red",
+                    ))
+                    sys.exit(1)
                 else:
                     # Use template/default file
                     rel_path = f"param/{p_info['dir']}/{p_info['tpl']}"
@@ -193,6 +205,7 @@ with open(runlist_target_file, "w") as f_out:
 
 # Output Report
 print(colored(f"\n[SUCCESS] Setup for Run {args.run_num} {args.suffix} ({prefix})", "green"))
+print(f"  - Params from: run{param_run:05d}" + (" (--ref)" if use_ref else ""))
 print(f"  - Stable Link: {symlink_path}")
 
 # Final verification display (Like 'cat')

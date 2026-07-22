@@ -113,7 +113,7 @@ void print_drift_page(TCanvas* c, const TString& pdf_path)
 
 } // namespace
 
-void analyze(TString path, TString particle){    
+void analyze(TString path, TString particle, Bool_t debug){    
     // +---------+
     // | setting |
     // +---------+
@@ -163,13 +163,18 @@ void analyze(TString path, TString particle){
     // | prepare output root file |
     // +--------------------------+
     TString output_path = Form("%s/param/DCDRFT/e72/DCDriftParam_run%05d_%s.root", ANALYZER_DIR.Data(), run_num, particle.Data());
-    TFile* fout = TFile::Open(output_path.Data(), "UPDATE");
-    if (!fout || fout->IsZombie()) {
-        delete fout; // just in case
-        fout = TFile::Open(output_path.Data(), "RECREATE");
-        std::cout << "Create new file: " << output_path << std::endl;
+    TFile* fout = nullptr;
+    if (!debug) {
+        fout = TFile::Open(output_path.Data(), "UPDATE");
+        if (!fout || fout->IsZombie()) {
+            delete fout; // just in case
+            fout = TFile::Open(output_path.Data(), "RECREATE");
+            std::cout << "Create new file: " << output_path << std::endl;
+        } else {
+            std::cout << "Update existing file: " << output_path << std::endl;
+        }
     } else {
-        std::cout << "Update existing file: " << output_path << std::endl;
+        std::cout << "[DEBUG] Skipping DCDRFT write: " << output_path << std::endl;
     }
 
 
@@ -255,6 +260,10 @@ void analyze(TString path, TString particle){
     // +-------+
     // | Write |
     // +-------+
+    if (debug || !fout) {
+        return;
+    }
+
     fout->cd();
 
     TDatime now;
@@ -275,7 +284,7 @@ Int_t main(int argc, char** argv) {
 
     // -- check argments -----
     if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <root file path> <particle>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <root file path> <particle> [--debug]" << std::endl;
         return 1;
     }
     TString path = argv[1];
@@ -285,6 +294,17 @@ Int_t main(int argc, char** argv) {
         return 1;
     }
 
-    analyze(path, particle);
+    Bool_t debug = kFALSE;
+    for (Int_t i = 3; i < argc; ++i) {
+        if (TString(argv[i]) == "--debug") {
+            debug = kTRUE;
+        } else {
+            std::cerr << "Error: Unknown option: " << argv[i] << std::endl;
+            std::cerr << "Usage: " << argv[0] << " <root file path> <particle> [--debug]" << std::endl;
+            return 1;
+        }
+    }
+
+    analyze(path, particle, debug);
     return 0;
 }

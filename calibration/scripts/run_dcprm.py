@@ -36,6 +36,11 @@ def main():
     parser.add_argument('--kaon', action="store_true", help='Use Kaon (K) suffix instead of Pion (Pi)')
     parser.add_argument('--guess', action="store_true",
                         help='Use full-wire projection as Erfc fit seed for TDC (legacy; t0 mode only)')
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Skip parameter update; run analysis and produce PDFs only",
+    )
     
     args = parser.parse_args()
 
@@ -73,6 +78,8 @@ def main():
     print(colored(f"[INFO] Using Input File: {input_root_file}", "green"))
     print(colored(f"[INFO] Target Detector: {detector}", "green"))
     print(colored(f"[INFO] Mode: {mode} (Suffix: {suffix})", "green"))
+    if args.debug:
+        print(colored("[INFO] DEBUG mode: parameter update will be skipped", "yellow"))
 
     bin_dir = project_root / "bin"
     script_dir = Path(__file__).parent
@@ -91,9 +98,12 @@ def main():
         guess_flag = " --guess" if args.guess else ""
         run_command(f"{executable} {input_root_file} {suffix}{guess_flag}")
         
-        print(colored(">>> Step 2: Updating Parameters (DCTDC)", "cyan"))
-        det_flag = "--bcin" if args.bcin else "--bcout"
-        run_command(f"python3 {update_script} {run_num} {suffix} dctdc {det_flag}")
+        if not args.debug:
+            print(colored(">>> Step 2: Updating Parameters (DCTDC)", "cyan"))
+            det_flag = "--bcin" if args.bcin else "--bcout"
+            run_command(f"python3 {update_script} {run_num} {suffix} dctdc {det_flag}")
+        else:
+            print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
         
     elif mode == "drift":
         # Run BLC_DRFT -> (No update_param needed, it updates ROOT param file directly)
@@ -103,9 +113,13 @@ def main():
             sys.exit(1)
             
         print(colored(">>> Step 1: Running BLC_DRFT", "cyan"))
-        run_command(f"{executable} {input_root_file} {suffix}")
+        debug_flag = " --debug" if args.debug else ""
+        run_command(f"{executable} {input_root_file} {suffix}{debug_flag}")
         
-        print(colored(">>> (Drift parameters are updated directly in param/DCDRFT/)", "yellow"))
+        if not args.debug:
+            print(colored(">>> (Drift parameters are updated directly in param/DCDRFT/)", "yellow"))
+        else:
+            print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
         
     elif mode == "resi":
         # Run BLC_residual -> update_param.py residual
@@ -117,10 +131,13 @@ def main():
         print(colored(">>> Step 1: Running BLC_residual", "cyan"))
         run_command(f"{executable} {input_root_file} {suffix}")
         
-        print(colored(">>> Step 2: Updating Parameters (Residual -> DCGEO)", "cyan"))
-        # Using 'residual' type which has our special additive logic
-        det_flag = "--bcin" if args.bcin else "--bcout"
-        run_command(f"python3 {update_script} {run_num} {suffix} residual {det_flag}")
+        if not args.debug:
+            print(colored(">>> Step 2: Updating Parameters (Residual -> DCGEO)", "cyan"))
+            # Using 'residual' type which has our special additive logic
+            det_flag = "--bcin" if args.bcin else "--bcout"
+            run_command(f"python3 {update_script} {run_num} {suffix} residual {det_flag}")
+        else:
+            print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
 
     print(colored(f"\n[DONE] Tuning Complete for mode: {mode}", "green", attrs=["bold"]))
 
