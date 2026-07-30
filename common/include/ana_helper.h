@@ -100,6 +100,9 @@ namespace ana_helper {
     TGraph* make_drift_function(TH1D *h, TCanvas *c, Int_t n_c, Int_t plane,
                                 const char* wire_range_suffix = nullptr);
     FitResult residual_fit(TH1D *h, TCanvas *c, Int_t n_c); // same as t0 offset fit
+    // Fit reduced-χ² hist with horizontal scale s: f(x)=(A/s) f0(x/s; ν).
+    // On success: par=[A,s], additional=[sqrt(s), ν, mean]. Fallback: s=mean.
+    FitResult chi2_scale_fit(TH1D *h, TCanvas *c, Int_t n_c, Double_t nu);
 
     // -- opg -----
     std::vector<Int_t> get_kvc_info(Int_t run_number);

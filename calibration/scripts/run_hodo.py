@@ -67,15 +67,16 @@ def main():
     # --- Mode Dispatch ---
     
     if mode == "hdprm":
-        # Run BHT_HDPRM, BH2_HDPRM, HTOF_HDPRM, BAC_HDPRM, KVC_HDPRM, T1_HDPRM, CVC_HDPRM, SAC3_HDPRM, SFV_HDPRM
-        # Note: update_param.py supports these 9 detectors for 'hdprm'
-        detectors = ["BHT", "BH2", "BAC", "KVC", "T1"] + (["CVC", "SFV", "SAC3"] if args.ftof else [])
+        # Run BHT_HDPRM, BH2_HDPRM, HTOF_HDPRM, BAC_HDPRM, KVC_HDPRM, T1_HDPRM, ...
+        # HTOF is always All (TDC-only); other detectors use Pi/K suffix.
+        detectors = ["BHT", "BH2", "HTOF", "BAC", "KVC", "T1"] + (["CVC", "SFV", "SAC3"] if args.ftof else [])
         
         print(colored(f">>> Step 1: Running HDPRM analysis for {len(detectors)} detectors", "cyan"))
         for det in detectors:
             binary = bin_dir / f"{det}_HDPRM"
             if binary.exists():
-                run_command(f"{binary} {input_root_file} {suffix}")
+                part = "All" if det == "HTOF" else suffix
+                run_command(f"{binary} {input_root_file} {part}")
             else:
                 print(colored(f"[Warning] Binary {binary.name} not found. Skipping.", "yellow"))
         

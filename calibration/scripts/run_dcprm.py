@@ -24,15 +24,30 @@ def run_command(cmd, exit_on_error=True):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Automate BC (DC) Calibration for T0, Drift (ST), and Residual."
+        description=(
+            "Automate BC (DC) Calibration for T0, Drift (ST), Residual, and Resolution. "
+            "reso: Pull Gauss width p -> Res *= p "
+            "(iterate: rebuild Bc DST with #define FillPullExclusive 1 -> reso -> DST). "
+            "Use --debug to evaluate pull without updating Res."
+        )
     )
     parser.add_argument("run_num", type=int, help="Run Number")
-    parser.add_argument("mode", type=str, choices=["t0", "drift", "resi"], help="Tuning Mode")
+    parser.add_argument(
+        "mode",
+        type=str,
+        choices=["t0", "drift", "resi", "reso"],
+        help="Tuning Mode (reso: Pull p -> DCGEO Res *= p; iterate with DST)",
+    )
     
     # Mutually exclusive group for detector selection
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--bcout', action="store_true", help='Set mode to BcOut calibration (default if no flag is set)')
     group.add_argument('--bcin', action="store_true", help='Set mode to BcIn calibration')
+    group.add_argument(
+        '--all',
+        action="store_true",
+        help='reso only: run BLC1+BLC2 Pull, average p, write same Res scale to both',
+    )
     parser.add_argument('--kaon', action="store_true", help='Use Kaon (K) suffix instead of Pion (Pi)')
     parser.add_argument('--guess', action="store_true",
                         help='Use full-wire projection as Erfc fit seed for TDC (legacy; t0 mode only)')
@@ -46,6 +61,10 @@ def main():
 
     run_num = args.run_num
     mode = args.mode
+
+    if args.all and mode != "reso":
+        print(colored("[Error] --all is only supported for mode=reso", "red"))
+        sys.exit(1)
     
     # Determined detector based on flags
     # Default is BcOut
@@ -55,35 +74,49 @@ def main():
         
     suffix = "K" if args.kaon else "Pi"
 
-    # 1. Locate the Input Root File (Symbolic link in DATA_DIR)
-    # create_runlist.py creates runXXXXX_{detector}.root
-    
-    root_filename = f"run{run_num:05d}_{detector}.root"
-    input_root_file = config.DATA_DIR / root_filename
-    
-    # Fallback to _DC if _BcOut not found (compatibility)
-    if not input_root_file.exists():
-         # Only fallback to DC for BcOut as that was the old naming
-         if detector == "BcOut":
-             fallback = config.DATA_DIR / f"run{run_num:05d}_DC.root"
-             if fallback.exists():
-                 print(colored(f"[INFO] _BcOut.root not found, using _DC.root instead.", "yellow"))
-                 input_root_file = fallback
-         
-    if not input_root_file.exists():
-         print(colored(f"[Error] Symlink/File not found: {input_root_file}", "red"))
-         print(f"Ensure create_runlist.py was run for {detector}.")
-         sys.exit(1)
-         
-    print(colored(f"[INFO] Using Input File: {input_root_file}", "green"))
-    print(colored(f"[INFO] Target Detector: {detector}", "green"))
-    print(colored(f"[INFO] Mode: {mode} (Suffix: {suffix})", "green"))
-    if args.debug:
-        print(colored("[INFO] DEBUG mode: parameter update will be skipped", "yellow"))
+    def resolve_input_root(det_name):
+        root_filename = f"run{run_num:05d}_{det_name}.root"
+        path = config.DATA_DIR / root_filename
+        if not path.exists() and det_name == "BcOut":
+            fallback = config.DATA_DIR / f"run{run_num:05d}_DC.root"
+            if fallback.exists():
+                print(colored(f"[INFO] _BcOut.root not found, using _DC.root instead.", "yellow"))
+                return fallback
+        return path
 
     bin_dir = project_root / "bin"
     script_dir = Path(__file__).parent
     update_script = script_dir / "update_param.py"
+
+    if args.all:
+        # reso --all: both chambers
+        input_roots = []
+        for det_name in ("BcIn", "BcOut"):
+            path = resolve_input_root(det_name)
+            if not path.exists():
+                print(colored(f"[Error] Symlink/File not found: {path}", "red"))
+                print(f"Ensure create_runlist.py was run for {det_name}.")
+                sys.exit(1)
+            input_roots.append((det_name, path))
+        print(colored("[INFO] Mode: reso --all (Suffix: {})".format(suffix), "green"))
+        for det_name, path in input_roots:
+            print(colored(f"[INFO] Input {det_name}: {path}", "green"))
+        if args.debug:
+            print(colored("[INFO] DEBUG mode: parameter update will be skipped", "yellow"))
+    else:
+        # 1. Locate the Input Root File (Symbolic link in DATA_DIR)
+        input_root_file = resolve_input_root(detector)
+             
+        if not input_root_file.exists():
+             print(colored(f"[Error] Symlink/File not found: {input_root_file}", "red"))
+             print(f"Ensure create_runlist.py was run for {detector}.")
+             sys.exit(1)
+             
+        print(colored(f"[INFO] Using Input File: {input_root_file}", "green"))
+        print(colored(f"[INFO] Target Detector: {detector}", "green"))
+        print(colored(f"[INFO] Mode: {mode} (Suffix: {suffix})", "green"))
+        if args.debug:
+            print(colored("[INFO] DEBUG mode: parameter update will be skipped", "yellow"))
 
     # --- Mode Dispatch ---
     
@@ -132,12 +165,43 @@ def main():
         run_command(f"{executable} {input_root_file} {suffix}")
         
         if not args.debug:
-            print(colored(">>> Step 2: Updating Parameters (Residual -> DCGEO)", "cyan"))
+            print(colored(">>> Step 2: Updating Parameters (Residual -> DCGEO Ofs)", "cyan"))
             # Using 'residual' type which has our special additive logic
             det_flag = "--bcin" if args.bcin else "--bcout"
             run_command(f"python3 {update_script} {run_num} {suffix} residual {det_flag}")
         else:
             print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
+
+    elif mode == "reso":
+        # BLC_pull: Pull Gauss width p; update DCGEO Res *= p (iterate with DST)
+        executable = bin_dir / "BLC_pull"
+        if not executable.exists():
+            print(colored(f"[Error] BLC_pull not found. Please compile.", "red"))
+            sys.exit(1)
+
+        if args.all:
+            print(colored(">>> Step 1: Running BLC_pull (BcIn + BcOut)", "cyan"))
+            for det_name, path in input_roots:
+                print(colored(f">>>   {det_name}", "cyan"))
+                run_command(f"{executable} {path} {suffix}")
+            if not args.debug:
+                print(colored(
+                    ">>> Step 2: Updating Parameters (Pull ALL -> DCGEO Res *= p)",
+                    "cyan",
+                ))
+                run_command(f"python3 {update_script} {run_num} {suffix} resolution --all")
+            else:
+                print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
+        else:
+            print(colored(">>> Step 1: Running BLC_pull", "cyan"))
+            run_command(f"{executable} {input_root_file} {suffix}")
+
+            if not args.debug:
+                print(colored(">>> Step 2: Updating Parameters (Pull -> DCGEO Res *= p)", "cyan"))
+                det_flag = "--bcin" if args.bcin else "--bcout"
+                run_command(f"python3 {update_script} {run_num} {suffix} resolution {det_flag}")
+            else:
+                print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
 
     print(colored(f"\n[DONE] Tuning Complete for mode: {mode}", "green", attrs=["bold"]))
 

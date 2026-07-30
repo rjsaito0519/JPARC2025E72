@@ -158,10 +158,10 @@ constexpr Double_t kExtrapZoomDy = 100.0;
 constexpr Int_t kExtrapZoomBins = 200; // 1 mm/bin over ±100 mm for Δy
 // BLC1->BLC2: BLC2 y fixed at chamber center; scan BLC1 extrap z around 2900
 constexpr Double_t kBlc1ExtrapScanCenter = kBlc1ExtrapZ;
-constexpr Double_t kBlc1ExtrapScanHalfRange = 300.0;
+constexpr Double_t kBlc1ExtrapScanHalfRange = 1000.0;
 constexpr Double_t kBlc1ExtrapScanLo = kBlc1ExtrapScanCenter - kBlc1ExtrapScanHalfRange;
 constexpr Double_t kBlc1ExtrapScanHi = kBlc1ExtrapScanCenter + kBlc1ExtrapScanHalfRange;
-constexpr Int_t kBlc1ExtrapScanBins = 60; // 10 mm/bin over ±300 mm
+constexpr Int_t kBlc1ExtrapScanBins = 200; // 10 mm/bin over ±1000 mm
 constexpr Double_t kGaussDrawNSigma = 5.0;
 constexpr Double_t kGaussDrawMinHalfRange = 15.0; // mm
 

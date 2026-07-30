@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <TLegend.h>
 
 namespace ana_helper {
 
@@ -326,6 +327,223 @@ FitResult dc_tdc_fit_impl(TH1D *h, TCanvas *c, Int_t n_c, const DcTdcFitSeed *se
         line->Draw("same");
 
         c->Update();
+
+        return result;
+    }
+
+    // Reduced χ² PDF: Y = χ²(ν)/ν
+    static Double_t reduced_chi2_pdf(Double_t y, Double_t nu)
+    {
+        if (y <= 0.0 || nu <= 0.0) return 0.0;
+        const Double_t x = nu * y;
+        const Double_t half_nu = 0.5 * nu;
+        return nu * TMath::Power(x, half_nu - 1.0) * TMath::Exp(-0.5 * x)
+               / (TMath::Power(2.0, half_nu) * TMath::Gamma(half_nu));
+    }
+
+    // TF1: [0]=N (entries scale), [1]=s, [2]=ν (fixed), [3]=bin width (fixed)
+    static Double_t scaled_reduced_chi2(Double_t *x, Double_t *p)
+    {
+        const Double_t A = p[0];
+        const Double_t s = p[1];
+        const Double_t nu = p[2];
+        const Double_t bw = p[3];
+        if (s <= 0.0) return 0.0;
+        return A / s * reduced_chi2_pdf(x[0] / s, nu) * bw;
+    }
+
+    FitResult chi2_scale_fit(TH1D *h, TCanvas *c, Int_t n_c, Double_t nu)
+    {
+        FitResult result;
+        result.par = {0.0, 1.0};
+        result.err = {0.0, 0.0};
+        result.chi_square = 0.0;
+        result.ndf = 0;
+        result.migrad_stats = 0;
+        result.additional = {1.0, nu, 0.0};
+
+        if (!h || h->GetEntries() <= 0 || nu <= 2.0) {
+            std::cerr << "Warning: chi2_scale_fit skipped (empty hist or nu<=2)\n";
+            return result;
+        }
+
+        if (c) c->cd(n_c);
+
+        const Double_t mean = h->GetMean();
+        result.additional[2] = mean;
+        const Double_t x_lo = std::max(h->GetXaxis()->GetXmin(), 0.0);
+        const Double_t x_hi = h->GetXaxis()->GetXmax();
+        const Double_t bw = h->GetXaxis()->GetBinWidth(1);
+
+        // -- 0) rough Gauss to locate the bulk (same spirit as residual_fit) -----
+        const Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
+        const Double_t rms = std::max(h->GetStdDev(), 0.2);
+        Double_t g_lo = std::max(peak_pos - 1.5 * rms, x_lo);
+        Double_t g_hi = std::min(peak_pos + 1.5 * rms, x_hi);
+        if (g_hi <= g_lo) {
+            g_lo = x_lo;
+            g_hi = std::min(x_hi, peak_pos + 2.0);
+        }
+
+        TF1 *f_gauss = new TF1(Form("pre_gauss_%s", h->GetName()), "gaus", g_lo, g_hi);
+        f_gauss->SetParameter(0, h->GetMaximum());
+        f_gauss->SetParameter(1, peak_pos);
+        f_gauss->SetParameter(2, rms * 0.8);
+        h->Fit(f_gauss, "0QNQR", "", g_lo, g_hi);
+        const Double_t g_mean = f_gauss->GetParameter(1);
+        const Double_t g_sigma = std::max(f_gauss->GetParameter(2), 0.15);
+        delete f_gauss;
+
+        // Scale seed: mean, or peak / mode(ν) for reduced χ²
+        const Double_t mode_ideal = 1.0 - 2.0 / nu; // peak of reduced χ²
+        Double_t s0 = mean;
+        if (mode_ideal > 0.1 && g_mean > 0.05) {
+            const Double_t s_from_peak = g_mean / mode_ideal;
+            // blend toward peak-based seed when Gauss found the core
+            s0 = 0.5 * (mean + s_from_peak);
+        }
+        if (s0 < 0.05) s0 = (mean > 0.05) ? mean : 1.0;
+
+        // Fit window: keep the core; cut the irreducible high-χ² tail short
+        Double_t fit_min = std::max(x_lo, g_mean - 2.0 * g_sigma);
+        if (fit_min < 0.0) fit_min = 0.0;
+        // high side: shorter than low side (tail is not χ²-like)
+        Double_t fit_max = std::min(x_hi, g_mean + 2.0 * g_sigma);
+        // soft upper bound relative to scale seed (avoid stretching into the tail)
+        fit_max = std::min(fit_max, std::min(x_hi, 2.2 * s0));
+        // still need a few bins past the peak
+        fit_max = std::max(fit_max, std::min(x_hi, g_mean + 1.2 * g_sigma));
+        if (fit_max <= fit_min + 2.0 * bw) {
+            fit_min = x_lo;
+            fit_max = std::min(x_hi, std::max(g_mean + 1.5 * g_sigma, 1.8 * s0));
+        }
+
+        Double_t A0 = h->Integral(h->FindBin(fit_min), h->FindBin(fit_max));
+        if (A0 <= 0.0) A0 = h->GetEntries();
+
+        // Likelihood: empty tail bins hurt χ² LS; quiet + range
+        const TString fit_opt = "0QLR";
+
+        TF1 *f_fit = new TF1(Form("chi2scale_%s", h->GetName()),
+                             scaled_reduced_chi2, fit_min, fit_max, 4);
+        f_fit->SetParNames("N", "s", "nu", "bw");
+        f_fit->SetParameter(0, A0);
+        f_fit->SetParameter(1, s0);
+        f_fit->FixParameter(2, nu);
+        f_fit->FixParameter(3, bw);
+        f_fit->SetParLimits(0, 0.0, 1.0e12);
+        f_fit->SetParLimits(1, 0.05, 20.0);
+        f_fit->SetLineColor(kOrange);
+        f_fit->SetLineWidth(2);
+        f_fit->SetNpx(1000);
+
+        // -- 1) fix s, float N -----
+        f_fit->FixParameter(1, s0);
+        h->Fit(f_fit, fit_opt.Data(), "", fit_min, fit_max);
+
+        // -- 2) float s -----
+        f_fit->ReleaseParameter(1);
+        f_fit->SetParLimits(1, 0.05, 20.0);
+        Int_t status = h->Fit(f_fit, fit_opt.Data(), "", fit_min, fit_max);
+
+        Double_t s = f_fit->GetParameter(1);
+        // status==0 is too strict on ROOT; accept finite s in range with NDF
+        Bool_t fit_ok = (TMath::Finite(s) && s > 0.05 && s < 20.0
+                         && f_fit->GetNDF() > 0);
+        if (!fit_ok) {
+            s = (mean > 0.05) ? mean : s0;
+            std::cerr << "Warning: chi2_scale_fit falling back to mean s="
+                      << s << " for " << h->GetName()
+                      << " (status=" << status << ")" << std::endl;
+        }
+
+        result.par[0] = f_fit->GetParameter(0);
+        result.par[1] = s;
+        result.err[0] = f_fit->GetParError(0);
+        result.err[1] = fit_ok ? f_fit->GetParError(1) : 0.0;
+        result.chi_square = f_fit->GetChisquare();
+        result.ndf = f_fit->GetNDF();
+        result.migrad_stats = fit_ok ? 1 : 0;
+        result.additional[0] = TMath::Sqrt(s);
+        result.additional[1] = nu;
+        result.additional[2] = mean;
+
+        f_fit->SetParameter(0, result.par[0]);
+        f_fit->SetParameter(1, s);
+        f_fit->FixParameter(2, nu);
+        f_fit->FixParameter(3, bw);
+
+        // Ideal reduced-χ² (s=1), same N for shape comparison
+        TF1 *f_ideal = new TF1(Form("chi2ideal_%s", h->GetName()),
+                               scaled_reduced_chi2, x_lo, x_hi, 4);
+        f_ideal->SetParNames("N", "s", "nu", "bw");
+        f_ideal->SetParameters(result.par[0], 1.0, nu, bw);
+        f_ideal->SetLineColor(kBlue);
+        f_ideal->SetLineStyle(2);
+        f_ideal->SetLineWidth(2);
+        f_ideal->SetNpx(1000);
+
+        f_fit->SetLineColor(kOrange);
+        f_fit->SetLineStyle(1);
+        f_fit->SetLineWidth(2);
+        f_fit->SetNpx(1000);
+
+        if (c) {
+            // closeup: around fit window; wide: full hist axis
+            const Double_t close_lo = x_lo;
+            const Double_t close_hi = std::min(x_hi, std::max(fit_max * 1.35, g_mean + 2.5 * g_sigma));
+
+            c->Clear();
+            c->Divide(2, 1);
+
+            auto draw_one = [&](Int_t pad, Double_t vx0, Double_t vx1, const char* title) {
+                c->cd(pad);
+                TH1D *hcopy = (TH1D*)h->DrawCopy("hist");
+                hcopy->SetTitle(title);
+                hcopy->GetXaxis()->SetRangeUser(vx0, vx1);
+                hcopy->GetXaxis()->SetTitle("#chi^{2} / #nu");
+                hcopy->GetYaxis()->SetTitle("count");
+
+                f_ideal->SetRange(vx0, vx1);
+                f_ideal->Draw("same");
+                // fitted model: draw across the panel but emphasize fit window with lines
+                f_fit->SetRange(vx0, vx1);
+                f_fit->Draw("same");
+
+                const Double_t ymax = hcopy->GetMaximum();
+                TLine *l_lo = new TLine(fit_min, 0, fit_min, ymax);
+                TLine *l_hi = new TLine(fit_max, 0, fit_max, ymax);
+                l_lo->SetLineStyle(3);
+                l_hi->SetLineStyle(3);
+                l_lo->SetLineColor(kGray + 2);
+                l_hi->SetLineColor(kGray + 2);
+                l_lo->Draw("same");
+                l_hi->Draw("same");
+
+                TLegend *leg = new TLegend(0.55, 0.72, 0.88, 0.88);
+                leg->SetBorderSize(0);
+                leg->SetFillStyle(0);
+                leg->AddEntry(hcopy, "data", "l");
+                leg->AddEntry(f_fit, Form("fit s=%.3f", s), "l");
+                leg->AddEntry(f_ideal, "ideal s=1", "l");
+                leg->Draw();
+
+                TLatex latex;
+                latex.SetNDC();
+                latex.SetTextSize(0.035);
+                latex.DrawLatex(0.55, 0.66, Form("#sqrt{s} = %.3f", TMath::Sqrt(s)));
+                latex.DrawLatex(0.55, 0.61, Form("#nu_{eff} = %.1f", nu));
+                latex.DrawLatex(0.55, 0.56, Form("#LT#chi^{2}_{#nu}#GT = %.3f", mean));
+                latex.DrawLatex(0.55, 0.51, Form("fit [%0.2f, %0.2f]", fit_min, fit_max));
+                latex.DrawLatex(0.55, 0.46, fit_ok ? "fit OK" : "fallback: mean");
+            };
+
+            draw_one(1, close_lo, close_hi,
+                     Form("%s closeup", h->GetName()));
+            draw_one(2, x_lo, x_hi,
+                     Form("%s wide", h->GetName()));
+            c->Update();
+        }
 
         return result;
     }
