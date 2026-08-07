@@ -1055,7 +1055,7 @@ int main(int argc, char* argv[])
   Int_t fit_nstep = 0;
   Int_t min_entries = 5;
   Int_t graph_points = DEFAULT_GRAPH_POINTS;
-  Double_t step_width_ns = 0.005;
+  Double_t step_width_ns = 0.0001;
   Bool_t free_step_width = kFALSE;
   Bool_t use_baseline_term = kTRUE;
   Int_t rebin_x = 1;
