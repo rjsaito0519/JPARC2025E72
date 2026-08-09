@@ -667,8 +667,13 @@ static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
       x2 = hxmax;
     }
 
-    Double_t y_lo = h->GetYaxis()->GetXmin();
-    Double_t y_hi = h->GetYaxis()->GetXmax();
+    // Y はヒスト全体から始めず、振幅 / 局所 probe で決める
+    // （全体 ymin/ymax から min/max するとズームが常に潰れる）
+    const Double_t hymin = h->GetYaxis()->GetXmin();
+    const Double_t hymax = h->GetYaxis()->GetXmax();
+    Double_t y_lo = hymin;
+    Double_t y_hi = hymax;
+    Bool_t y_from_amp = kFALSE;
     std::vector<Double_t> y_probe;
     y_probe.reserve(512);
     if (g_fitused) {
@@ -690,20 +695,48 @@ static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
       const Double_t y_mid = -EvalPhaseGraphDclk(g_phase, t0) * vdrift;
       y_lo = y_mid - 0.65 * amp_resy;
       y_hi = y_mid + 0.65 * amp_resy;
+      y_from_amp = kTRUE;
     }
     if (!y_probe.empty()) {
       const auto mm = std::minmax_element(y_probe.begin(), y_probe.end());
       const Double_t span = std::max(0.8, *mm.second - *mm.first);
-      y_lo = std::min(y_lo, *mm.first - 0.20 * span);
-      y_hi = std::max(y_hi, *mm.second + 0.20 * span);
+      if (y_from_amp) {
+        y_lo = std::min(y_lo, *mm.first - 0.20 * span);
+        y_hi = std::max(y_hi, *mm.second + 0.20 * span);
+      } else {
+        y_lo = *mm.first - 0.35 * span;
+        y_hi = *mm.second + 0.35 * span;
+      }
     }
+    if (!(y_hi > y_lo)) {
+      y_lo = hymin;
+      y_hi = hymax;
+    } else if (y_hi - y_lo < 1.0) {
+      const Double_t mid = 0.5 * (y_lo + y_hi);
+      y_lo = mid - 0.5;
+      y_hi = mid + 0.5;
+    }
+    y_lo = std::max(y_lo, hymin);
+    y_hi = std::min(y_hi, hymax);
+
+    // DrawClone+"SetRangeUser" だとズームが効かないことがあるため、
+    // 表示枠を先に張り、中身は colz same で重ねる
+    TH2D* frame = new TH2D(Form("frame_closeup_cobo%d", cobo),
+                           Form("CoBo %d close-up;Clock Time [ns];Residual Y [mm]", cobo),
+                           50, x1, x2, 50, y_lo, y_hi);
+    frame->SetDirectory(nullptr);
+    frame->SetStats(0);
+    frame->SetBit(kCanDelete);
+    frame->Draw();
 
     TH2D* h_zoom = (TH2D*)h->Clone(Form("h_closeup_cobo%d", cobo));
     h_zoom->SetDirectory(nullptr);
-    h_zoom->SetTitle(Form("CoBo %d close-up;Clock Time [ns];Residual Y [mm]", cobo));
+    h_zoom->SetTitle("");
+    h_zoom->SetStats(0);
+    h_zoom->SetBit(kCanDelete);
     h_zoom->GetXaxis()->SetRangeUser(x1, x2);
     h_zoom->GetYaxis()->SetRangeUser(y_lo, y_hi);
-    h_zoom->DrawClone("colz");
+    h_zoom->Draw("colz same");
 
     TGraphErrors* g_profile = (TGraphErrors*)phase_file->Get(Form("TpcPhase_Profile_Cobo%d", cobo));
     if (g_profile) {
@@ -720,7 +753,7 @@ static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
         g_pts->SetMarkerSize(1.0);
         g_pts->SetMarkerColor(kOrange + 7);
         g_pts->SetLineColor(kOrange + 7);
-        g_pts->DrawClone("P same");
+        DrawGraphCloneOnTop(g_pts, "P same");
       }
       delete g_pts;
     }
@@ -750,12 +783,14 @@ static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
         DrawPhaseTf1Resy(f_fold, vdrift, x1, x2, kRed, 3, 1);
     }
 
-    // fit 窓の縦線
+    // fit 窓の縦線（表示範囲と重なるときだけ）
     Double_t fxmin = 0.0, fxmax = 0.0;
-    if (FitWindowXRange(phase_file, cobo, fxmin, fxmax))
-      DrawFitRangeVLines(fxmin, fxmax, y_lo, y_hi);
+    if (FitWindowXRange(phase_file, cobo, fxmin, fxmax)) {
+      if (fxmax > x1 && fxmin < x2)
+        DrawFitRangeVLines(fxmin, fxmax, y_lo, y_hi);
+    }
 
-    delete h_zoom;
+    gPad->RedrawAxis();
   }
   c->Update();
 }
