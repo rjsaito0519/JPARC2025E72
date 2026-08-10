@@ -8,6 +8,7 @@ run_tpc: TPC 周りの便利フロントエンド
   ./run_tpc.py <root_file> phase --plot-only [--vdrift V]
   ./run_tpc.py <root_file> offset [--run N] [--mode hit|trk] [...]
   ./run_tpc.py <root_file> gain [--run N] [--target-mpv 200] [...]
+  ./run_tpc.py <root_file> drift [--run N] [--mode hit|trk] [--vdrift V] [--debug]
 
   - phase : tpc_phase_from_tpcbcout + tpc_phase_plot（root は tpcbcout）
             → --fit-step 1 なら kCobo(3) 行を TTree から更新（TPCPRM へのコメント追記はしない）
@@ -15,6 +16,8 @@ run_tpc: TPC 周りの便利フロントエンド
             → QA PDF に p0 / Δp0 の分布（1D + TPC 上の 2D マップ）を含む
   - gain  : tpc_gain_calib（root は tpc_runXXXXX 等）
             → TPCCl_dE_* の Landau fit から MPV を求めて ATY=0 の gain を更新
+  - drift : tpc_drift_calib（layer ごとの ResY vs Y 傾き → δv を aty=2 の p1 に加算）
+            → --mode は hit/trk ヒストの優先順（無い方へフォールバック）
 """
 
 import argparse
@@ -203,17 +206,17 @@ def get_run_number_from_root(root_path: Path) -> int:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="TPC helper frontend. Usage: run_tpc.py <root> phase|offset|gain [options]"
+        description="TPC helper frontend. Usage: run_tpc.py <root> phase|offset|gain|drift [options]"
     )
     parser.add_argument(
         "root_file",
         type=Path,
-        help="Input ROOT file (tpcbcout for phase, tpc_runXXXXX for offset).",
+        help="Input ROOT file (tpcbcout for phase, tpc_runXXXXX / hadd for offset/gain/drift).",
     )
     parser.add_argument(
         "cmd",
-        choices=["phase", "offset", "gain"],
-        help="Subcommand: phase (tpc_phase_from_tpcbcout + plot), offset (tpc_time_offset_calib), or gain (tpc_gain_calib).",
+        choices=["phase", "offset", "gain", "drift"],
+        help="Subcommand: phase, offset, gain, or drift (tpc_drift_calib).",
     )
     # phase 用オプション
     parser.add_argument(
@@ -228,7 +231,35 @@ def main():
         type=float,
         default=None,
         metavar="V",
-        help="[phase] Drift velocity [mm/ns]. Passed to both programs if set.",
+        help="[phase|drift] Drift velocity [mm/ns]. For drift: override layer median p1.",
+    )
+    parser.add_argument(
+        "--min-entries",
+        type=int,
+        default=None,
+        metavar="N",
+        help="[drift] Minimum entries per Y bin for gaus profile (C++ --min-entries).",
+    )
+    parser.add_argument(
+        "--min-points",
+        type=int,
+        default=None,
+        metavar="N",
+        help="[drift] Minimum profile points for linear fit (C++ --min-points).",
+    )
+    parser.add_argument(
+        "--layer-min",
+        type=int,
+        default=None,
+        metavar="L",
+        help="[drift] First layer index (inclusive).",
+    )
+    parser.add_argument(
+        "--layer-max",
+        type=int,
+        default=None,
+        metavar="L",
+        help="[drift] Last layer index (inclusive).",
     )
     parser.add_argument(
         "--smooth",
@@ -298,13 +329,14 @@ def main():
         type=str,
         choices=["hit", "trk"],
         default="hit",
-        help="hit / trk: [offset] TPCHit vs TPCTrk ResY hist; [phase] ClockTime vs ResY 2D の名前優先順。",
+        help="hit / trk: [offset] hist name; [phase|drift] ヒスト候補の優先順（無い方へフォールバック）。",
     )
     parser.add_argument(
         "--threshold",
         type=int,
         default=None,
-        help="[offset] Minimum entries in ±stat-range window (passed to C++).",
+        help="[offset] Min entries in ±stat-range; [drift] min layer 2D hist entries "
+        "(drift default 1000000 if omitted).",
     )
     parser.add_argument(
         "--sigma",
@@ -746,6 +778,52 @@ def main():
 
         cmd = " ".join(opts)
         print(colored(f">>> TPC gain calib (tpc_gain_calib), run={run_num}", "cyan"))
+        run_command(cmd)
+
+    elif args.cmd == "drift":
+        input_root = args.root_file.resolve()
+        if not input_root.exists():
+            print(colored(f"[Error] File not found: {input_root}", "red"))
+            sys.exit(1)
+
+        run_num = args.run if args.run is not None else get_run_number_from_root(input_root)
+        if run_num < 0:
+            print(
+                colored(
+                    "[Error] Could not get run number (use --run or ensure tpc/run_number is present).",
+                    "red",
+                )
+            )
+            sys.exit(1)
+
+        exe_drift = bin_dir / "tpc_drift_calib"
+        if not exe_drift.exists():
+            print(colored(f"[Error] Binary not found: {exe_drift}. Please build the project.", "red"))
+            sys.exit(1)
+
+        opts = [str(exe_drift), str(input_root), str(run_num)]
+        if args.mode:
+            opts += ["--mode", args.mode]
+        if args.vdrift is not None:
+            opts += ["--vdrift", str(args.vdrift)]
+        # drift: --threshold = min total entries on layer 2D hist (default 1e6)
+        drift_threshold = 1000000 if args.threshold is None else args.threshold
+        opts += ["--threshold", str(drift_threshold)]
+        if args.min_entries is not None:
+            opts += ["--min-entries", str(args.min_entries)]
+        if args.rebin is not None:
+            opts += ["--rebin", str(args.rebin)]
+        if args.min_points is not None:
+            opts += ["--min-points", str(args.min_points)]
+        if args.layer_min is not None:
+            opts += ["--layer-min", str(args.layer_min)]
+        if args.layer_max is not None:
+            opts += ["--layer-max", str(args.layer_max)]
+        if args.debug:
+            opts += ["--debug"]
+
+        cmd = " ".join(opts)
+        print(colored(f">>> TPC drift calib (tpc_drift_calib), run={run_num}", "cyan"))
         run_command(cmd)
 
 

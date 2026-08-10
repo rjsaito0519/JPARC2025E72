@@ -423,7 +423,10 @@ static Bool_t StepTwFromPhaseFile(TFile* pf, Int_t cobo,
   TGraph* g = (TGraph*)pf->Get(Form("TpcPhase_Cobo%d", cobo));
   if (!g || g->GetN() < 4) return kFALSE;
   Double_t best_slope = 0.0;
-  for (Int_t i = 1; i < g->GetN(); ++i) {
+  // 端点は定義域の切れ目で偽段差になりやすいので除外
+  const Int_t i_lo = 2;
+  const Int_t i_hi = g->GetN() - 2;
+  for (Int_t i = i_lo; i <= i_hi; ++i) {
     Double_t x0 = 0.0, y0 = 0.0, x1 = 0.0, y1 = 0.0;
     g->GetPoint(i - 1, x0, y0);
     g->GetPoint(i, x1, y1);
@@ -652,28 +655,116 @@ static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
         (TGraphErrors*)phase_file->Get(Form("TpcPhase_ProfileFitUsed_Cobo%d", cobo));
 
     Double_t t0 = 0.0, w_step = 0.005, amp_dclk = 0.0;
-    StepTwFromPhaseFile(phase_file, cobo, t0, w_step, amp_dclk);
+    const Bool_t have_step = StepTwFromPhaseFile(phase_file, cobo, t0, w_step, amp_dclk);
+    Double_t t0_init = 0.0;
+    const Bool_t have_init = T0InitFromPhaseFile(phase_file, cobo, t0_init);
 
-    const Double_t half_win =
-        std::max(half_window_ns, std::max(6.0, 80.0 * w_step));
     const Double_t hxmin = h->GetXaxis()->GetXmin();
     const Double_t hxmax = h->GetXaxis()->GetXmax();
+    auto near_axis_edge = [&](Double_t t) -> Bool_t {
+      return (t <= hxmin + 15.0) || (t >= hxmax - 15.0) || !std::isfinite(t);
+    };
+    auto local_step_amp_dclk = [&](Double_t t) -> Double_t {
+      if (!g_phase || g_phase->GetN() < 2) return 0.0;
+      return EvalPhaseGraphDclk(g_phase, t + 8.0) - EvalPhaseGraphDclk(g_phase, t - 8.0);
+    };
+    auto find_best_step_on_phase = [&](Double_t& t_out, Double_t& amp_out) -> Bool_t {
+      if (!g_phase || g_phase->GetN() < 6) return kFALSE;
+      Double_t best_slope = 0.0;
+      Bool_t found = kFALSE;
+      const Int_t i_lo = 2;
+      const Int_t i_hi = g_phase->GetN() - 2;
+      for (Int_t i = i_lo; i <= i_hi; ++i) {
+        Double_t x0 = 0.0, y0 = 0.0, x1 = 0.0, y1 = 0.0;
+        g_phase->GetPoint(i - 1, x0, y0);
+        g_phase->GetPoint(i, x1, y1);
+        const Double_t xm = 0.5 * (x0 + x1);
+        if (near_axis_edge(xm)) continue;
+        const Double_t dx = x1 - x0;
+        if (dx <= 0.0) continue;
+        const Double_t slope = std::fabs((y1 - y0) / dx);
+        if (slope > best_slope) {
+          best_slope = slope;
+          t_out = xm;
+          amp_out = y1 - y0;
+          found = kTRUE;
+        }
+      }
+      return found;
+    };
+
+    // t0 地点に実段差が無ければ（平坦・端の偽段差）付け直す
+    const Double_t min_step_resy = 0.5;  // mm
+    Double_t amp_at_t0 = local_step_amp_dclk(t0);
+    if (!have_step || near_axis_edge(t0) ||
+        std::fabs(amp_at_t0) * vdrift < min_step_resy) {
+      Double_t t_best = t0;
+      Double_t a_best = amp_dclk;
+      Bool_t retargeted = kFALSE;
+      if (find_best_step_on_phase(t_best, a_best) &&
+          std::fabs(a_best) * vdrift >= min_step_resy) {
+        t0 = t_best;
+        amp_dclk = a_best;
+        retargeted = kTRUE;
+      }
+      if (!retargeted && have_init &&
+          std::fabs(local_step_amp_dclk(t0_init)) * vdrift >= min_step_resy) {
+        t0 = t0_init;
+        amp_dclk = local_step_amp_dclk(t0_init);
+        retargeted = kTRUE;
+      }
+      if (!retargeted && g_fitused && g_fitused->GetN() > 3) {
+        Double_t best_jump = 0.0;
+        Double_t best_t = t0;
+        for (Int_t i = 1; i < g_fitused->GetN(); ++i) {
+          Double_t x0 = 0.0, y0 = 0.0, x1 = 0.0, y1 = 0.0;
+          g_fitused->GetPoint(i - 1, x0, y0);
+          g_fitused->GetPoint(i, x1, y1);
+          const Double_t xm = 0.5 * (x0 + x1);
+          if (near_axis_edge(xm)) continue;
+          const Double_t jump = std::fabs(y1 - y0);
+          if (jump > best_jump) {
+            best_jump = jump;
+            best_t = xm;
+          }
+        }
+        if (best_jump * vdrift >= min_step_resy) {
+          t0 = best_t;
+          amp_dclk = best_jump;
+        }
+      }
+    }
+
+    // amp 再確認
+    amp_at_t0 = local_step_amp_dclk(t0);
+    if (std::fabs(amp_at_t0) > std::fabs(amp_dclk))
+      amp_dclk = amp_at_t0;
+    if (g_phase && g_phase->GetN() > 1 && std::fabs(amp_dclk) * vdrift <= 0.2)
+      amp_dclk = amp_at_t0;
+
+    // X: step ± 5 ns（引数 half_window_ns を半幅として使う）
+    const Double_t half_win = (half_window_ns > 0.0) ? half_window_ns : 5.0;
     Double_t x1 = t0 - half_win;
     Double_t x2 = t0 + half_win;
     x1 = std::max(x1, hxmin);
     x2 = std::min(x2, hxmax);
-    if (x2 <= x1) {
-      x1 = hxmin;
-      x2 = hxmax;
+    // 全域フォールバックはしない（端なら端から 2*half_win）
+    if (x2 - x1 < 1.0) {
+      if (t0 <= hxmin) {
+        x1 = hxmin;
+        x2 = std::min(hxmin + 2.0 * half_win, hxmax);
+      } else {
+        x2 = hxmax;
+        x1 = std::max(hxmax - 2.0 * half_win, hxmin);
+      }
     }
 
-    // Y はヒスト全体から始めず、振幅 / 局所 probe で決める
-    // （全体 ymin/ymax から min/max するとズームが常に潰れる）
+    // Y: amp 基準で強めに拡大（余白少なめ）
     const Double_t hymin = h->GetYaxis()->GetXmin();
     const Double_t hymax = h->GetYaxis()->GetXmax();
     Double_t y_lo = hymin;
     Double_t y_hi = hymax;
-    Bool_t y_from_amp = kFALSE;
+    Bool_t y_set = kFALSE;
     std::vector<Double_t> y_probe;
     y_probe.reserve(512);
     if (g_fitused) {
@@ -693,50 +784,41 @@ static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
     const Double_t amp_resy = std::fabs(amp_dclk) * vdrift;
     if (amp_resy > 0.2 && g_phase && g_phase->GetN() > 1) {
       const Double_t y_mid = -EvalPhaseGraphDclk(g_phase, t0) * vdrift;
-      y_lo = y_mid - 0.65 * amp_resy;
-      y_hi = y_mid + 0.65 * amp_resy;
-      y_from_amp = kTRUE;
+      y_lo = y_mid - 0.40 * amp_resy;
+      y_hi = y_mid + 0.40 * amp_resy;
+      y_set = kTRUE;
     }
     if (!y_probe.empty()) {
       const auto mm = std::minmax_element(y_probe.begin(), y_probe.end());
-      const Double_t span = std::max(0.8, *mm.second - *mm.first);
-      if (y_from_amp) {
-        y_lo = std::min(y_lo, *mm.first - 0.20 * span);
-        y_hi = std::max(y_hi, *mm.second + 0.20 * span);
+      const Double_t span = std::max(0.5, *mm.second - *mm.first);
+      if (y_set) {
+        y_lo = std::min(y_lo, *mm.first - 0.08 * span);
+        y_hi = std::max(y_hi, *mm.second + 0.08 * span);
       } else {
-        y_lo = *mm.first - 0.35 * span;
-        y_hi = *mm.second + 0.35 * span;
+        y_lo = *mm.first - 0.15 * span;
+        y_hi = *mm.second + 0.15 * span;
+        y_set = kTRUE;
       }
-    }
-    if (!(y_hi > y_lo)) {
-      y_lo = hymin;
-      y_hi = hymax;
-    } else if (y_hi - y_lo < 1.0) {
-      const Double_t mid = 0.5 * (y_lo + y_hi);
-      y_lo = mid - 0.5;
-      y_hi = mid + 0.5;
     }
     y_lo = std::max(y_lo, hymin);
     y_hi = std::min(y_hi, hymax);
+    if (!(y_hi > y_lo)) {
+      y_lo = hymin;
+      y_hi = hymax;
+    }
 
-    // DrawClone+"SetRangeUser" だとズームが効かないことがあるため、
-    // 表示枠を先に張り、中身は colz same で重ねる
-    TH2D* frame = new TH2D(Form("frame_closeup_cobo%d", cobo),
-                           Form("CoBo %d close-up;Clock Time [ns];Residual Y [mm]", cobo),
-                           50, x1, x2, 50, y_lo, y_hi);
-    frame->SetDirectory(nullptr);
-    frame->SetStats(0);
-    frame->SetBit(kCanDelete);
-    frame->Draw();
-
+    // clone + SetRangeUser。DrawClone だとズームが落ちることがあるので DrawCopy
     TH2D* h_zoom = (TH2D*)h->Clone(Form("h_closeup_cobo%d", cobo));
     h_zoom->SetDirectory(nullptr);
-    h_zoom->SetTitle("");
-    h_zoom->SetStats(0);
-    h_zoom->SetBit(kCanDelete);
+    h_zoom->SetTitle(Form("CoBo %d close-up;Clock Time [ns];Residual Y [mm]", cobo));
     h_zoom->GetXaxis()->SetRangeUser(x1, x2);
     h_zoom->GetYaxis()->SetRangeUser(y_lo, y_hi);
-    h_zoom->Draw("colz same");
+    TH1* h_drawn = h_zoom->DrawCopy("colz");
+    if (h_drawn) {
+      h_drawn->GetXaxis()->SetRangeUser(x1, x2);
+      h_drawn->GetYaxis()->SetRangeUser(y_lo, y_hi);
+    }
+    delete h_zoom;
 
     TGraphErrors* g_profile = (TGraphErrors*)phase_file->Get(Form("TpcPhase_Profile_Cobo%d", cobo));
     if (g_profile) {
@@ -753,13 +835,12 @@ static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
         g_pts->SetMarkerSize(1.0);
         g_pts->SetMarkerColor(kOrange + 7);
         g_pts->SetLineColor(kOrange + 7);
-        DrawGraphCloneOnTop(g_pts, "P same");
+        g_pts->DrawClone("P same");
       }
       delete g_pts;
     }
 
-    Double_t t0_init = 0.0;
-    if (T0InitFromPhaseFile(phase_file, cobo, t0_init))
+    if (have_init)
       DrawT0InitVLine(t0_init, y_lo, y_hi);
 
     TLine* lt0 = new TLine(t0, y_lo, t0, y_hi);
@@ -783,14 +864,10 @@ static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
         DrawPhaseTf1Resy(f_fold, vdrift, x1, x2, kRed, 3, 1);
     }
 
-    // fit 窓の縦線（表示範囲と重なるときだけ）
+    // fit 窓の縦線
     Double_t fxmin = 0.0, fxmax = 0.0;
-    if (FitWindowXRange(phase_file, cobo, fxmin, fxmax)) {
-      if (fxmax > x1 && fxmin < x2)
-        DrawFitRangeVLines(fxmin, fxmax, y_lo, y_hi);
-    }
-
-    gPad->RedrawAxis();
+    if (FitWindowXRange(phase_file, cobo, fxmin, fxmax))
+      DrawFitRangeVLines(fxmin, fxmax, y_lo, y_hi);
   }
   c->Update();
 }
@@ -997,7 +1074,7 @@ int main(int argc, char* argv[])
 
   // Page 2: CoBo RawClock close-up（段差近傍の fit 品質確認）
   if (f_phase) {
-    DrawCoboCloseupPage(f, c_cobo, hist_fmts_cobo, f_phase, vdrift, 6.0);
+    DrawCoboCloseupPage(f, c_cobo, hist_fmts_cobo, f_phase, vdrift, 5.0);
     save("cobo_raw_closeup");
     c_cobo->Print(pngs.back().c_str());
   }
@@ -1048,7 +1125,7 @@ int main(int argc, char* argv[])
       DrawCoboPage(f2, c_cobo2, false, hist_fmts_cobo, f_phase2, vdrift);
       c_cobo2->Print((outbase + "_page1_cobo_raw.png").c_str());
       if (f_phase2) {
-        DrawCoboCloseupPage(f2, c_cobo2, hist_fmts_cobo, f_phase2, vdrift, 6.0);
+        DrawCoboCloseupPage(f2, c_cobo2, hist_fmts_cobo, f_phase2, vdrift, 5.0);
         c_cobo2->Print((outbase + "_page2_cobo_raw_closeup.png").c_str());
       }
       DrawAsadPage(f2, c_asad2, false, hist_fmts_asad);
