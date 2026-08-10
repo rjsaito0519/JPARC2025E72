@@ -5,11 +5,12 @@ TPC calibration auto-iterator.
 Outer schedule: hit, hit, trk, ... (2:1)
 
 hit (TPCHitBcOut):
-  recon -> phase(--ofs-update) -> recon -> offset -> recon -> drift
-        -> recon -> phase -> recon -> offset -> recon -> drift
+  recon -> phase(--ofs-update) -> recon -> offset
+        -> recon -> phase -> recon -> offset
 
 trk (tracking):
-  recon -> offset
+  recon -> offset -> recon -> drift
+        -> phase(--debug)   # eval only
 
 recon = tmux split-pane myrun.py -> wait -> check stat JSON -> add.sh/add_trk.sh
 
@@ -352,18 +353,13 @@ class IterOrchestrator:
         # 1) Phase + ofs-update (block head)
         recon()
         self.run_tpc(kind, "phase", outer_i, self.phase_opts(ofs_update=True))
-        # 2) offset -> drift
         recon()
         self.run_tpc(kind, "offset", outer_i, self.offset_opts(kind))
-        recon()
-        self.run_tpc(kind, "drift", outer_i, self.drift_opts())
-        # 3) Phase (no ofs) -> offset -> drift
+        # 2) Phase (no ofs) -> offset
         recon()
         self.run_tpc(kind, "phase", outer_i, self.phase_opts())
         recon()
         self.run_tpc(kind, "offset", outer_i, self.offset_opts(kind))
-        recon()
-        self.run_tpc(kind, "drift", outer_i, self.drift_opts())
 
     def run_trk_iter(self, outer_i: int) -> None:
         kind = "trk"
@@ -376,7 +372,10 @@ class IterOrchestrator:
 
         recon()
         self.run_tpc(kind, "offset", outer_i, self.offset_opts(kind))
-
+        recon()
+        self.run_tpc(kind, "drift", outer_i, self.drift_opts())
+        # eval only (no TPCPRM write)
+        self.run_tpc(kind, "phase", outer_i, self.phase_opts(debug=True))
     def run_outer_iter(self, outer_i: int) -> None:
         kind = self.kind_for_outer(outer_i)
         self.notify(
@@ -427,7 +426,7 @@ def resolve_analyzer_dir() -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="TPC calib auto iterator (hit/trk 2:1; hit: phase/offset/drift x2; trk: offset)"
+        description="TPC calib auto iterator (hit/trk 2:1; hit: phase/offset x2; trk: offset+drift, phase --debug)"
     )
     parser.add_argument(
         "--max-iter",

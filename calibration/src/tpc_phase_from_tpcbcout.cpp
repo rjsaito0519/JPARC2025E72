@@ -22,7 +22,7 @@
  *
  * オプション:
  *   --smooth N        : 移動平均の半窓幅（デフォルト 0 = スムージングなし）
- *   --vdrift V        : drift velocity [mm/ns]（デフォルト 0.055）
+ *   --vdrift V        : drift velocity [mm/ns]（明示時は全 CoBo 共通。省略時は TPCPRM の CoBo 平均 p1、無ければ 0.055）
  *   --fit-step [N]     : ステップ関数 Freq の N 重ね合わせでフィット（N=0 で全ゼロの初期ファイル作成、省略時 N=1）
  *   --min-entries N   : Profile で使う最小エントリ数（デフォルト 5、統計が少ないビンをスキップ）
  *   --rebin N         : 2D ヒストの clock 軸（X）を N ビンまとめてから各 X ビンで gaus+pol0 profile
@@ -158,7 +158,79 @@ struct TpcParamEntry {
   Bool_t is_comment = kTRUE;
 };
 
-// c0[ns] → CoBo 一律 δp0=-c0（aty=2）。center frame はスキップ。
+// TPCPRM から CoBo ごとの mean(p1) を読む（aty=2、センターフレーム除外）。
+// 成功した CoBo だけ map に入れる。ファイルが無い等は kFALSE。
+static Bool_t LoadCoboMeanVdrift(Int_t run_number,
+                                 std::map<Int_t, Double_t>& mean_v_by_cobo)
+{
+  mean_v_by_cobo.clear();
+  if (run_number < 0) return kFALSE;
+
+  TString base_dir = ANALYZER_DIR + "/param/TPCPRM";
+  TString e72_dir = base_dir + "/e72";
+  TString run_param_path = Form("%s/TPCParam_e72_run%05d", e72_dir.Data(), run_number);
+  TString base_param_path = Form("%s/TPCParam_0_yoffset_adjusted", base_dir.Data());
+  TString input_param_path = run_param_path;
+  if (!fs::exists(input_param_path.Data())) {
+    if (!fs::exists(base_param_path.Data())) return kFALSE;
+    input_param_path = base_param_path;
+  }
+
+  std::ifstream ifs(input_param_path.Data());
+  if (!ifs.is_open()) return kFALSE;
+
+  std::map<Int_t, Double_t> sum_v;
+  std::map<Int_t, Int_t> n_v;
+  std::string line;
+  bool in_tpcphase_stamp_block = false;
+  while (std::getline(ifs, line)) {
+    if (line.find("# --- begin TPCPHASE pointer") != std::string::npos) {
+      in_tpcphase_stamp_block = true;
+      continue;
+    }
+    if (in_tpcphase_stamp_block) {
+      if (line.find("# --- end TPCPHASE pointer ---") != std::string::npos)
+        in_tpcphase_stamp_block = false;
+      continue;
+    }
+    std::string trimmed = line;
+    size_t first = trimmed.find_first_not_of(" \t");
+    if (first == std::string::npos) continue;
+    trimmed.erase(0, first);
+    if (trimmed.empty() || trimmed[0] == '#') continue;
+    std::stringstream ss(trimmed);
+    Int_t layer = 0, row = 0, aty = 0;
+    if (!(ss >> layer >> row >> aty)) continue;
+    if (aty != 2) continue;
+    Double_t p0 = 0.0, p1 = 0.0;
+    if (!(ss >> p0 >> p1)) continue;
+    if (!std::isfinite(p1) || !(p1 > 0.0)) continue;
+    if (tpc::IsPadOnCenterFrame(layer, row)) continue;
+    const Int_t cobo = tpc::GetCoBoId(layer, row);
+    if (cobo < 0 || cobo >= NumOfSegCOBO) continue;
+    sum_v[cobo] += p1;
+    n_v[cobo] += 1;
+  }
+  ifs.close();
+
+  for (const auto& kv : n_v) {
+    if (kv.second <= 0) continue;
+    mean_v_by_cobo[kv.first] = sum_v[kv.first] / static_cast<Double_t>(kv.second);
+  }
+  std::cout << "[vdrift] Loaded CoBo-mean p1 from " << input_param_path
+            << " (center-frame excluded)\n";
+  for (Int_t c = 0; c < NumOfSegCOBO; ++c) {
+    auto it = mean_v_by_cobo.find(c);
+    if (it != mean_v_by_cobo.end())
+      std::cout << "  CoBo " << c << ": <vdrift>=" << it->second << " mm/ns (n="
+                << n_v[c] << ")\n";
+    else
+      std::cout << "  CoBo " << c << ": no pads -> fallback later\n";
+  }
+  return !mean_v_by_cobo.empty();
+}
+
+// c0[ns] → CoBo 一律 δp0=-c0（aty=2）。center frame は p0=0,p1=0.055 に正規化。
 static Bool_t ApplyCoboOfsUpdate(Int_t run_number,
                                  const std::map<Int_t, Double_t>& c0_by_cobo)
 {
@@ -1198,7 +1270,7 @@ int main(int argc, char* argv[])
               << "  2 args: tpcbcout.root TpcPhase.root (for --fit-step N>0)\n"
               << "\n"
               << "  --smooth N       : moving average half-window (default: 0 = no smoothing)\n"
-              << "  --vdrift V      : drift velocity [mm/ns] (default: 0.055)\n"
+              << "  --vdrift V      : drift [mm/ns]; if omitted, use CoBo-mean p1 from TPCPRM (else 0.055)\n"
               << "  --step-width W  : fixed step width [ns] (smaller => steeper, default: 0.005)\n"
               << "  --free          : free step width in fit (default: fixed)\n"
               << "  --base          : legacy fit without baseline constant (default: baseline ON)\n"
@@ -1214,6 +1286,7 @@ int main(int argc, char* argv[])
   std::string tpcbcout_path;
   std::string phase_path;
   Double_t vdrift = DEFAULT_VDRIFT;
+  Bool_t vdrift_cli_set = kFALSE;
   Int_t smooth_half_window = DEFAULT_SMOOTH;
   Int_t fit_nstep = 0;
   Int_t min_entries = 5;
@@ -1235,6 +1308,7 @@ int main(int argc, char* argv[])
     } else if (a == "--vdrift" && i + 1 < argc) {
       vdrift = std::atof(argv[++i]);
       if (vdrift <= 0.0) vdrift = DEFAULT_VDRIFT;
+      vdrift_cli_set = kTRUE;
     } else if (a == "--smooth" && i + 1 < argc) {
       smooth_half_window = std::atoi(argv[++i]);
       if (smooth_half_window < 0) smooth_half_window = 0;
@@ -1356,7 +1430,11 @@ int main(int argc, char* argv[])
               << (free_step_width ? " (initial, free)" : " (fixed)") << std::endl;
     std::cout << "Free width fit   : " << (free_step_width ? "ON" : "OFF") << std::endl;
     std::cout << "Smooth window    : " << smooth_half_window << " (half-width)" << std::endl;
-    std::cout << "Drift velocity   : " << vdrift << " mm/ns" << std::endl;
+    if (vdrift_cli_set)
+      std::cout << "Drift velocity   : " << vdrift << " mm/ns (--vdrift, all CoBos)\n";
+    else
+      std::cout << "Drift velocity   : CoBo-mean p1 from TPCPRM (fallback "
+                << DEFAULT_VDRIFT << " mm/ns)\n";
     std::cout << "Min entries/bin  : " << min_entries << std::endl;
     std::cout << "X rebin factor   : " << rebin_x
               << (rebin_x > 1 ? " (gauss profile per bin)" : " (ProfileX + core gauss)") << std::endl;
@@ -1384,6 +1462,30 @@ int main(int argc, char* argv[])
         }
       } catch (...) {
       }
+    }
+  }
+
+  if (run_number < 0 && !run_id.empty()) {
+    try {
+      run_number = std::stoi(run_id);
+    } catch (...) {
+      run_number = -1;
+    }
+  }
+
+  // CoBo ごとの ResY→Δclock 換算用 vdrift
+  std::vector<Double_t> cobo_vdrift(NumOfSegCOBO, vdrift);
+  if (!flat_zero_mode && !vdrift_cli_set) {
+    std::map<Int_t, Double_t> mean_v;
+    if (run_number >= 0 && LoadCoboMeanVdrift(run_number, mean_v)) {
+      for (Int_t c = 0; c < NumOfSegCOBO; ++c) {
+        auto it = mean_v.find(c);
+        cobo_vdrift[c] = (it != mean_v.end()) ? it->second : DEFAULT_VDRIFT;
+      }
+    } else {
+      std::cout << "[vdrift] TPCPRM CoBo-mean unavailable; using "
+                << DEFAULT_VDRIFT << " mm/ns for all CoBos\n";
+      std::fill(cobo_vdrift.begin(), cobo_vdrift.end(), DEFAULT_VDRIFT);
     }
   }
 
@@ -1429,6 +1531,7 @@ int main(int argc, char* argv[])
 
   if (!flat_zero_mode && fin) {
     for (Int_t cobo = 0; cobo < NumOfSegCOBO; ++cobo) {
+      const Double_t v_c = cobo_vdrift[cobo];
       TH2D* raw = nullptr;
       for (const auto& fmt : hist_fmts) {
         TString s = Form(fmt.c_str(), cobo);
@@ -1441,7 +1544,7 @@ int main(int argc, char* argv[])
         raw_guess = RebinHist2DX(raw_guess, rebin_x,
                                  Form("tpc_phase_guess_c%d_rebx%d", cobo, rebin_x));
       }
-      StepGuess g = EstimateStepFromProjectionY(raw_guess, vdrift);
+      StepGuess g = EstimateStepFromProjectionY(raw_guess, v_c);
       delete raw_guess;
 
       // params.h に run-cobo 指定の t0 / 高さ初期値があればそれを優先
@@ -1460,11 +1563,11 @@ int main(int argc, char* argv[])
             g.t0 = std::clamp(v[0], -kPhaseGraphHalfRangeNs, kPhaseGraphHalfRangeNs);
           }
           // v[1]: 高さ[mm]（上 − 下）。有効なら c_left/c_right を上書き。
-          if (v.size() >= 2 && std::isfinite(v[1]) && vdrift > 0.0) {
+          if (v.size() >= 2 && std::isfinite(v[1]) && v_c > 0.0) {
             // 現在の Δclock 振幅（ns）からおおよその下側 Δclock を維持しつつ高さだけ合わせる
             const Double_t current_amp_ns = g.c_right - g.c_left;
             const Double_t current_mid_ns = 0.5 * (g.c_right + g.c_left);
-            const Double_t target_amp_ns  = -v[1] / vdrift; // ResY[mm] -> Δclock[ns]
+            const Double_t target_amp_ns  = -v[1] / v_c; // ResY[mm] -> Δclock[ns]
             g.c_left  = current_mid_ns - 0.5 * target_amp_ns;
             g.c_right = current_mid_ns + 0.5 * target_amp_ns;
           }
@@ -1535,6 +1638,8 @@ int main(int argc, char* argv[])
       continue;
     }
     std::cout << "    Found " << hname << ". Processing..." << std::flush;
+    const Double_t v_c = cobo_vdrift[cobo];
+    std::cout << " (vdrift=" << v_c << " mm/ns)" << std::flush;
     TH2D* h = (TH2D*)raw->Clone(Form("%s_tmp", hname.Data()));
     if (rebin_x > 1) {
       h = RebinHist2DX(h, rebin_x, Form("%s_rebx%d", h->GetName(), rebin_x));
@@ -1549,7 +1654,7 @@ int main(int argc, char* argv[])
 
     std::vector<Double_t> x_center, mean_y, err_y;
     if (rebin_x > 1)
-      ProfileXGauss(h, x_center, mean_y, err_y, cobo, vdrift, min_entries);
+      ProfileXGauss(h, x_center, mean_y, err_y, cobo, v_c, min_entries);
     else
       ProfileX(h, x_center, mean_y, err_y, min_entries);
 
@@ -1563,8 +1668,8 @@ int main(int argc, char* argv[])
     std::vector<Double_t> delta_clock(npts);
     std::vector<Double_t> err_delta(npts);
     for (Int_t i = 0; i < npts; ++i) {
-      delta_clock[i] = ResYToDeltaClock(mean_y[i], vdrift);
-      err_delta[i] = (vdrift > 0) ? err_y[i] / vdrift : 1e-6;
+      delta_clock[i] = ResYToDeltaClock(mean_y[i], v_c);
+      err_delta[i] = (v_c > 0) ? err_y[i] / v_c : 1e-6;
     }
     SmoothMovingAverage(delta_clock, smooth_half_window, &err_delta);
 
@@ -1632,7 +1737,7 @@ int main(int argc, char* argv[])
     guess.fix_t0 = (std::fabs(t0_ref) > 1e-6);
     Double_t c0_side = 0.0, amp_side = 0.0;
     if (EstimatePlateauFromFitWindowSides(h, fit_xmin, fit_xmax,
-                                          kPhaseSideGaussHalfWindowNs, cobo, vdrift,
+                                          kPhaseSideGaussHalfWindowNs, cobo, v_c,
                                           c0_side, amp_side)) {
       guess.c_left = c0_side;
       guess.c_right = c0_side + amp_side;
@@ -1663,9 +1768,9 @@ int main(int argc, char* argv[])
         TH1D* py = h->ProjectionY(Form("tpc_phase_py_c%d_%d", cobo, k), binx, binx);
         if (!py) continue;
         Double_t mean_resy = 0.0, mean_err = 0.0;
-        if (FitSliceGaussMean(py, cobo, k, vdrift, mean_resy, mean_err)) {
-          dclk_fit[k] = ResYToDeltaClock(mean_resy, vdrift);
-          err_fit[k] = mean_err / vdrift;
+        if (FitSliceGaussMean(py, cobo, k, v_c, mean_resy, mean_err)) {
+          dclk_fit[k] = ResYToDeltaClock(mean_resy, v_c);
+          err_fit[k] = mean_err / v_c;
         }
         delete py;
       }
@@ -1708,9 +1813,9 @@ int main(int argc, char* argv[])
         it = param::tpc_phase_step_init.find(key_default);
       }
       if (it != param::tpc_phase_step_init.end() && it->second.size() >= 2 &&
-          std::isfinite(it->second[1]) && vdrift > 0.0) {
+          std::isfinite(it->second[1]) && v_c > 0.0) {
         const Double_t height_mm = it->second[1];
-        amp_override_ns = -height_mm / vdrift;
+        amp_override_ns = -height_mm / v_c;
       }
     }
 
