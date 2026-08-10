@@ -322,6 +322,8 @@ int main(Int_t argc, char** argv)
   for (const auto& e : entries) {
     if (e.is_comment || e.aty != 2 || e.p.size() < 2)
       continue;
+    if (tpc::IsPadOnCenterFrame(e.layer, e.row))
+      continue;
     layer_p1s[e.layer].push_back(e.p[1]);
   }
 
@@ -612,18 +614,24 @@ int main(Int_t argc, char** argv)
       delete hclone;
   }
 
-  // Apply δv and fill maps for ALL aty==2 pads (unfilled bins would look like v=0).
+  // Apply δv; center-frame X pads are forced to p0=0, p1=0.055 (not calibrated).
   std::vector<Double_t> all_dv_updated;
   std::vector<Double_t> all_v_map;
   std::vector<Double_t> all_dv_map;
   Int_t n_pads_updated = 0;
+  Int_t n_pads_frame_normalized = 0;
   for (auto& e : entries) {
     if (e.is_comment || e.aty != 2 || e.p.size() < 2)
       continue;
 
     Double_t dv = 0.0;
     auto it = delta_by_layer.find(e.layer);
-    if (it != delta_by_layer.end()) {
+    const Bool_t on_frame = tpc::IsPadOnCenterFrame(e.layer, e.row);
+    if (on_frame) {
+      e.p[0] = 0.0;
+      e.p[1] = 0.055;
+      ++n_pads_frame_normalized;
+    } else if (it != delta_by_layer.end()) {
       dv = it->second;
       e.p[1] += dv;
       ++n_pads_updated;
@@ -827,7 +835,8 @@ int main(Int_t argc, char** argv)
 
   const Int_t n_layers_ok = static_cast<Int_t>(delta_by_layer.size());
   std::cout << "Done! Updated " << n_layers_ok << " layers (" << n_pads_updated
-            << " pads)." << std::endl;
+            << " pads; center-frame X normalized to p0=0,p1=0.055: "
+            << n_pads_frame_normalized << ")." << std::endl;
   if (debug_mode)
     std::cout << "Debug mode: parameter file was NOT updated." << std::endl;
   else

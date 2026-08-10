@@ -315,11 +315,13 @@ int main(Int_t argc, char** argv) {
         if (!e.is_comment && e.aty == 2 && !e.p.empty())
             ini_p0[{e.layer, e.row}] = e.p[0];
     }
-    // センターフレーム上のパッドは time offset 校正対象外（p0=0、Δp0 表示は 0）
+    // センターフレーム上のパッドは校正対象外（p0=0、vdrift=0.055 に正規化）
     for (auto& e : entries) {
         if (e.is_comment || e.aty != 2 || e.p.empty()) continue;
         if (!tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
         e.p[0] = 0.0;
+        if (e.p.size() >= 2) e.p[1] = 0.055;
+        else e.p.push_back(0.055);
         ini_p0[{e.layer, e.row}] = 0.0;
     }
     std::set<std::pair<Int_t, Int_t>> pads_updated;

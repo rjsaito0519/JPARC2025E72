@@ -5,6 +5,7 @@ run_tpc: TPC 周りの便利フロントエンド
 使い方:
   ./run_tpc.py <root_file> phase  [--fit-step N] [--vdrift V] [--smooth N] [--rebin N] [--mode hit|trk]
   ./run_tpc.py <root_file> phase --base   # 定数項なし（従来 fit）
+  ./run_tpc.py <root_file> phase --ofs-update  # baseline c0 → CoBo 一律 time offset（Xフレーム除外）
   ./run_tpc.py <root_file> phase --plot-only [--vdrift V]
   ./run_tpc.py <root_file> offset [--run N] [--mode hit|trk] [...]
   ./run_tpc.py <root_file> gain [--run N] [--target-mpv 200] [...]
@@ -286,6 +287,12 @@ def main():
         help="[phase] Legacy fit without baseline constant (default: baseline term ON for flatness).",
     )
     parser.add_argument(
+        "--ofs-update",
+        action="store_true",
+        help="[phase] Apply baseline c0 as CoBo-uniform time offset (δp0=-c0; skips center-frame X). "
+        "Ignored with --debug.",
+    )
+    parser.add_argument(
         "--plot-only",
         action="store_true",
         help="[phase] Skip Step1 (tpc_phase_from_tpcbcout) and run plot-only using existing TpcPhase_*.root.",
@@ -322,7 +329,7 @@ def main():
         "--run",
         type=int,
         default=None,
-        help="[offset] Run number (if omitted, try to detect from ROOT file).",
+        help="[offset|phase|drift] Run number (if omitted, try to detect from ROOT file).",
     )
     parser.add_argument(
         "--mode",
@@ -599,6 +606,10 @@ def main():
                 cmd_fit += " --free"
             if args.base:
                 cmd_fit += " --base"
+            if args.ofs_update and not args.debug:
+                cmd_fit += " --ofs-update"
+            if args.run is not None:
+                cmd_fit += f" --run {args.run}"
             if args.rebin is not None:
                 cmd_fit += f" --rebin {args.rebin}"
             print(colored(">>> Step 1: TPC phase fit (tpc_phase_from_tpcbcout)", "cyan"))

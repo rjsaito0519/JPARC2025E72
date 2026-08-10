@@ -29,6 +29,8 @@
  *                       （N=1: 従来 ProfileX + コア点のみ再 fit、N>1: X rebin + 全ビン Gaussian）
  *   --graph-points N  : TGraph の点数（デフォルト 10000）
  *   --mode hit|trk    : 入力 2D ヒストの優先順（trk: TPCTrk_ResY_vs_ClockTime_... を先に、デフォルト hit）
+ *   --ofs-update      : baseline fit の c0 [ns] を CoBo 一律で time offset (aty=2 p0) に加算（δp0=-c0）
+ *   --run N           : TPCPRM 更新用 run 番号（省略時は tpc/run_number またはファイル名から）
  *
  * 例:
  *   # 初期ファイル（全ゼロ、tpcbcout 不要）
@@ -60,16 +62,24 @@
 #include <TPaveText.h>
 
 #include "params.h"
+#include "paths.h"
+#include "TPCPadHelper.hh"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <numeric>
+
+namespace fs = std::filesystem;
 
 //_____________________________________________________________________________
 // HistTools.cc / DetectorID.hh と合わせる
@@ -113,6 +123,154 @@ static const Int_t DEFAULT_SMOOTH = 0;
 
 // TGraph の点数（TF1 を細かく Eval する）
 static const Int_t DEFAULT_GRAPH_POINTS = 10000;
+
+// PhaseShift / TPCPRM kCobo 用: 常に (A,t,w) を取り出す。
+// - 3par legacy: (A,t,w)
+// - StepSum: p[0]=N, p[1]=A, p[2]=t, p[3]=w  → (1,2,3) を使う（N を書かない）
+static Bool_t ExtractPhaseShiftAtw(const TF1* f, Double_t& A, Double_t& t, Double_t& w)
+{
+  if (!f) return kFALSE;
+  const Int_t np = f->GetNpar();
+  if (np == 3) {
+    A = f->GetParameter(0);
+    t = f->GetParameter(1);
+    w = f->GetParameter(2);
+    return std::isfinite(A) && std::isfinite(t) && std::isfinite(w) && (w > 0.0);
+  }
+  if (np >= 4) {
+    const Int_t n = (Int_t)(f->GetParameter(0) + 0.5);
+    if (n >= 1 && np >= 1 + 3 * n) {
+      A = f->GetParameter(1);
+      t = f->GetParameter(2);
+      w = f->GetParameter(3);
+      return std::isfinite(A) && std::isfinite(t) && std::isfinite(w) && (w > 0.0);
+    }
+  }
+  return kFALSE;
+}
+
+struct TpcParamEntry {
+  Int_t layer = 0;
+  Int_t row = 0;
+  Int_t aty = 0;
+  std::vector<Double_t> p;
+  TString raw_line;
+  Bool_t is_comment = kTRUE;
+};
+
+// c0[ns] → CoBo 一律 δp0=-c0（aty=2）。center frame はスキップ。
+static Bool_t ApplyCoboOfsUpdate(Int_t run_number,
+                                 const std::map<Int_t, Double_t>& c0_by_cobo)
+{
+  if (run_number < 0 || c0_by_cobo.empty()) return kFALSE;
+
+  TString base_dir = ANALYZER_DIR + "/param/TPCPRM";
+  TString e72_dir = base_dir + "/e72";
+  TString run_param_path = Form("%s/TPCParam_e72_run%05d", e72_dir.Data(), run_number);
+  TString base_param_path = Form("%s/TPCParam_0_yoffset_adjusted", base_dir.Data());
+  TString input_param_path = run_param_path;
+  if (!fs::exists(input_param_path.Data())) {
+    input_param_path = base_param_path;
+    std::cout << "[ofs-update] Input param not in e72, using base: " << base_param_path << std::endl;
+  } else {
+    std::cout << "[ofs-update] Using param: " << input_param_path << std::endl;
+  }
+
+  std::ifstream ifs(input_param_path.Data());
+  if (!ifs.is_open()) {
+    std::cerr << "[ofs-update] Error: cannot open " << input_param_path << std::endl;
+    return kFALSE;
+  }
+
+  std::vector<TpcParamEntry> entries;
+  std::string line;
+  bool in_tpcphase_stamp_block = false;
+  while (std::getline(ifs, line)) {
+    if (line.find("# --- begin TPCPHASE pointer") != std::string::npos) {
+      in_tpcphase_stamp_block = true;
+      continue;
+    }
+    if (in_tpcphase_stamp_block) {
+      if (line.find("# --- end TPCPHASE pointer ---") != std::string::npos)
+        in_tpcphase_stamp_block = false;
+      continue;
+    }
+    TpcParamEntry entry;
+    entry.raw_line = line;
+    std::string trimmed = line;
+    size_t first = trimmed.find_first_not_of(" \t");
+    if (first == std::string::npos) {
+      entry.is_comment = kTRUE;
+    } else {
+      trimmed.erase(0, first);
+      if (trimmed[0] == '#') {
+        entry.is_comment = kTRUE;
+      } else {
+        std::stringstream ss(trimmed);
+        if (!(ss >> entry.layer >> entry.row >> entry.aty)) {
+          entry.is_comment = kTRUE;
+        } else {
+          entry.is_comment = kFALSE;
+          Double_t val;
+          while (ss >> val) entry.p.push_back(val);
+        }
+      }
+    }
+    entries.push_back(entry);
+  }
+  ifs.close();
+
+  Int_t n_updated = 0;
+  Int_t n_frame_normalized = 0;
+  for (auto& e : entries) {
+    if (e.is_comment || e.aty != 2 || e.p.empty()) continue;
+    // X字センターフレーム: 校正せず p0=0, p1=0.055 に正規化
+    if (tpc::IsPadOnCenterFrame(e.layer, e.row)) {
+      e.p[0] = 0.0;
+      if (e.p.size() >= 2) e.p[1] = 0.055;
+      else e.p.push_back(0.055);
+      ++n_frame_normalized;
+      continue;
+    }
+    const Int_t cobo = tpc::GetCoBoId(e.layer, e.row);
+    auto it = c0_by_cobo.find(cobo);
+    if (it == c0_by_cobo.end()) continue;
+    const Double_t c0 = it->second;
+    if (!std::isfinite(c0) || std::fabs(c0) < 1e-12) continue;
+    e.p[0] += -c0;  // δp0 = -c0; ResY≈-c0*v → δp0=ResY/v
+    ++n_updated;
+  }
+
+  if (!fs::exists(e72_dir.Data())) fs::create_directories(e72_dir.Data());
+  if (fs::exists(run_param_path.Data())) {
+    fs::copy(run_param_path.Data(), (run_param_path + ".bak").Data(),
+             fs::copy_options::overwrite_existing);
+  }
+  std::ofstream ofs(run_param_path.Data());
+  if (!ofs.is_open()) {
+    std::cerr << "[ofs-update] Error: cannot write " << run_param_path << std::endl;
+    return kFALSE;
+  }
+  for (const auto& entry : entries) {
+    if (entry.is_comment) {
+      ofs << entry.raw_line.Data() << "\n";
+    } else {
+      ofs << entry.layer << "\t" << entry.row << "\t" << entry.aty;
+      for (size_t i = 0; i < entry.p.size(); ++i)
+        ofs << "\t" << std::fixed << std::setprecision(8) << entry.p[i];
+      ofs << "\n";
+    }
+  }
+  ofs.close();
+  std::cout << "[ofs-update] Updated " << n_updated << " pads (aty=2 p0), "
+            << "center-frame normalized: " << n_frame_normalized
+            << ", saved " << run_param_path << std::endl;
+  for (const auto& kv : c0_by_cobo) {
+    std::cout << "  CoBo " << kv.first << ": c0=" << kv.second
+              << " ns -> δp0=" << -kv.second << " ns\n";
+  }
+  return kTRUE;
+}
 
 // ステップ関数の重ね合わせ: dclk(x) = sum_i A_i * Freq((x - t_i) / w_i)
 // パラメータ: p[0]=N, p[1+3*i]=A_i, p[2+3*i]=t_i, p[3+3*i]=w_i
@@ -410,8 +568,10 @@ static TF1* FitStepSum(Int_t nstep, std::vector<Double_t>& x_center,
                        Bool_t free_step_width = kFALSE,
                        Bool_t use_baseline_term = kTRUE,
                        TF1** raw_out = nullptr,
-                       TF1** initial_out = nullptr)
+                       TF1** initial_out = nullptr,
+                       Double_t* c0_out = nullptr)
 {
+  if (c0_out) *c0_out = 0.0;
   if (nstep <= 0 || x_center.empty() || delta_clock.size() != x_center.size())
     return nullptr;
 
@@ -573,11 +733,12 @@ static TF1* FitStepSum(Int_t nstep, std::vector<Double_t>& x_center,
       const Double_t A = f_raw->GetParameter(1);
       const Double_t t = f_raw->GetParameter(2);
       const Double_t w = f_raw->GetParameter(3);
+      if (c0_out) *c0_out = c0;
       f_legacy = new TF1("step_sum", LegacyOneStepFunc, domain_lo, domain_hi, 3);
       f_legacy->SetParNames("A", "t", "w");
       f_legacy->SetParameters(A, t, w);
       std::cout << "    Baseline fit (t" << (fix_t ? " fixed" : " free")
-                << "): c0=" << c0 << " (not stored), A=" << A
+                << "): c0=" << c0 << " (ofs-update only), A=" << A
                 << ", t=" << t << ", w=" << w << "\n";
       if (raw_out) {
         if (*raw_out) {
@@ -1044,7 +1205,9 @@ int main(int argc, char* argv[])
               << "  --min-entries N : min entries per bin for profile (default: 5)\n"
               << "  --rebin N       : rebin 2D hist X (clock) by N; N>1 uses gaus profile per bin\n"
               << "  --graph-points N: number of points in output TGraph (default: 10000)\n"
-              << "  --mode hit|trk  : input 2D hist priority (trk: TPCTrk_ResY_vs_ClockTime_... first)\n";
+              << "  --mode hit|trk  : input 2D hist priority (trk: TPCTrk_ResY_vs_ClockTime_... first)\n"
+              << "  --ofs-update    : apply baseline c0 to CoBo-uniform time offset (δp0=-c0; skip center-frame X)\n"
+              << "  --run N         : run number for TPCPRM path (default: from tpc/run_number or filename)\n";
     return 1;
   }
 
@@ -1058,6 +1221,8 @@ int main(int argc, char* argv[])
   Double_t step_width_ns = 0.0001;
   Bool_t free_step_width = kFALSE;
   Bool_t use_baseline_term = kTRUE;
+  Bool_t ofs_update = kFALSE;
+  Int_t run_number = -1;
   Int_t rebin_x = 1;
   std::string mode = "hit";
 
@@ -1080,6 +1245,10 @@ int main(int argc, char* argv[])
       free_step_width = kTRUE;
     } else if (a == "--base") {
       use_baseline_term = kFALSE;
+    } else if (a == "--ofs-update") {
+      ofs_update = kTRUE;
+    } else if (a == "--run" && i + 1 < argc) {
+      run_number = std::atoi(argv[++i]);
     } else if (a == "--fit-step") {
       fit_nstep = 1;  // デフォルト1個
       if (i + 1 < argc) {
@@ -1182,6 +1351,7 @@ int main(int argc, char* argv[])
   if (!flat_zero_mode) {
     std::cout << "Fit steps        : " << fit_nstep << std::endl;
     std::cout << "Baseline term    : " << (use_baseline_term ? "ON" : "OFF (--base)") << std::endl;
+    std::cout << "Ofs update       : " << (ofs_update ? "ON (δp0=-c0, skip center-frame X)" : "OFF") << std::endl;
     std::cout << "Step width [ns]  : " << step_width_ns
               << (free_step_width ? " (initial, free)" : " (fixed)") << std::endl;
     std::cout << "Free width fit   : " << (free_step_width ? "ON" : "OFF") << std::endl;
@@ -1230,20 +1400,23 @@ int main(int argc, char* argv[])
   Int_t fb_cobo = 0;
   Int_t fb_nstep_fit = 0;
   Double_t fb_p0 = 0.0, fb_p1 = 0.0, fb_p2 = 1.0;
+  Double_t fb_c0 = 0.0;
   Double_t fb_t0_init = 0.0, fb_amp_init = 0.0;
   TTree* t_cobo_fb = new TTree("TpcPhase_CoboFallback",
-                                "TPCPRM kCobo fallback; p0,p1,p2 for PhaseShift when nstep_fit==1");
+                                "TPCPRM kCobo fallback; p0,p1,p2=(A,t,w) for PhaseShift when nstep_fit==1");
   t_cobo_fb->Branch("cobo", &fb_cobo, "cobo/I");
   t_cobo_fb->Branch("nstep_fit", &fb_nstep_fit, "nstep_fit/I");
   t_cobo_fb->Branch("p0", &fb_p0, "p0/D");
   t_cobo_fb->Branch("p1", &fb_p1, "p1/D");
   t_cobo_fb->Branch("p2", &fb_p2, "p2/D");
+  t_cobo_fb->Branch("c0", &fb_c0, "c0/D");
   t_cobo_fb->Branch("t0_init", &fb_t0_init, "t0_init/D");
   t_cobo_fb->Branch("amp_init", &fb_amp_init, "amp_init/D");
 
   // PDF出力は将来の実装のため、現在は無効化
 
   Int_t n_created = 0;
+  std::map<Int_t, Double_t> c0_by_cobo;
 
   //==========================================================================
   // run ごとの代表振幅 (Δclock) を Y 射影ベースで推定
@@ -1331,6 +1504,7 @@ int main(int argc, char* argv[])
       fb_p0 = 0.0;
       fb_p1 = 0.0;
       fb_p2 = 1.0;
+      fb_c0 = 0.0;
       fb_t0_init = 0.0;
       fb_amp_init = 0.0;
       t_cobo_fb->Fill();
@@ -1547,17 +1721,20 @@ int main(int argc, char* argv[])
 
     TF1* init_func = nullptr;
     TF1* fit_raw_func = nullptr;
+    Double_t fit_c0 = 0.0;
     TF1* fit_func = FitStepSum(fit_nstep, x_fit, dclk_fit,
                                xmin, xmax, &err_fit, &guess,
                                run_amp_ref_ns, amp_override_ns, step_width_ns, free_step_width,
-                               use_baseline_term, &fit_raw_func, &init_func);
+                               use_baseline_term, &fit_raw_func, &init_func, &fit_c0);
 
     fout->cd();
     fb_cobo = cobo;
+    fb_c0 = fit_c0;
     if (!fit_func) {
       fb_nstep_fit = -1;
       fb_p0 = fb_p1 = 0.0;
       fb_p2 = 1.0;
+      fb_c0 = 0.0;
       // fb_t0_init / fb_amp_init は上で設定済み
       t_cobo_fb->Fill();
     } else {
@@ -1576,11 +1753,22 @@ int main(int argc, char* argv[])
       }
       g_save->Write();
 
-      if (fit_nstep == 1) {
+      Double_t A = 0.0, t = 0.0, w = 1.0;
+      if (fit_nstep == 1 && ExtractPhaseShiftAtw(fit_func, A, t, w)) {
         fb_nstep_fit = 1;
-        fb_p0 = fit_func->GetParameter(0);
-        fb_p1 = fit_func->GetParameter(1);
-        fb_p2 = fit_func->GetParameter(2);
+        fb_p0 = A;
+        fb_p1 = t;
+        fb_p2 = w;
+        if (std::isfinite(fit_c0) && std::fabs(fit_c0) > 1e-12)
+          c0_by_cobo[cobo] = fit_c0;
+        std::cout << "    CoboFallback: A=" << A << " t=" << t << " w=" << w
+                  << " c0=" << fit_c0 << "\n";
+      } else if (fit_nstep == 1) {
+        fb_nstep_fit = -1;
+        fb_p0 = fb_p1 = 0.0;
+        fb_p2 = 1.0;
+        fb_c0 = 0.0;
+        std::cerr << "    Warning: failed to extract (A,t,w) for CoboFallback\n";
       } else {
         fb_nstep_fit = fit_nstep;
         fb_p0 = fb_p1 = 0.0;
@@ -1607,6 +1795,26 @@ int main(int argc, char* argv[])
 
   // tmp → 本番にリネーム
   fs::rename(tmp_path, phase_path);
+
+  if (run_number < 0 && !run_id.empty()) {
+    try {
+      run_number = std::stoi(run_id);
+    } catch (...) {
+      run_number = -1;
+    }
+  }
+
+  if (ofs_update) {
+    if (run_number < 0) {
+      std::cerr << "[ofs-update] Error: run number unknown (pass --run N)\n";
+      return 1;
+    }
+    if (c0_by_cobo.empty()) {
+      std::cout << "[ofs-update] No finite c0 (e.g. --base); skip TPCPRM p0 update\n";
+    } else if (!ApplyCoboOfsUpdate(run_number, c0_by_cobo)) {
+      return 1;
+    }
+  }
 
   // PDF生成は将来の実装として保留
   // 現在はROOTファイルを直接開いて結果を確認してください

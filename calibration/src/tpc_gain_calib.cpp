@@ -716,12 +716,12 @@ int main(Int_t argc, char** argv) {
     }
   }
 
-  // センターフレーム上のパッドは gain 校正対象外（デフォルト p0=0, gain=1）
+  // センターフレーム上のパッドは gain 校正対象外（デフォルト p0=0, gain=0）
   for (auto& e : entries) {
     if (e.is_comment || e.aty != 0 || e.p.size() < 2) continue;
     if (!tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
     if (e.p.size() >= 1) e.p[0] = 0.0;
-    e.p[1] = 1.0;
+    e.p[1] = 0.0;
   }
 
   gROOT->SetBatch(kTRUE);

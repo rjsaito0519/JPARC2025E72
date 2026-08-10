@@ -3,8 +3,13 @@
 TPC calibration auto-iterator.
 
 Outer schedule: hit, hit, trk, ... (2:1)
-Each outer iter (kind=hit|trk):
-  recon -> offset -> recon -> phase -> recon -> drift -> recon -> offset
+
+hit (TPCHitBcOut):
+  recon -> phase(--ofs-update) -> recon -> offset -> recon -> drift
+        -> recon -> phase -> recon -> offset -> recon -> drift
+
+trk (tracking):
+  recon -> offset
 
 recon = tmux split-pane myrun.py -> wait -> check stat JSON -> add.sh/add_trk.sh
 
@@ -142,7 +147,7 @@ class IterOrchestrator:
 
     @staticmethod
     def kind_for_outer(i: int) -> str:
-        """1-based outer index -> hit,hit,trk,..."""
+        """1-based outer index -> hit, hit, trk, ..."""
         return "trk" if (i % 3 == 0) else "hit"
 
     def yml_for(self, kind: str) -> Path:
@@ -304,6 +309,7 @@ class IterOrchestrator:
     def run_tpc(self, kind: str, cmd: str, outer_i: int, extra: list[str]) -> None:
         root = self.hadd_root_for(kind)
         run_num = self.run0_for(kind)
+        mode = "trk" if kind == "trk" else "hit"
         opts = [
             sys.executable,
             str(RUN_TPC),
@@ -311,9 +317,11 @@ class IterOrchestrator:
             cmd,
             "--run",
             str(run_num),
+            "--mode",
+            mode,
             *extra,
         ]
-        self.notify(f"[tpc_iter] {cmd} start i={outer_i} kind={kind}")
+        self.notify(f"[tpc_iter] {cmd} start i={outer_i} kind={kind} mode={mode}")
         self.run_cmd(opts, cwd=MYANALYSIS_ROOT)
         self.notify(f"[tpc_iter] {cmd} done i={outer_i} kind={kind}")
 
@@ -321,30 +329,63 @@ class IterOrchestrator:
         th = "100" if kind == "hit" else "50"
         return ["--threshold", th, "--min-fit-ndf", "0", "--ave"]
 
-    def phase_opts(self) -> list[str]:
-        return ["--base", "--rebin", "4"]
+    def phase_opts(self, *, ofs_update: bool = False, debug: bool = False) -> list[str]:
+        opts = ["--rebin", "4"]
+        if ofs_update:
+            opts.append("--ofs-update")
+        if debug:
+            opts.append("--debug")
+        return opts
 
-    def drift_opts(self) -> list[str]:
-        return []
+    def drift_opts(self, *, debug: bool = False) -> list[str]:
+        return ["--debug"] if debug else []
+
+    def run_hit_iter(self, outer_i: int) -> None:
+        kind = "hit"
+        step = 0
+
+        def recon() -> None:
+            nonlocal step
+            step += 1
+            self.recon(kind, outer_i, step=step)
+
+        # 1) Phase + ofs-update (block head)
+        recon()
+        self.run_tpc(kind, "phase", outer_i, self.phase_opts(ofs_update=True))
+        # 2) offset -> drift
+        recon()
+        self.run_tpc(kind, "offset", outer_i, self.offset_opts(kind))
+        recon()
+        self.run_tpc(kind, "drift", outer_i, self.drift_opts())
+        # 3) Phase (no ofs) -> offset -> drift
+        recon()
+        self.run_tpc(kind, "phase", outer_i, self.phase_opts())
+        recon()
+        self.run_tpc(kind, "offset", outer_i, self.offset_opts(kind))
+        recon()
+        self.run_tpc(kind, "drift", outer_i, self.drift_opts())
+
+    def run_trk_iter(self, outer_i: int) -> None:
+        kind = "trk"
+        step = 0
+
+        def recon() -> None:
+            nonlocal step
+            step += 1
+            self.recon(kind, outer_i, step=step)
+
+        recon()
+        self.run_tpc(kind, "offset", outer_i, self.offset_opts(kind))
 
     def run_outer_iter(self, outer_i: int) -> None:
         kind = self.kind_for_outer(outer_i)
         self.notify(
             f"[tpc_iter] OUTER START i={outer_i}/{self.max_iter} kind={kind}"
         )
-        # recon -> offset -> recon -> phase -> recon -> drift -> recon -> offset
-        self.recon(kind, outer_i, step=1)
-        self.run_tpc(kind, "offset", outer_i, self.offset_opts(kind))
-
-        self.recon(kind, outer_i, step=2)
-        self.run_tpc(kind, "phase", outer_i, self.phase_opts())
-
-        self.recon(kind, outer_i, step=3)
-        self.run_tpc(kind, "drift", outer_i, self.drift_opts())
-
-        self.recon(kind, outer_i, step=4)
-        self.run_tpc(kind, "offset", outer_i, self.offset_opts(kind))
-
+        if kind == "hit":
+            self.run_hit_iter(outer_i)
+        else:
+            self.run_trk_iter(outer_i)
         self.notify(
             f"[tpc_iter] OUTER DONE i={outer_i}/{self.max_iter} kind={kind}"
         )
@@ -386,7 +427,7 @@ def resolve_analyzer_dir() -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="TPC calib auto iterator (hit/trk 2:1, recon between calibs)"
+        description="TPC calib auto iterator (hit/trk 2:1; hit: phase/offset/drift x2; trk: offset)"
     )
     parser.add_argument(
         "--max-iter",
