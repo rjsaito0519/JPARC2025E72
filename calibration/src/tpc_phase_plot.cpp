@@ -7,6 +7,16 @@
  * オプションで TpcPhase.root も読み込み、RawClock ヒストグラムに
  * フィット曲線を重ね描きする。
  *
+ * 運用前提: 1-step（--fit-step 1）。多段は想定しない。
+ * phase ファイル契約・修正時チェックリスト:
+ *   myanalysis/calibration/docs/tpc_phase_plot_contract.md
+ *
+ * --phase 時に読む主なオブジェクト:
+ *   必須: TpcPhase_Cobo%d (fit 赤実線), TpcPhase_Profile*, TpcPhase_CoboFallback
+ *         (p1=ステップ位置 → 赤点線縦線; nstep_fit==1 で有効)
+ *   推奨: TpcPhase_Fit_Cobo%d, TpcPhase_FitRaw_Cobo%d
+ * TGraph (TpcPhase_Cobo*) が無いと fit 赤線は出ない。
+ *
  * 2D ヒストが重いため、各ページを PNG 等のラスター形式で出力し、
  * ImageMagick の convert で PDF に埋め込む（軽量 PDF）。
  * convert がなければ PNG のみ出力し、手動で convert *.png out.pdf 可能。
@@ -289,10 +299,15 @@ static Double_t EvalPhaseGraphDclk(const TGraph* g, Double_t x)
   return g->Eval(x);
 }
 
+// フィット曲線再サンプル点数（TF1::SetNpx 相当）
+static const Int_t kPhaseCurveNseg = 1000;
+// close-up は狭い窓＋急段差 (store w≈0.001) なので点数を厚くする
+static const Int_t kPhaseCurveNsegCloseup = 10000;
+
 //_____________________________________________________________________________
 // TpcPhase_Cobo TGraph (Δclock) を ResY 赤線として描画
 static TGraph* MakeResyGraphFromPhase(TGraph* g_phase, Double_t vdrift,
-                                      Double_t x1, Double_t x2, Int_t nseg = 300)
+                                      Double_t x1, Double_t x2, Int_t nseg = kPhaseCurveNseg)
 {
   if (!g_phase || g_phase->GetN() < 2 || vdrift <= 0.0 || !(x2 > x1))
     return nullptr;
@@ -309,7 +324,7 @@ static TGraph* MakeResyGraphFromPhase(TGraph* g_phase, Double_t vdrift,
 static void DrawPhaseTf1Resy(TF1* tf1, Double_t vdrift,
                              Double_t x1, Double_t x2,
                              Color_t color, Width_t width, Style_t style,
-                             Int_t nseg = 300)
+                             Int_t nseg = kPhaseCurveNseg)
 {
   if (!tf1 || vdrift <= 0.0 || !(x2 > x1))
     return;
@@ -585,14 +600,14 @@ static void DrawCoboPage(TFile* f, TCanvas* c, Bool_t corrected,
           DrawT0InitVLine(t0_init, y_min, y_max);
         if (have_t0) {
           TLine* l_t0 = new TLine(t0_fit, y_min, t0_fit, y_max);
-          l_t0->SetLineColor(kGreen + 2);
+          l_t0->SetLineColor(kRed);
           l_t0->SetLineStyle(2);
           l_t0->Draw("same");
         }
 
         // 赤 fit 線: ヒスト表示範囲だけ（TF1 定義域 ±60 全体は描かない）
         if (g_phase && g_phase->GetN() > 1) {
-          TGraph* g_red = MakeResyGraphFromPhase(g_phase, vdrift, x_plot_lo, x_plot_hi, 400);
+          TGraph* g_red = MakeResyGraphFromPhase(g_phase, vdrift, x_plot_lo, x_plot_hi, kPhaseCurveNseg);
           if (g_red) {
             g_red->SetLineColor(kRed);
             g_red->SetLineWidth(3);
@@ -623,7 +638,7 @@ static void DrawCoboPage(TFile* f, TCanvas* c, Bool_t corrected,
 static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
                                 const std::vector<std::string>& hist_fmts_cobo,
                                 TFile* phase_file, Double_t vdrift = 0.055,
-                                Double_t half_window_ns = 6.0)
+                                Double_t half_window_ns = 2.5)
 {
   c->Clear();
   c->Divide(4, 2, 0.001, 0.001);
@@ -654,6 +669,7 @@ static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
     TGraphErrors* g_fitused =
         (TGraphErrors*)phase_file->Get(Form("TpcPhase_ProfileFitUsed_Cobo%d", cobo));
 
+    // 1-step 前提: Fallback p1（なければ TF1/TGraph 由来の t）をそのまま使う。付け直しはしない。
     Double_t t0 = 0.0, w_step = 0.005, amp_dclk = 0.0;
     const Bool_t have_step = StepTwFromPhaseFile(phase_file, cobo, t0, w_step, amp_dclk);
     Double_t t0_init = 0.0;
@@ -661,94 +677,24 @@ static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
 
     const Double_t hxmin = h->GetXaxis()->GetXmin();
     const Double_t hxmax = h->GetXaxis()->GetXmax();
-    auto near_axis_edge = [&](Double_t t) -> Bool_t {
-      return (t <= hxmin + 15.0) || (t >= hxmax - 15.0) || !std::isfinite(t);
-    };
+    if (!have_step && have_init) t0 = t0_init;
+
     auto local_step_amp_dclk = [&](Double_t t) -> Double_t {
       if (!g_phase || g_phase->GetN() < 2) return 0.0;
       return EvalPhaseGraphDclk(g_phase, t + 8.0) - EvalPhaseGraphDclk(g_phase, t - 8.0);
     };
-    auto find_best_step_on_phase = [&](Double_t& t_out, Double_t& amp_out) -> Bool_t {
-      if (!g_phase || g_phase->GetN() < 6) return kFALSE;
-      Double_t best_slope = 0.0;
-      Bool_t found = kFALSE;
-      const Int_t i_lo = 2;
-      const Int_t i_hi = g_phase->GetN() - 2;
-      for (Int_t i = i_lo; i <= i_hi; ++i) {
-        Double_t x0 = 0.0, y0 = 0.0, x1 = 0.0, y1 = 0.0;
-        g_phase->GetPoint(i - 1, x0, y0);
-        g_phase->GetPoint(i, x1, y1);
-        const Double_t xm = 0.5 * (x0 + x1);
-        if (near_axis_edge(xm)) continue;
-        const Double_t dx = x1 - x0;
-        if (dx <= 0.0) continue;
-        const Double_t slope = std::fabs((y1 - y0) / dx);
-        if (slope > best_slope) {
-          best_slope = slope;
-          t_out = xm;
-          amp_out = y1 - y0;
-          found = kTRUE;
-        }
-      }
-      return found;
-    };
-
-    // t0 地点に実段差が無ければ（平坦・端の偽段差）付け直す
-    const Double_t min_step_resy = 0.5;  // mm
     Double_t amp_at_t0 = local_step_amp_dclk(t0);
-    if (!have_step || near_axis_edge(t0) ||
-        std::fabs(amp_at_t0) * vdrift < min_step_resy) {
-      Double_t t_best = t0;
-      Double_t a_best = amp_dclk;
-      Bool_t retargeted = kFALSE;
-      if (find_best_step_on_phase(t_best, a_best) &&
-          std::fabs(a_best) * vdrift >= min_step_resy) {
-        t0 = t_best;
-        amp_dclk = a_best;
-        retargeted = kTRUE;
-      }
-      if (!retargeted && have_init &&
-          std::fabs(local_step_amp_dclk(t0_init)) * vdrift >= min_step_resy) {
-        t0 = t0_init;
-        amp_dclk = local_step_amp_dclk(t0_init);
-        retargeted = kTRUE;
-      }
-      if (!retargeted && g_fitused && g_fitused->GetN() > 3) {
-        Double_t best_jump = 0.0;
-        Double_t best_t = t0;
-        for (Int_t i = 1; i < g_fitused->GetN(); ++i) {
-          Double_t x0 = 0.0, y0 = 0.0, x1 = 0.0, y1 = 0.0;
-          g_fitused->GetPoint(i - 1, x0, y0);
-          g_fitused->GetPoint(i, x1, y1);
-          const Double_t xm = 0.5 * (x0 + x1);
-          if (near_axis_edge(xm)) continue;
-          const Double_t jump = std::fabs(y1 - y0);
-          if (jump > best_jump) {
-            best_jump = jump;
-            best_t = xm;
-          }
-        }
-        if (best_jump * vdrift >= min_step_resy) {
-          t0 = best_t;
-          amp_dclk = best_jump;
-        }
-      }
-    }
-
-    // amp 再確認
-    amp_at_t0 = local_step_amp_dclk(t0);
     if (std::fabs(amp_at_t0) > std::fabs(amp_dclk))
       amp_dclk = amp_at_t0;
     if (g_phase && g_phase->GetN() > 1 && std::fabs(amp_dclk) * vdrift <= 0.2)
       amp_dclk = amp_at_t0;
 
-    // X: step ± 5 ns（引数 half_window_ns を半幅として使う）
-    const Double_t half_win = (half_window_ns > 0.0) ? half_window_ns : 5.0;
+    // X: step ± half_window_ns
+    const Double_t half_win = (half_window_ns > 0.0) ? half_window_ns : 2.5;
     Double_t x1 = t0 - half_win;
     Double_t x2 = t0 + half_win;
     x1 = std::max(x1, hxmin);
     x2 = std::min(x2, hxmax);
-    // 全域フォールバックはしない（端なら端から 2*half_win）
     if (x2 - x1 < 1.0) {
       if (t0 <= hxmin) {
         x1 = hxmin;
@@ -843,14 +789,15 @@ static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
     if (have_init)
       DrawT0InitVLine(t0_init, y_lo, y_hi);
 
+    // p1（ステップ位置）: 赤点線
     TLine* lt0 = new TLine(t0, y_lo, t0, y_hi);
-    lt0->SetLineColor(kGreen + 2);
+    lt0->SetLineColor(kRed);
     lt0->SetLineStyle(2);
     lt0->Draw("same");
 
-    // 赤 fit 線
+    // 赤 fit 実線
     if (g_phase && g_phase->GetN() > 1) {
-      TGraph* g_red = MakeResyGraphFromPhase(g_phase, vdrift, x1, x2, 300);
+      TGraph* g_red = MakeResyGraphFromPhase(g_phase, vdrift, x1, x2, kPhaseCurveNsegCloseup);
       if (g_red) {
         g_red->SetLineColor(kRed);
         g_red->SetLineWidth(3);
@@ -861,7 +808,7 @@ static void DrawCoboCloseupPage(TFile* f, TCanvas* c,
     } else {
       TF1* f_fold = (TF1*)phase_file->Get(Form("TpcPhase_Fit_Cobo%d", cobo));
       if (f_fold && PhaseTf1Usable(f_fold))
-        DrawPhaseTf1Resy(f_fold, vdrift, x1, x2, kRed, 3, 1);
+        DrawPhaseTf1Resy(f_fold, vdrift, x1, x2, kRed, 3, 1, kPhaseCurveNsegCloseup);
     }
 
     // fit 窓の縦線
@@ -1074,7 +1021,7 @@ int main(int argc, char* argv[])
 
   // Page 2: CoBo RawClock close-up（段差近傍の fit 品質確認）
   if (f_phase) {
-    DrawCoboCloseupPage(f, c_cobo, hist_fmts_cobo, f_phase, vdrift, 5.0);
+    DrawCoboCloseupPage(f, c_cobo, hist_fmts_cobo, f_phase, vdrift, 2.5);
     save("cobo_raw_closeup");
     c_cobo->Print(pngs.back().c_str());
   }
@@ -1125,7 +1072,7 @@ int main(int argc, char* argv[])
       DrawCoboPage(f2, c_cobo2, false, hist_fmts_cobo, f_phase2, vdrift);
       c_cobo2->Print((outbase + "_page1_cobo_raw.png").c_str());
       if (f_phase2) {
-        DrawCoboCloseupPage(f2, c_cobo2, hist_fmts_cobo, f_phase2, vdrift, 5.0);
+        DrawCoboCloseupPage(f2, c_cobo2, hist_fmts_cobo, f_phase2, vdrift, 2.5);
         c_cobo2->Print((outbase + "_page2_cobo_raw_closeup.png").c_str());
       }
       DrawAsadPage(f2, c_asad2, false, hist_fmts_asad);

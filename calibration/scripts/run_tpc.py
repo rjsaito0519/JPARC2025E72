@@ -343,7 +343,7 @@ def main():
         type=int,
         default=None,
         help="[offset] Min entries in ±stat-range; [drift] min layer 2D hist entries "
-        "(drift default 1000000 if omitted).",
+        "(drift default 10000 if omitted).",
     )
     parser.add_argument(
         "--sigma",
@@ -817,8 +817,8 @@ def main():
             opts += ["--mode", args.mode]
         if args.vdrift is not None:
             opts += ["--vdrift", str(args.vdrift)]
-        # drift: --threshold = min total entries on layer 2D hist (default 1e6)
-        drift_threshold = 1000000 if args.threshold is None else args.threshold
+        # drift: --threshold = min total entries on layer 2D hist (default 1e4)
+        drift_threshold = 100000 if args.threshold is None else args.threshold
         opts += ["--threshold", str(drift_threshold)]
         if args.min_entries is not None:
             opts += ["--min-entries", str(args.min_entries)]

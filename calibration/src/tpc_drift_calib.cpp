@@ -144,7 +144,7 @@ int main(Int_t argc, char** argv)
   TString mode = "hit";
   Double_t vdrift_override = -1.0;
   // Minimum total entries on layer 2D hist; below this keep vdrift unchanged.
-  Int_t threshold = 1000000;
+  Int_t threshold = 100000;
   Int_t min_entries = 30;  // per Y-bin for gaus profile
   Int_t rebin_x = 1;
   Int_t min_points = 5;

@@ -13,6 +13,24 @@
  *   TPCPRM の kCobo 行（aty=3）フォールバック式 PhaseShift と一致させるのに使う。
  *   nstep_fit: 0=flat 初期, 1=1 段フィット成功（p0,p1,p2 有効）, >1=多段（p は無効）, -1=フィット失敗
  *
+ * 運用前提: --fit-step 1（1-step）が正準。多段 N>1 は CLI 互換のみ（非推奨）。
+ * Fit の MINUIT status≠0（非収束）でも、最終パラメータを採用して TGraph / Fallback を書く
+ * （従来の --base / StepSum 互換。Warning は出す）。
+ *
+ * ステップ幅: fit は --step-width（既定 0.1 ns）で安定化。保存時は A,t(,c0) を取り、
+ * w=kPhaseStoreWidthNs (0.001 ns) の新しい TF1 で TGraph / Fit を Eval・Write する
+ * （FixParameter 済み TF1 への SetParameter は使わない。ステップ近傍は密サンプリング）。
+ *
+ * デフォルト（baseline ON, 1-step）は 2 段階:
+ *   1) pre-fit（--base 相当）で t,w を決める
+ *   2) baseline 本 fit で t,w 固定・c0/A を当てる（採用は 2)。失敗時のみ 1) にフォールバック）
+ * TPCPRM aty=3 は常に (A,t,w) の 3 パラメータ。c0 は TGraph / --ofs-update のみ。
+ *
+ * plot (tpc_phase_plot) が読むオブジェクト契約:
+ *   必須: TpcPhase_Cobo%d, TpcPhase_Profile*, TpcPhase_CoboFallback
+ *   推奨: TpcPhase_Fit_Cobo%d, TpcPhase_FitRaw_Cobo%d
+ *   詳細: myanalysis/calibration/docs/tpc_phase_plot_contract.md
+ *
  * Usage:
  *   tpc_phase_from_tpcbcout <tpcbcout.root> <TpcPhase.root> [--smooth N] [--vdrift V] [--fit-step [N]] [--graph-points N]
  *
@@ -23,7 +41,7 @@
  * オプション:
  *   --smooth N        : 移動平均の半窓幅（デフォルト 0 = スムージングなし）
  *   --vdrift V        : drift velocity [mm/ns]（明示時は全 CoBo 共通。省略時は TPCPRM の CoBo 平均 p1、無ければ 0.055）
- *   --fit-step [N]     : ステップ関数 Freq の N 重ね合わせでフィット（N=0 で全ゼロの初期ファイル作成、省略時 N=1）
+ *   --fit-step [N]     : ステップ数（運用は N=1。N=0 で全ゼロ初期、N>1 は非推奨）
  *   --min-entries N   : Profile で使う最小エントリ数（デフォルト 5、統計が少ないビンをスキップ）
  *   --rebin N         : 2D ヒストの clock 軸（X）を N ビンまとめてから各 X ビンで gaus+pol0 profile
  *                       （N=1: 従来 ProfileX + コア点のみ再 fit、N>1: X rebin + 全ビン Gaussian）
@@ -31,12 +49,14 @@
  *   --mode hit|trk    : 入力 2D ヒストの優先順（trk: TPCTrk_ResY_vs_ClockTime_... を先に、デフォルト hit）
  *   --ofs-update      : baseline fit の c0 [ns] を CoBo 一律で time offset (aty=2 p0) に加算（δp0=-c0）
  *   --run N           : TPCPRM 更新用 run 番号（省略時は tpc/run_number またはファイル名から）
+ *   --base            : legacy のみ（定数項なし）。省略時は pre-fit(--base 相当)で t,w を決め、
+ *                       続けて baseline 本 fit で t,w 固定・c0/A を当てる。TPCPRM aty=3 は従来どおり (A,t,w)
  *
  * 例:
  *   # 初期ファイル（全ゼロ、tpcbcout 不要）
  *   tpc_phase_from_tpcbcout param/TPCPHASE/TpcPhase_02601.root --fit-step 0
- *   # フィット
- *   tpc_phase_from_tpcbcout tpcbcout_run02601.root param/TPCPHASE/TpcPhase_02601.root --fit-step 2
+ *   # フィット（正準: 1-step）
+ *   tpc_phase_from_tpcbcout tpcbcout_run02601.root param/TPCPHASE/TpcPhase_02601.root --fit-step 1
  *
  * Ref: HistTools.cc TPC_ResidualY_BcOut_vs_ClockTime_CoBo%d_RawClock,
  *      DstTPCBcOutTracking.cc, TPCParamMan.cc TpcPhase_Cobo%d
@@ -95,11 +115,14 @@ static const Double_t kPhaseGraphHalfRangeNs = 60.0;
 static const Double_t kPhaseAmpMaxNs = 400.0;
 // 各 clock ビンの Y 射影に対する Gauss 窓の半幅の下限（±40 ns を ResY に換算）[mm]
 static const Double_t kPhaseSliceGaussHalfWidthNsEquiv = 40.0;
+// fit 用ステップ幅のデフォルトは CLI (--step-width, 既定 0.1)。
+// 保存・補正・描画用 TGraph / Fallback p2 / Fit TF1 にはこれ（2 桁細い急段差）を書く。
+static const Double_t kPhaseStoreWidthNs = 0.001;
 
-// TPCParamMan が期待する TF1 名（補正用）
+// TPCParamMan / tpc_phase_plot が期待するオブジェクト名
 static const char* PHASE_NAME_FMT = "TpcPhase_Cobo%d";
-// フィット関数の結果を保存する名前（参照用）
 static const char* FIT_NAME_FMT = "TpcPhase_Fit_Cobo%d";
+static const char* FIT_RAW_NAME_FMT = "TpcPhase_FitRaw_Cobo%d";
 
 // 検索するヒストグラム名のフォーマット候補 (優先順)。--mode trk では TPCTrk を先に試す。
 static const std::vector<std::string> HIST_FMTS_HIT = {
@@ -375,6 +398,35 @@ static Double_t LegacyOneStepFunc(Double_t* x, Double_t* p)
 {
   const Double_t w = std::max(p[2], 1e-6);
   return p[0] * TMath::Freq((x[0] - p[1]) / w);
+}
+
+// 保存用 TGraph の X サンプル: 全域均等 + ステップ近傍を密に（store w が細いため）
+static void FillPhaseGraphXSamples(Double_t xlo, Double_t xhi, Int_t n_uniform,
+                                   Double_t t_step, Double_t w_store,
+                                   std::vector<Double_t>& xs)
+{
+  xs.clear();
+  if (!(xhi > xlo) || n_uniform < 2) return;
+  xs.reserve((size_t)n_uniform + 600);
+  for (Int_t i = 0; i < n_uniform; ++i)
+    xs.push_back(xlo + (xhi - xlo) * (Double_t)i / (Double_t)(n_uniform - 1));
+
+  const Double_t half = std::max(100.0 * std::max(w_store, 1e-6), 0.10);
+  const Double_t dlo = std::max(xlo, t_step - half);
+  const Double_t dhi = std::min(xhi, t_step + half);
+  const Int_t n_dense = 801;
+  if (dhi > dlo) {
+    for (Int_t i = 0; i < n_dense; ++i)
+      xs.push_back(dlo + (dhi - dlo) * (Double_t)i / (Double_t)(n_dense - 1));
+  }
+  std::sort(xs.begin(), xs.end());
+  std::vector<Double_t> uniq;
+  uniq.reserve(xs.size());
+  for (Double_t x : xs) {
+    if (uniq.empty() || std::fabs(x - uniq.back()) > 1e-12)
+      uniq.push_back(x);
+  }
+  xs.swap(uniq);
 }
 
 static Double_t EstimateBaselineC0(const std::vector<Double_t>& delta_clock)
@@ -799,34 +851,33 @@ static TF1* FitStepSum(Int_t nstep, std::vector<Double_t>& x_center,
     Int_t fit_status = fit_graph(f_raw, "QRN0MS");
     if (fit_status != 0) fit_status = fit_graph(f_raw, "QRN0");
 
-    TF1* f_legacy = nullptr;
-    if (fit_status == 0) {
-      const Double_t c0 = f_raw->GetParameter(0);
-      const Double_t A = f_raw->GetParameter(1);
-      const Double_t t = f_raw->GetParameter(2);
-      const Double_t w = f_raw->GetParameter(3);
-      if (c0_out) *c0_out = c0;
-      f_legacy = new TF1("step_sum", LegacyOneStepFunc, domain_lo, domain_hi, 3);
-      f_legacy->SetParNames("A", "t", "w");
-      f_legacy->SetParameters(A, t, w);
-      std::cout << "    Baseline fit (t" << (fix_t ? " fixed" : " free")
-                << "): c0=" << c0 << " (ofs-update only), A=" << A
-                << ", t=" << t << ", w=" << w << "\n";
-      if (raw_out) {
-        if (*raw_out) {
-          delete *raw_out;
-          *raw_out = nullptr;
-        }
-        *raw_out = (TF1*)f_raw->Clone("step_one_base_raw");
+    // status≠0（非収束）でも最終パラメータを採用（従来 StepSum / --base 互換）
+    if (fit_status != 0) {
+      std::cerr << "Warning: Baseline fit non-converged (status=" << fit_status
+                << "); using last params\n";
+    }
+    const Double_t c0 = f_raw->GetParameter(0);
+    const Double_t A = f_raw->GetParameter(1);
+    const Double_t t = f_raw->GetParameter(2);
+    const Double_t w = f_raw->GetParameter(3);
+    if (c0_out) *c0_out = c0;
+    TF1* f_legacy = new TF1("step_sum", LegacyOneStepFunc, domain_lo, domain_hi, 3);
+    f_legacy->SetParNames("A", "t", "w");
+    f_legacy->SetParameters(A, t, w);
+    std::cout << "    Baseline fit (t" << (fix_t ? " fixed" : " free")
+              << ", " << (fit_status == 0 ? "converged" : "non-converged, using last params")
+              << "): c0=" << c0 << " (ofs-update only), A=" << A
+              << ", t=" << t << ", w=" << w << "\n";
+    if (raw_out) {
+      if (*raw_out) {
+        delete *raw_out;
+        *raw_out = nullptr;
       }
-    } else {
-      std::cerr << "Warning: Baseline fit failed (status=" << fit_status << ")\n";
+      *raw_out = (TF1*)f_raw->Clone("step_one_base_raw");
     }
     delete f_raw;
-    if (f_legacy) {
-      for (size_t i = 0; i < x_center.size(); ++i)
-        delta_clock[i] = f_legacy->Eval(x_center[i]);
-    }
+    for (size_t i = 0; i < x_center.size(); ++i)
+      delta_clock[i] = f_legacy->Eval(x_center[i]);
     return f_legacy;
   }
   
@@ -920,7 +971,9 @@ static TF1* FitStepSum(Int_t nstep, std::vector<Double_t>& x_center,
   }
   
   if (fit_status != 0) {
-    std::cerr << "Warning: Fit failed (status=" << fit_status << ")\n";
+    // 従来互換: 非収束でも最終パラメータを採用して return
+    std::cerr << "Warning: Fit non-converged (status=" << fit_status
+              << "); using last params\n";
     std::cerr << "  Range: x=[" << xmin << ", " << xmax << "], y=[" << ymin << ", " << ymax << "]\n";
     std::cerr << "  Points=" << n << ", Steps=" << nstep << "\n";
   } else {
@@ -933,22 +986,22 @@ static TF1* FitStepSum(Int_t nstep, std::vector<Double_t>& x_center,
               << ", ndf=" << ndf
               << ", chi2/ndf=" << chi2ndf
               << ", prob=" << prob << "\n";
-    // フィット結果の概要を出力（ステップ位置・振幅など）
-    std::cout << "    Fitted parameters:\n";
-    for (Int_t i = 0; i < nstep; ++i) {
-      const Double_t A = f->GetParameter(1 + 3 * i);
-      const Double_t t = f->GetParameter(2 + 3 * i);
-      const Double_t w = f->GetParameter(3 + 3 * i);
-      const Double_t eA = f->GetParError(1 + 3 * i);
-      const Double_t et = f->GetParError(2 + 3 * i);
-      const Double_t ew = f->GetParError(3 + 3 * i);
-      std::cout << "      Step " << i
-                << ": A=" << A << " +- " << eA << " [ns]"
-                << ", t=" << t << " +- " << et << " [ns]"
-                << ", w=" << w << " +- " << ew << " [ns]\n";
-    }
   }
- 
+  std::cout << "    Fitted parameters"
+            << (fit_status != 0 ? " (last, non-converged)" : "") << ":\n";
+  for (Int_t i = 0; i < nstep; ++i) {
+    const Double_t A = f->GetParameter(1 + 3 * i);
+    const Double_t t = f->GetParameter(2 + 3 * i);
+    const Double_t w = f->GetParameter(3 + 3 * i);
+    const Double_t eA = f->GetParError(1 + 3 * i);
+    const Double_t et = f->GetParError(2 + 3 * i);
+    const Double_t ew = f->GetParError(3 + 3 * i);
+    std::cout << "      Step " << i
+              << ": A=" << A << " +- " << eA << " [ns]"
+              << ", t=" << t << " +- " << et << " [ns]"
+              << ", w=" << w << " +- " << ew << " [ns]\n";
+  }
+
   for (size_t i = 0; i < x_center.size(); ++i)
     delta_clock[i] = f->Eval(x_center[i]);
   return f;
@@ -1265,7 +1318,8 @@ int main(int argc, char* argv[])
               << " <TpcPhase.root> [tpcbcout.root] [--fit-step N] [--smooth N] [--vdrift V] ...\n"
               << "\n"
               << "  --fit-step 0         : create initial flat-zero file (tpcbcout.root not needed)\n"
-              << "  --fit-step N (N>0)   : fit with N step functions, need tpcbcout.root\n"
+              << "  --fit-step 1         : canonical 1-step (default when flag given without N)\n"
+              << "  --fit-step N (N>1)   : legacy multi-step (non-canonical)\n"
               << "  1 arg:  TpcPhase.root only (for --fit-step 0)\n"
               << "  2 args: tpcbcout.root TpcPhase.root (for --fit-step N>0)\n"
               << "\n"
@@ -1273,7 +1327,7 @@ int main(int argc, char* argv[])
               << "  --vdrift V      : drift [mm/ns]; if omitted, use CoBo-mean p1 from TPCPRM (else 0.055)\n"
               << "  --step-width W  : fixed step width [ns] (smaller => steeper, default: 0.005)\n"
               << "  --free          : free step width in fit (default: fixed)\n"
-              << "  --base          : legacy fit without baseline constant (default: baseline ON)\n"
+              << "  --base          : legacy-only fit (no baseline); default: pre-fit then baseline with t,w fixed\n"
               << "  --min-entries N : min entries per bin for profile (default: 5)\n"
               << "  --rebin N       : rebin 2D hist X (clock) by N; N>1 uses gaus profile per bin\n"
               << "  --graph-points N: number of points in output TGraph (default: 10000)\n"
@@ -1291,7 +1345,7 @@ int main(int argc, char* argv[])
   Int_t fit_nstep = 0;
   Int_t min_entries = 5;
   Int_t graph_points = DEFAULT_GRAPH_POINTS;
-  Double_t step_width_ns = 0.0001;
+  Double_t step_width_ns = 0.1;
   Bool_t free_step_width = kFALSE;
   Bool_t use_baseline_term = kTRUE;
   Bool_t ofs_update = kFALSE;
@@ -1424,10 +1478,17 @@ int main(int argc, char* argv[])
   std::cout << "Histogram mode   : " << mode << std::endl;
   if (!flat_zero_mode) {
     std::cout << "Fit steps        : " << fit_nstep << std::endl;
-    std::cout << "Baseline term    : " << (use_baseline_term ? "ON" : "OFF (--base)") << std::endl;
+    std::cout << "Baseline term    : "
+              << (use_baseline_term
+                      ? (fit_nstep == 1
+                             ? "ON (pre-fit --base style, then baseline with t,w fixed)"
+                             : "ON")
+                      : "OFF (--base, legacy only)")
+              << std::endl;
     std::cout << "Ofs update       : " << (ofs_update ? "ON (δp0=-c0, skip center-frame X)" : "OFF") << std::endl;
     std::cout << "Step width [ns]  : " << step_width_ns
-              << (free_step_width ? " (initial, free)" : " (fixed)") << std::endl;
+              << (free_step_width ? " (fit initial, free)" : " (fit fixed)")
+              << "; store/draw w=" << kPhaseStoreWidthNs << " ns" << std::endl;
     std::cout << "Free width fit   : " << (free_step_width ? "ON" : "OFF") << std::endl;
     std::cout << "Smooth window    : " << smooth_half_window << " (half-width)" << std::endl;
     if (vdrift_cli_set)
@@ -1824,13 +1885,69 @@ int main(int argc, char* argv[])
                       ? amp_override_ns
                       : (guess.c_right - guess.c_left);
 
-    TF1* init_func = nullptr;
     TF1* fit_raw_func = nullptr;
     Double_t fit_c0 = 0.0;
-    TF1* fit_func = FitStepSum(fit_nstep, x_fit, dclk_fit,
-                               xmin, xmax, &err_fit, &guess,
-                               run_amp_ref_ns, amp_override_ns, step_width_ns, free_step_width,
-                               use_baseline_term, &fit_raw_func, &init_func, &fit_c0);
+    TF1* fit_func = nullptr;
+
+    // 正準 (baseline ON, nstep==1):
+    //   1) --base 相当の pre-fit で t,w を決める（status≠0 でも最終パラ採用）
+    //   2) baseline 本 fit で t,w 固定・c0/A（同様に非収束でも採用）
+    //   baseline が例外的に null のときだけ pre-fit にフォールバック
+    // --base 指定時 / nstep!=1 は 1 回だけ（nstep!=1 は非推奨）
+    if (use_baseline_term && fit_nstep == 1) {
+      std::cout << "    Pre-fit (--base style) for step timing...\n";
+      std::vector<Double_t> dclk_pre = dclk_fit;
+      TF1* pre_raw = nullptr;
+      Double_t pre_c0 = 0.0;
+      TF1* pre_func = FitStepSum(fit_nstep, x_fit, dclk_pre,
+                                 xmin, xmax, &err_fit, &guess,
+                                 run_amp_ref_ns, amp_override_ns, step_width_ns, free_step_width,
+                                 /*use_baseline_term=*/kFALSE,
+                                 &pre_raw, nullptr, &pre_c0);
+      if (pre_raw) {
+        delete pre_raw;
+        pre_raw = nullptr;
+      }
+
+      Double_t A_pre = 0.0, t_pre = 0.0, w_pre = step_width_ns;
+      if (!pre_func || !ExtractPhaseShiftAtw(pre_func, A_pre, t_pre, w_pre)) {
+        std::cerr << "    Warning: pre-fit produced no usable (A,t,w); skip this CoBo\n";
+        if (pre_func) delete pre_func;
+      } else {
+        fb_t0_init = t_pre;
+        std::cout << "    Pre-fit: A(temp)=" << A_pre
+                  << " t=" << t_pre << " w=" << w_pre
+                  << " (fix t,w for baseline fit)\n";
+
+        StepGuess g_base = guess;
+        g_base.t0 = t_pre;
+        g_base.fix_t0 = kTRUE;
+
+        fit_func = FitStepSum(fit_nstep, x_fit, dclk_fit,
+                               xmin, xmax, &err_fit, &g_base,
+                               run_amp_ref_ns, amp_override_ns,
+                               w_pre, /*free_step_width=*/kFALSE,
+                               /*use_baseline_term=*/kTRUE,
+                               &fit_raw_func, nullptr, &fit_c0);
+        if (!fit_func) {
+          std::cerr << "    Warning: baseline unavailable; using pre-fit for TGraph/Fallback\n";
+          fit_func = pre_func;
+          pre_func = nullptr;
+          fit_c0 = 0.0;
+        } else {
+          delete pre_func;
+          pre_func = nullptr;
+        }
+      }
+    } else {
+      if (fit_nstep != 1 && fit_nstep != 0)
+        std::cout << "    Note: --fit-step " << fit_nstep
+                  << " is legacy/non-canonical (ops use 1-step)\n";
+      fit_func = FitStepSum(fit_nstep, x_fit, dclk_fit,
+                             xmin, xmax, &err_fit, &guess,
+                             run_amp_ref_ns, amp_override_ns, step_width_ns, free_step_width,
+                             use_baseline_term, &fit_raw_func, nullptr, &fit_c0);
+    }
 
     fout->cd();
     fb_cobo = cobo;
@@ -1840,34 +1957,85 @@ int main(int argc, char* argv[])
       fb_p0 = fb_p1 = 0.0;
       fb_p2 = 1.0;
       fb_c0 = 0.0;
-      // fb_t0_init / fb_amp_init は上で設定済み
       t_cobo_fb->Fill();
     } else {
-      // TF1 を細かく Eval して TGraph に変換（baseline ありなら c0 込み raw を保存）
-      TF1* graph_src = fit_raw_func ? fit_raw_func : fit_func;
-      TGraph* g_save = new TGraph(graph_points);
-      g_save->SetName(Form(PHASE_NAME_FMT, cobo));
-      g_save->SetTitle(Form("TPC Phase CoBo %d;Clock Time [ns];#Delta clock [ns]", cobo));
+      // fit で得た A,t はそのまま。保存用は w=kPhaseStoreWidthNs の **新しい TF1** で Eval
+      // （FixParameter 済み TF1 への SetParameter は Eval に反映されないことがある）
+      Double_t A = 0.0, t = 0.0, w_fit = 1.0;
+      const Bool_t have_atw =
+          (fit_nstep == 1) && ExtractPhaseShiftAtw(fit_func, A, t, w_fit);
+      const Double_t w_store = kPhaseStoreWidthNs;
       const Double_t x_graph_lo = -kPhaseGraphHalfRangeNs;
       const Double_t x_graph_hi = +kPhaseGraphHalfRangeNs;
-      Double_t dx = (x_graph_hi - x_graph_lo) / (graph_points - 1);
-      for (Int_t i = 0; i < graph_points; ++i) {
-        Double_t x = x_graph_lo + i * dx;
-        Double_t y = graph_src->Eval(x);
-        g_save->SetPoint(i, x, y);
+
+      TF1* store_fold = nullptr;  // (A,t,w_store) — Fit / Fallback 用
+      TF1* store_raw = nullptr;   // (c0,A,t,w_store) — TGraph 用（baseline 時）
+      Double_t c0_store = fit_c0;
+
+      if (have_atw) {
+        if (fit_raw_func && fit_raw_func->GetNpar() >= 4)
+          c0_store = fit_raw_func->GetParameter(0);
+        store_fold = new TF1(Form("TpcPhase_Fit_tmp%d", cobo), LegacyOneStepFunc,
+                             x_graph_lo, x_graph_hi, 3);
+        store_fold->SetParNames("A", "t", "w");
+        store_fold->SetParameters(A, t, w_store);
+        if (fit_raw_func && fit_raw_func->GetNpar() >= 4) {
+          store_raw = new TF1(Form("TpcPhase_FitRaw_tmp%d", cobo), OneStepWithBaseFunc,
+                              x_graph_lo, x_graph_hi, 4);
+          store_raw->SetParNames("c0", "A", "t", "w");
+          store_raw->SetParameters(c0_store, A, t, w_store);
+        }
+        std::cout << "    Store/draw width: fit w=" << w_fit
+                  << " -> store w=" << w_store << " ns (rebuild TF1; A,t unchanged)\n";
       }
+
+      TF1* graph_src = store_raw ? store_raw : (store_fold ? store_fold : fit_func);
+
+      std::vector<Double_t> xs;
+      if (have_atw)
+        FillPhaseGraphXSamples(x_graph_lo, x_graph_hi, graph_points, t, w_store, xs);
+      else {
+        xs.resize((size_t)graph_points);
+        for (Int_t i = 0; i < graph_points; ++i)
+          xs[(size_t)i] =
+              x_graph_lo + (x_graph_hi - x_graph_lo) * (Double_t)i / (Double_t)(graph_points - 1);
+      }
+
+      TGraph* g_save = new TGraph((Int_t)xs.size());
+      g_save->SetName(Form(PHASE_NAME_FMT, cobo));
+      g_save->SetTitle(Form("TPC Phase CoBo %d;Clock Time [ns];#Delta clock [ns]", cobo));
+      for (Int_t i = 0; i < (Int_t)xs.size(); ++i)
+        g_save->SetPoint(i, xs[(size_t)i], graph_src->Eval(xs[(size_t)i]));
       g_save->Write();
 
-      Double_t A = 0.0, t = 0.0, w = 1.0;
-      if (fit_nstep == 1 && ExtractPhaseShiftAtw(fit_func, A, t, w)) {
+      // plot 契約: Fit / FitRaw（store w で新規作成したもの）
+      if (store_fold) {
+        store_fold->SetName(Form(FIT_NAME_FMT, cobo));
+        store_fold->Write();
+      } else {
+        fit_func->SetName(Form(FIT_NAME_FMT, cobo));
+        fit_func->Write();
+      }
+      if (store_raw) {
+        store_raw->SetName(Form(FIT_RAW_NAME_FMT, cobo));
+        store_raw->Write();
+      } else if (fit_raw_func) {
+        fit_raw_func->SetName(Form(FIT_RAW_NAME_FMT, cobo));
+        fit_raw_func->Write();
+      }
+
+      if (have_atw) {
         fb_nstep_fit = 1;
         fb_p0 = A;
         fb_p1 = t;
-        fb_p2 = w;
-        if (std::isfinite(fit_c0) && std::fabs(fit_c0) > 1e-12)
-          c0_by_cobo[cobo] = fit_c0;
-        std::cout << "    CoboFallback: A=" << A << " t=" << t << " w=" << w
-                  << " c0=" << fit_c0 << "\n";
+        fb_p2 = w_store;
+        if (std::isfinite(c0_store) && std::fabs(c0_store) > 1e-12)
+          c0_by_cobo[cobo] = c0_store;
+        fit_c0 = c0_store;
+        fb_c0 = c0_store;
+        std::cout << "    CoboFallback: A=" << A << " t=" << t << " w=" << w_store
+                  << " (fit w was " << w_fit << ") c0=" << c0_store
+                  << " graphN=" << xs.size() << "\n";
       } else if (fit_nstep == 1) {
         fb_nstep_fit = -1;
         fb_p0 = fb_p1 = 0.0;
@@ -1882,10 +2050,11 @@ int main(int argc, char* argv[])
       t_cobo_fb->Fill();
 
       delete g_save;
-      if (init_func) delete init_func;
+      if (store_raw) delete store_raw;
+      if (store_fold) delete store_fold;
       if (fit_raw_func) delete fit_raw_func;
       delete fit_func;
-      std::cout << " Done (" << npts << " profile points -> " << graph_points << " graph points)" << std::endl;
+      std::cout << " Done (" << npts << " profile points -> graph)" << std::endl;
     }
     delete h;
     ++n_created;
