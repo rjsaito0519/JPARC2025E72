@@ -12,7 +12,7 @@ trk (tracking):
   recon -> offset -> recon -> drift
         -> phase(--debug)   # eval only
 
-recon = tmux split-pane myrun.py -> wait -> check stat JSON -> add.sh/add_trk.sh
+recon = tmux split-pane myrun.py -> poll stat JSON + fresh ROOT -> add.sh/add_trk.sh
 
 Usage (recommended inside tmux session `tpc_iter`):
   ./calibration/scripts/iterate_tpc_calib.py --max-iter 6
@@ -29,6 +29,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Optional
 
 import yaml
@@ -52,10 +53,39 @@ RUN_TPC = SCRIPT_DIR / "run_tpc.py"
 HIT_YML_REL = Path("runlist/dst_tpchit_bcout.yml")
 TRK_YML_REL = Path("runlist/dst_tpctracking.yml")
 POLL_SEC = 30
+RECON_TIMEOUT_SEC = 7 * 24 * 3600  # 7 days
+MTIME_SLACK_SEC = 2.0  # clock / filesystem slack for ROOT mtime vs t0
 
 
 def now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@dataclass
+class StatSnapshot:
+    failed: list[str]
+    unfinished: list[str]
+    done_count: int
+    expected_count: int
+
+    @property
+    def all_done(self) -> bool:
+        return (
+            self.expected_count > 0
+            and not self.failed
+            and not self.unfinished
+            and self.done_count == self.expected_count
+        )
+
+
+@dataclass
+class MyrunHandle:
+    tag: str
+    token: str
+    pane_id: str
+    ec_file: Path
+    foreground: bool = False
+    exit_code: Optional[int] = None
 
 
 class IterOrchestrator:
@@ -65,11 +95,13 @@ class IterOrchestrator:
         max_iter: int,
         dry_run: bool,
         poll_sec: int = POLL_SEC,
+        recon_timeout_sec: int = RECON_TIMEOUT_SEC,
     ) -> None:
         self.analyzer_dir = analyzer_dir.resolve()
         self.max_iter = max_iter
         self.dry_run = dry_run
         self.poll_sec = poll_sec
+        self.recon_timeout_sec = recon_timeout_sec
         self.group_root = self.analyzer_dir / "group_root"
         self.stat_dir = self.analyzer_dir / "runmanager" / "stat"
         self.log_dir = MYANALYSIS_ROOT / "results" / "tpc_calib_iter"
@@ -174,6 +206,225 @@ class IterOrchestrator:
     def stat_json_for(self, yml: Path) -> Path:
         return self.stat_dir / f"{yml.stem}.json"
 
+    @staticmethod
+    def expected_run_keys(yml: Path) -> list[str]:
+        with yml.open(encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        keys: list[str] = []
+        for key, cfg in (data.get("RUN") or {}).items():
+            if cfg is None:
+                continue
+            if not cfg.get("root"):
+                continue
+            keys.append(str(key))
+        return keys
+
+    def _read_stat_info(self, path: Path) -> Optional[dict]:
+        if not path.is_file():
+            return None
+        raw = path.read_text(encoding="utf-8").strip()
+        if not raw:
+            return None
+        try:
+            info = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return info if isinstance(info, dict) else None
+
+    def _analyze_stat(self, info: dict, expected_keys: list[str]) -> StatSnapshot:
+        failed: list[str] = []
+        unfinished: list[str] = []
+        done_count = 0
+        for key in expected_keys:
+            item = info.get(key)
+            if not isinstance(item, dict):
+                unfinished.append(f"{key}:missing")
+                continue
+            stat = str(item.get("stat", ""))
+            if "FAIL" in stat.upper():
+                failed.append(f"{key}:{stat}")
+            elif stat == "DONE":
+                done_count += 1
+            else:
+                unfinished.append(f"{key}:{stat or '?'}")
+        return StatSnapshot(
+            failed=failed,
+            unfinished=unfinished,
+            done_count=done_count,
+            expected_count=len(expected_keys),
+        )
+
+    def check_output_roots_fresh(
+        self, kind: str, t0: float
+    ) -> tuple[list[str], list[str]]:
+        """Return (missing, stale) ROOT paths relative to recon start time t0."""
+        if self.dry_run:
+            return [], []
+        missing: list[str] = []
+        stale: list[str] = []
+        cutoff = t0 - MTIME_SLACK_SEC
+        for path in self.roots_for(kind):
+            if not path.is_file():
+                missing.append(str(path))
+                continue
+            if path.stat().st_mtime < cutoff:
+                stale.append(str(path))
+        return missing, stale
+
+    def _myrun_ec_ready(self, handle: MyrunHandle) -> bool:
+        if handle.foreground:
+            return handle.exit_code is not None
+        return handle.ec_file.is_file()
+
+    def _myrun_read_ec(self, handle: MyrunHandle) -> int:
+        if handle.foreground:
+            return handle.exit_code if handle.exit_code is not None else 1
+        try:
+            return int(handle.ec_file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return 1
+
+    def wait_for_recon_complete(
+        self,
+        yml: Path,
+        kind: str,
+        t0: float,
+        handle: Optional[MyrunHandle],
+        tag: str,
+    ) -> None:
+        """Poll stat JSON until expected runs DONE and ROOT outputs are fresh."""
+        if self.dry_run:
+            self.log(
+                f"[dry-run] would poll {self.stat_json_for(yml)} "
+                f"every {self.poll_sec}s"
+            )
+            return
+
+        stat_path = self.stat_json_for(yml)
+        expected = self.expected_run_keys(yml)
+        if not expected:
+            self.fail(f"No RUN keys in {yml}")
+
+        deadline = (
+            time.time() + self.recon_timeout_sec
+            if self.recon_timeout_sec > 0
+            else None
+        )
+        last_snap: Optional[StatSnapshot] = None
+        poll_n = 0
+        myrun_done_at: Optional[float] = None
+        myrun_grace_sec = max(3 * self.poll_sec, 90)
+
+        self.log(
+            f"Polling recon ({tag}): stat={stat_path.name} "
+            f"runs={expected} interval={self.poll_sec}s"
+        )
+
+        while True:
+            poll_n += 1
+            info = self._read_stat_info(stat_path)
+            if info is not None:
+                snap = self._analyze_stat(info, expected)
+                last_snap = snap
+                if snap.failed:
+                    self.fail(
+                        f"DST FAILED in {stat_path.name} ({tag}): "
+                        f"{', '.join(snap.failed)}"
+                    )
+
+            if handle is not None and self._myrun_ec_ready(handle):
+                ec = self._myrun_read_ec(handle)
+                if ec != 0:
+                    snap_msg = ""
+                    if last_snap is not None:
+                        snap_msg = (
+                            f"; stat done={last_snap.done_count}/"
+                            f"{last_snap.expected_count}"
+                        )
+                    self.fail(f"myrun exit {ec} ({tag}){snap_msg}")
+                if myrun_done_at is None:
+                    myrun_done_at = time.time()
+
+            if last_snap is not None and last_snap.all_done:
+                missing, stale = self.check_output_roots_fresh(kind, t0)
+                if not missing and not stale:
+                    if handle is None or self._myrun_ec_ready(handle):
+                        break
+                    if poll_n % 10 == 0:
+                        self.log(
+                            f"recon ({tag}): stat/ROOT OK; "
+                            "waiting for myrun process exit"
+                        )
+                elif poll_n == 1 or poll_n % 10 == 0:
+                    kind_msg = "missing" if missing else "stale"
+                    n_bad = len(missing) if missing else len(stale)
+                    self.log(
+                        f"recon ({tag}): stat DONE but {kind_msg} ROOT "
+                        f"({n_bad}/{len(expected)})"
+                    )
+            elif poll_n == 1:
+                self.log(f"recon ({tag}): stat not ready yet ({stat_path.name})")
+
+            if myrun_done_at is not None:
+                elapsed = time.time() - myrun_done_at
+                if elapsed > myrun_grace_sec:
+                    if last_snap is None or not last_snap.all_done:
+                        self.fail(
+                            f"myrun exit 0 but stat incomplete ({tag}): "
+                            f"{last_snap.unfinished if last_snap else 'no stat'}"
+                        )
+                    missing, stale = self.check_output_roots_fresh(kind, t0)
+                    if missing or stale:
+                        self.fail(
+                            f"myrun exit 0 but ROOT not fresh ({tag}); "
+                            "likely stale stat from a previous myrun. "
+                            f"missing={missing[:2]} stale={stale[:2]}"
+                        )
+
+            if deadline is not None and time.time() > deadline:
+                snap_msg = "stat unreadable"
+                if last_snap is not None:
+                    snap_msg = (
+                        f"done={last_snap.done_count}/"
+                        f"{last_snap.expected_count} "
+                        f"unfinished={last_snap.unfinished[:3]}"
+                    )
+                self.fail(
+                    f"Recon timeout ({tag}) after {self.recon_timeout_sec}s: "
+                    f"{snap_msg}"
+                )
+
+            if poll_n == 1 or poll_n % max(1, 600 // self.poll_sec) == 0:
+                prog = "?"
+                if last_snap is not None:
+                    prog = (
+                        f"{last_snap.done_count}/{last_snap.expected_count}"
+                    )
+                myrun_msg = "running"
+                if handle is not None and self._myrun_ec_ready(handle):
+                    myrun_msg = "exit 0"
+                self.log(
+                    f"recon ({tag}) poll #{poll_n}: progress={prog} "
+                    f"myrun={myrun_msg}"
+                )
+
+            time.sleep(self.poll_sec)
+
+        if handle is not None and not handle.foreground:
+            self._wait_myrun_done(handle, block=True)
+
+    def _wait_myrun_done(self, handle: MyrunHandle, *, block: bool) -> bool:
+        if handle.foreground:
+            return handle.exit_code is not None
+        if handle.ec_file.is_file():
+            return True
+        if not block:
+            return False
+        wait = subprocess.run(["tmux", "wait-for", handle.token], check=False)
+        if wait.returncode != 0:
+            self.fail(f"tmux wait-for failed for {handle.token}")
+        return True
+
     def run_cmd(
         self,
         cmd: list[str],
@@ -189,75 +440,48 @@ class IterOrchestrator:
             self.fail(f"Command failed ({ret}): {' '.join(cmd)}")
         return ret
 
-    def check_stat_json(self, yml: Path) -> None:
-        path = self.stat_json_for(yml)
-        if self.dry_run:
-            self.log(f"[dry-run] would check {path}")
-            return
-        if not path.is_file():
-            self.fail(f"Stat JSON missing after myrun: {path}")
-        try:
-            info = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            self.fail(f"Stat JSON parse error {path}: {exc}")
-        if not isinstance(info, dict) or not info:
-            self.fail(f"Stat JSON empty/invalid: {path}")
-
-        failed: list[str] = []
-        unfinished: list[str] = []
-        for key, item in info.items():
-            if not isinstance(item, dict):
-                unfinished.append(str(key))
-                continue
-            stat = str(item.get("stat", ""))
-            if "FAIL" in stat.upper():
-                failed.append(f"{key}:{stat}")
-            elif stat != "DONE":
-                unfinished.append(f"{key}:{stat}")
-        if failed:
-            self.fail(f"DST FAILED in {path.name}: {', '.join(failed)}")
-        if unfinished:
-            self.fail(f"DST not all DONE in {path.name}: {', '.join(unfinished)}")
-        self.log(f"Stat OK: {path.name} ({len(info)} runs DONE)")
-
-    def check_output_roots(self, kind: str) -> None:
-        if self.dry_run:
-            return
-        missing = [str(p) for p in self.roots_for(kind) if not p.is_file()]
-        if missing:
-            self.fail("Missing DST ROOT outputs:\n  " + "\n  ".join(missing))
-
     def _tmux_available(self) -> bool:
         return bool(os.environ.get("TMUX"))
 
-    def run_myrun_in_tmux_pane(self, yml: Path, tag: str) -> None:
-        """Start myrun in a split pane and wait until it finishes."""
-        myrun = self.analyzer_dir / "runmanager" / "myrun.py"
+    def start_myrun(self, yml: Path, tag: str) -> Optional[MyrunHandle]:
+        """Launch myrun (tmux pane or foreground). Caller polls completion."""
         yml_arg = str(yml)
         cmd_line = f"cd {self.analyzer_dir} && ./runmanager/myrun.py {yml_arg}"
 
         if self.dry_run:
-            self.log(f"[dry-run] tmux pane myrun: {cmd_line}")
-            return
+            self.log(f"[dry-run] myrun: {cmd_line}")
+            return None
 
         if not self._tmux_available():
             self.log(
                 "[WARN] TMUX not set; running myrun in foreground "
                 "(prefer: tmux new -s tpc_iter)"
             )
-            self.run_cmd(["./runmanager/myrun.py", yml_arg], cwd=self.analyzer_dir)
-            return
+            ret = subprocess.call(
+                ["./runmanager/myrun.py", yml_arg],
+                cwd=str(self.analyzer_dir),
+            )
+            return MyrunHandle(
+                tag=tag,
+                token="",
+                pane_id="",
+                ec_file=Path(""),
+                foreground=True,
+                exit_code=ret,
+            )
 
         token = f"tpc_recon_{tag}_{os.getpid()}_{int(time.time())}"
-        # Run myrun then signal wait-for; exit closes the pane (remain-on-exit off).
+        ec_file = Path(f"/tmp/tpc_iter_{token}.ec")
+        if ec_file.exists():
+            ec_file.unlink()
         pane_script = (
             f"{cmd_line}; "
             f"ec=$?; "
+            f"echo $ec > {ec_file}; "
             f"tmux wait-for -S {token}; "
             f"exit $ec"
         )
         self.log(f"tmux split-window myrun ({tag}), wait-for={token}")
-        # -d: keep focus on orchestrator pane; -v: horizontal split below
         split = subprocess.run(
             [
                 "tmux",
@@ -279,27 +503,46 @@ class IterOrchestrator:
             )
         pane_id = split.stdout.strip()
         self.log(f"myrun pane={pane_id}")
-
-        # Block until pane signals completion
-        wait = subprocess.run(["tmux", "wait-for", token], check=False)
-        if wait.returncode != 0:
-            self.fail(f"tmux wait-for failed for {token}")
-        self.log(f"myrun pane finished ({tag})")
-
-        # Best-effort close leftover pane
-        subprocess.run(
-            ["tmux", "kill-pane", "-t", pane_id],
-            capture_output=True,
-            check=False,
+        return MyrunHandle(
+            tag=tag,
+            token=token,
+            pane_id=pane_id,
+            ec_file=ec_file,
         )
+
+    def cleanup_myrun(self, handle: Optional[MyrunHandle]) -> None:
+        if handle is None or self.dry_run or handle.foreground:
+            return
+        if handle.pane_id:
+            subprocess.run(
+                ["tmux", "kill-pane", "-t", handle.pane_id],
+                capture_output=True,
+                check=False,
+            )
+        if handle.ec_file.is_file():
+            try:
+                handle.ec_file.unlink()
+            except OSError:
+                pass
 
     def recon(self, kind: str, outer_i: int, step: int) -> None:
         yml = self.yml_for(kind)
         tag = f"i{outer_i:02d}_{kind}_s{step}"
         self.notify(f"[tpc_iter] recon start {tag}\n{yml}")
-        self.run_myrun_in_tmux_pane(yml, tag)
-        self.check_stat_json(yml)
-        self.check_output_roots(kind)
+        t0 = time.time()
+        handle = self.start_myrun(yml, tag)
+        try:
+            self.wait_for_recon_complete(yml, kind, t0, handle, tag)
+        finally:
+            self.cleanup_myrun(handle)
+        if not self.dry_run:
+            snap = self._analyze_stat(
+                self._read_stat_info(self.stat_json_for(yml)) or {},
+                self.expected_run_keys(yml),
+            )
+            self.log(
+                f"Recon OK ({tag}): stat {snap.done_count}/{snap.expected_count} DONE"
+            )
         add = self.add_script_for(kind)
         self.run_cmd(["bash", str(add)], cwd=self.group_root)
         hadd = self.hadd_root_for(kind)
@@ -456,7 +699,13 @@ def main() -> None:
         "--poll-sec",
         type=int,
         default=POLL_SEC,
-        help="Reserved / unused when using tmux wait-for (default 30)",
+        help="Stat JSON poll interval during recon (default 30)",
+    )
+    parser.add_argument(
+        "--recon-timeout-sec",
+        type=int,
+        default=RECON_TIMEOUT_SEC,
+        help="Abort recon if stat/ROOT not ready within N seconds (0=disable)",
     )
     args = parser.parse_args()
     if args.max_iter < 1:
@@ -468,6 +717,7 @@ def main() -> None:
         max_iter=args.max_iter,
         dry_run=args.dry_run,
         poll_sec=args.poll_sec,
+        recon_timeout_sec=args.recon_timeout_sec,
     )
     orch.run()
 
