@@ -26,8 +26,9 @@ def main():
     parser = argparse.ArgumentParser(
         description=(
             "Automate BC (DC) Calibration for T0, Drift (ST), Residual, and Resolution. "
-            "reso: Pull Gauss width p -> Res *= p "
-            "(iterate: rebuild Bc DST with #define FillPullExclusive 1 -> reso -> DST). "
+            "reso: exclusive Pull width p -> common Res_new = p * mean(Res in group) "
+            "(default: one Res for a+b; --separate: one Res each for a and b). "
+            "Iterate: rebuild Bc DST with #define FillPullExclusive 1 -> reso -> DST. "
             "Use --debug to evaluate pull without updating Res."
         )
     )
@@ -36,7 +37,7 @@ def main():
         "mode",
         type=str,
         choices=["t0", "drift", "resi", "reso"],
-        help="Tuning Mode (reso: Pull p -> DCGEO Res *= p; iterate with DST)",
+        help="Tuning Mode (reso: Pull p -> common DCGEO Res; iterate with DST)",
     )
     
     # Mutually exclusive group for detector selection
@@ -46,7 +47,7 @@ def main():
     group.add_argument(
         '--all',
         action="store_true",
-        help='reso only: run BLC1+BLC2 Pull, average p, write same Res scale to both',
+        help='reso only: one common Res for BLC1+BLC2 (p=mean of both); with --separate: 4 groups',
     )
     parser.add_argument('--kaon', action="store_true", help='Use Kaon (K) suffix instead of Pion (Pi)')
     parser.add_argument('--guess', action="store_true",
@@ -56,6 +57,11 @@ def main():
         action="store_true",
         help="Skip parameter update; run analysis and produce PDFs only",
     )
+    parser.add_argument(
+        "--separate",
+        action="store_true",
+        help="reso only: write common Res per a/b (default is one Res for a+b)",
+    )
     
     args = parser.parse_args()
 
@@ -64,6 +70,10 @@ def main():
 
     if args.all and mode != "reso":
         print(colored("[Error] --all is only supported for mode=reso", "red"))
+        sys.exit(1)
+
+    if args.separate and mode != "reso":
+        print(colored("[Error] --separate is only supported for mode=reso", "red"))
         sys.exit(1)
     
     # Determined detector based on flags
@@ -173,11 +183,13 @@ def main():
             print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
 
     elif mode == "reso":
-        # BLC_pull: Pull Gauss width p; update DCGEO Res *= p (iterate with DST)
+        # BLC_pull: Pull Gauss width p; update DCGEO common Res = p * R0
         executable = bin_dir / "BLC_pull"
         if not executable.exists():
             print(colored(f"[Error] BLC_pull not found. Please compile.", "red"))
             sys.exit(1)
+
+        sep_flag = " --separate" if args.separate else ""
 
         if args.all:
             print(colored(">>> Step 1: Running BLC_pull (BcIn + BcOut)", "cyan"))
@@ -186,10 +198,10 @@ def main():
                 run_command(f"{executable} {path} {suffix}")
             if not args.debug:
                 print(colored(
-                    ">>> Step 2: Updating Parameters (Pull ALL -> DCGEO Res *= p)",
+                    ">>> Step 2: Updating Parameters (Pull ALL -> DCGEO common Res)",
                     "cyan",
                 ))
-                run_command(f"python3 {update_script} {run_num} {suffix} resolution --all")
+                run_command(f"python3 {update_script} {run_num} {suffix} resolution --all{sep_flag}")
             else:
                 print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
         else:
@@ -197,9 +209,9 @@ def main():
             run_command(f"{executable} {input_root_file} {suffix}")
 
             if not args.debug:
-                print(colored(">>> Step 2: Updating Parameters (Pull -> DCGEO Res *= p)", "cyan"))
+                print(colored(">>> Step 2: Updating Parameters (Pull -> DCGEO common Res)", "cyan"))
                 det_flag = "--bcin" if args.bcin else "--bcout"
-                run_command(f"python3 {update_script} {run_num} {suffix} resolution {det_flag}")
+                run_command(f"python3 {update_script} {run_num} {suffix} resolution {det_flag}{sep_flag}")
             else:
                 print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
 

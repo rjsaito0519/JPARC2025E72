@@ -29,7 +29,12 @@ group.add_argument("--bcin", action="store_true", help="Set detector to BcIn")
 group.add_argument(
     "--all",
     action="store_true",
-    help="resolution only: average BLC1+BLC2 exclusive pull σ and apply same Res*=p to both",
+    help="resolution only: one common Res for BLC1+BLC2 (p=mean of both pull σ)",
+)
+parser.add_argument(
+    "--separate",
+    action="store_true",
+    help="resolution only: write common Res per a/b (or 4 groups with --all) instead of a+b",
 )
 args = parser.parse_args()
 
@@ -46,6 +51,10 @@ if args.suffix not in ["K", "Pi"]:
 
 if args.all and args.param_type != "resolution":
     print(colored("[Error] --all is only supported for param_type=resolution", "red"))
+    sys.exit(1)
+
+if args.separate and args.param_type != "resolution":
+    print(colored("[Error] --separate is only supported for param_type=resolution", "red"))
     sys.exit(1)
 
 import update_hdprm
@@ -248,75 +257,100 @@ elif args.param_type == "residual":
                          found_any = True
 
 elif args.param_type == "resolution":
-    # exclusive Pull width p from BLC_pull -> Res' = Res * p
+    # exclusive Pull width p from BLC_pull -> common Res_new = p * mean(Res in group)
     import uproot
 
-    RES_CONV_THRESHOLD = 0.05  # |p-1| below this => CONVERGED, skip Res update
+    RES_CONV_THRESHOLD = 0.05  # |p-1| below this => CONVERGED for that group
 
-    def layer_keys(blc_name):
-        if blc_name == "BLC1":
-            return [str(i) for i in range(1, 17)]
-        if blc_name == "BLC2":
-            return [str(i) for i in range(1001, 1017)]
-        return None
+    def layer_keys(group_name):
+        """Return DCGEO Id keys for a Res group."""
+        table = {
+            "BLC1": [str(i) for i in range(1, 17)],
+            "BLC1a": [str(i) for i in range(1, 9)],
+            "BLC1b": [str(i) for i in range(9, 17)],
+            "BLC2": [str(i) for i in range(1001, 1017)],
+            "BLC2a": [str(i) for i in range(1001, 1009)],
+            "BLC2b": [str(i) for i in range(1009, 1017)],
+            "ALL": [str(i) for i in range(1, 17)] + [str(i) for i in range(1001, 1017)],
+        }
+        return table.get(group_name)
 
     def find_pull_root(blc_name):
         return get_root_file(args.run_num, blc_name, args.suffix, "pull")
 
-    def read_pull_sigma(r_file):
-        """Return dict with pull_sigma, mean_chi2 (or None)."""
+    def read_pull_sigma(r_file, need_ab=False):
+        """Return dict with pull_sigma / optionally a,b; mean_chi2 (or None)."""
         try:
             file = uproot.open(str(r_file))
             if "tree" not in file:
                 print(colored(f"  [Warning] 'tree' not found in {r_file}", "yellow"))
                 return None
-            arr = file["tree"].arrays(
-                ["pull_sigma", "mean_chi2"],
-                library="np",
-            )
+            branches = ["pull_sigma", "mean_chi2"]
+            if need_ab:
+                branches += ["pull_sigma_a", "pull_mean_a", "pull_sigma_b", "pull_mean_b"]
+            keys = set(file["tree"].keys())
+            if need_ab:
+                missing = [b for b in ("pull_sigma_a", "pull_sigma_b") if b not in keys]
+                if missing:
+                    print(colored(
+                        f"  [Error] {r_file.name} missing {missing}; rebuild BLC_pull for --separate",
+                        "red",
+                    ))
+                    return None
+            arr = file["tree"].arrays(branches, library="np")
             if len(arr["pull_sigma"]) < 1:
                 return None
-            return {
+            out = {
                 "pull_sigma": float(arr["pull_sigma"][0]),
                 "mean_chi2": float(arr["mean_chi2"][0]),
             }
+            if need_ab:
+                out["pull_sigma_a"] = float(arr["pull_sigma_a"][0])
+                out["pull_sigma_b"] = float(arr["pull_sigma_b"][0])
+            return out
         except Exception as e:
             print(colored(f"  [Error] Reading {r_file}: {e}", "red"))
             return None
 
-    def scale_res_for_layers(keys, p):
-        """Multiply current Res by exclusive pull width p for given layer keys."""
+    def set_common_res(keys, p, label=""):
+        """R0=mean(Res in group); Res_new=p*R0; write same value to all keys."""
         c_data = param_file.get_data_dict(key_len=cat["key_len"])
-        res_idx = cat["start_col"] - cat["key_len"]  # index within value list
-        out = {}
-        sample_old = None
-        sample_new = None
+        res_idx = cat["start_col"] - cat["key_len"]
+        vals_old = []
         for k in keys:
             if k not in c_data:
                 print(colored(f"    [Warning] Key {k} not in DCGEO", "yellow"))
                 continue
-            vals = c_data[k]
-            if len(vals) <= res_idx:
+            row = c_data[k]
+            if len(row) <= res_idx:
                 print(colored(f"    [Warning] Key {k}: row too short for Res", "yellow"))
                 continue
             try:
-                old = float(vals[res_idx])
+                vals_old.append(float(row[res_idx]))
             except ValueError:
                 print(colored(f"    [Warning] Key {k}: bad Res value", "yellow"))
                 continue
-            new = old * float(p)
-            out[k] = [f"{new:.6g}"]
-            if sample_old is None:
-                sample_old = old
-                sample_new = new
-        return out, sample_old, sample_new
+        if not vals_old:
+            return {}, None, None
+        r0 = float(np.mean(vals_old))
+        res_new = float(p) * r0
+        res_str = f"{res_new:.6g}"
+        out = {k: [res_str] for k in keys if k in c_data and len(c_data[k]) > res_idx}
+        tag = f" [{label}]" if label else ""
+        print(colored(
+            f"  [INFO]{tag} R0={r0:.6g}  p={float(p):.4f}  Res_new={res_str}  n={len(out)}",
+            "cyan",
+        ))
+        return out, r0, res_new
 
-    def report_reso_convergence(pull_sigma, mean_chi2, sample_old, sample_new, updated):
-        print(colored("\n>>> Convergence Report (Resolution / exclusive Pull) <<<", "white", attrs=["bold"]))
+    def report_reso_convergence(pull_sigma, mean_chi2, sample_old, sample_new, updated, label=""):
+        tag = f" ({label})" if label else ""
+        print(colored(f"\n>>> Convergence Report (Resolution / exclusive Pull){tag} <<<",
+                      "white", attrs=["bold"]))
         print(f"  - pull σ (p):           {pull_sigma:.4f}  (target ≈ 1)")
         print(f"  - mean χ²_ν (monitor):  {mean_chi2:.4f}")
         if sample_old is not None:
-            print(f"  - sample Res:           {sample_old:.4f} -> {sample_new:.4f} mm")
+            print(f"  - R0 / Res_new:         {sample_old:.6g} -> {sample_new:.6g} mm")
         dp = abs(pull_sigma - 1.0)
         if dp < RES_CONV_THRESHOLD:
             print(colored(
@@ -325,7 +359,7 @@ elif args.param_type == "resolution":
                 attrs=["bold"],
             ))
             if not updated:
-                print(colored("  - Res file not modified (already converged)", "green"))
+                print(colored("  - Res not modified for this group (already converged)", "green"))
         else:
             print(colored(
                 f"  - Status: [IN PROGRESS] (|p-1|={dp:.4f} >= {RES_CONV_THRESHOLD})",
@@ -335,9 +369,58 @@ elif args.param_type == "resolution":
             print(colored("  - Next: re-run DST (#define FillPullExclusive 1), then reso again", "yellow"))
         print()
 
-    found_any = False
+    def apply_group(group_name, p, mean_chi2):
+        """Update one group if |p-1| >= threshold. Returns (updated_bool, meta_dict)."""
+        keys = layer_keys(group_name)
+        meta = {
+            "pull_sigma": float(p),
+            "mean_chi2": float(mean_chi2),
+            "sample_old": None,
+            "sample_new": None,
+            "label": group_name,
+            "updated": False,
+        }
+        if abs(float(p) - 1.0) < RES_CONV_THRESHOLD:
+            report_reso_convergence(float(p), float(mean_chi2), None, None, False, group_name)
+            return False, meta
+        data, r0, res_new = set_common_res(keys, p, group_name)
+        all_new_data.update(data)
+        meta["sample_old"] = r0
+        meta["sample_new"] = res_new
+        meta["updated"] = True
+        print(f"  - {group_name} Resolution: {color_ok()} {len(data)} layers (common Res_new)")
+        return True, meta
 
-    if args.all:
+    found_any = False
+    group_metas = []
+
+    if args.all and args.separate:
+        # 4 groups: BLC1a/1b/2a/2b
+        for blc_name, ga, gb in (("BLC1", "BLC1a", "BLC1b"), ("BLC2", "BLC2a", "BLC2b")):
+            root_file = find_pull_root(blc_name)
+            if not root_file:
+                print(colored(f"  [Error] No pull ROOT for {blc_name} (needed by --all --separate).", "red"))
+                sys.exit(1)
+            info = read_pull_sigma(root_file, need_ab=True)
+            if not info:
+                print(colored(f"  [Error] Cannot read pull a/b from {root_file}", "red"))
+                sys.exit(1)
+            print(colored(
+                f"  [INFO] {blc_name}: p_a={info['pull_sigma_a']:.4f} p_b={info['pull_sigma_b']:.4f} "
+                f"from {root_file.name}",
+                "cyan",
+            ))
+            for gname, p in ((ga, info["pull_sigma_a"]), (gb, info["pull_sigma_b"])):
+                updated, meta = apply_group(gname, p, info["mean_chi2"])
+                group_metas.append(meta)
+                found_any = True
+        if not any(m["updated"] for m in group_metas):
+            skip_write = True
+        # report after write for updated groups
+        reso_meta = group_metas  # list; handled below
+
+    elif args.all:
+        # one common Res for all 32 layers; p = mean(p_BLC1, p_BLC2)
         pulls = []
         means = []
         for blc_name in ("BLC1", "BLC2"):
@@ -359,30 +442,39 @@ elif args.param_type == "resolution":
         pull_sigma = float(np.mean(pulls)) if pulls else 0.0
         mean_chi2 = float(np.mean(means)) if means else 0.0
         print(colored(f"  [INFO] ALL mean p={pull_sigma:.4f}", "cyan"))
-
-        reso_meta = {
-            "pull_sigma": pull_sigma,
-            "mean_chi2": mean_chi2,
-            "sample_old": None,
-            "sample_new": None,
-        }
-
-        if abs(pull_sigma - 1.0) < RES_CONV_THRESHOLD:
+        updated, meta = apply_group("ALL", pull_sigma, mean_chi2)
+        group_metas.append(meta)
+        found_any = True
+        if not updated:
             skip_write = True
+        reso_meta = meta
+
+    elif args.separate:
+        blc_det = "BLC1" if detector == "BcIn" else "BLC2"
+        root_file = find_pull_root(blc_det)
+        if not root_file:
+            print(colored(f"  [Error] No pull ROOT for {blc_det}. Run BLC_pull first.", "red"))
+            sys.exit(1)
+        info = read_pull_sigma(root_file, need_ab=True)
+        if not info:
+            print(colored(f"  [Error] Cannot read pull a/b from {root_file}", "red"))
+            sys.exit(1)
+        print(colored(
+            f"  [INFO] {blc_det}: p_a={info['pull_sigma_a']:.4f} p_b={info['pull_sigma_b']:.4f} "
+            f"mean_chi2={info['mean_chi2']:.4f}",
+            "cyan",
+        ))
+        ga, gb = (f"{blc_det}a", f"{blc_det}b")
+        for gname, p in ((ga, info["pull_sigma_a"]), (gb, info["pull_sigma_b"])):
+            updated, meta = apply_group(gname, p, info["mean_chi2"])
+            group_metas.append(meta)
             found_any = True
-            report_reso_convergence(pull_sigma, mean_chi2, None, None, False)
-        else:
-            for blc_name in ("BLC1", "BLC2"):
-                keys = layer_keys(blc_name)
-                data, old, new = scale_res_for_layers(keys, pull_sigma)
-                all_new_data.update(data)
-                if reso_meta["sample_old"] is None:
-                    reso_meta["sample_old"] = old
-                    reso_meta["sample_new"] = new
-            print(f"  - ALL Resolution: {color_ok()} {len(all_new_data)} layers (Res *= p)")
-            found_any = True
+        if not any(m["updated"] for m in group_metas):
+            skip_write = True
+        reso_meta = group_metas
+
     else:
-        blc_det = "BLC1" if detector == "BcIn" else "BLC2" if detector == "BcOut" else detector
+        blc_det = "BLC1" if detector == "BcIn" else "BLC2"
         root_file = find_pull_root(blc_det)
         if not root_file:
             print(colored(f"  [Error] No pull ROOT for {blc_det}. Run BLC_pull first.", "red"))
@@ -398,26 +490,12 @@ elif args.param_type == "resolution":
             f"  [INFO] {blc_det}: p={pull_sigma:.4f} mean_chi2={mean_chi2:.4f}",
             "cyan",
         ))
-
-        reso_meta = {
-            "pull_sigma": pull_sigma,
-            "mean_chi2": mean_chi2,
-            "sample_old": None,
-            "sample_new": None,
-        }
-
-        if abs(pull_sigma - 1.0) < RES_CONV_THRESHOLD:
+        updated, meta = apply_group(blc_det, pull_sigma, mean_chi2)
+        group_metas.append(meta)
+        found_any = True
+        if not updated:
             skip_write = True
-            found_any = True
-            report_reso_convergence(pull_sigma, mean_chi2, None, None, False)
-        else:
-            keys = layer_keys(blc_det)
-            data, old, new = scale_res_for_layers(keys, pull_sigma)
-            all_new_data.update(data)
-            reso_meta["sample_old"] = old
-            reso_meta["sample_new"] = new
-            print(f"  - {detector} Resolution: {color_ok()} {len(data)} layers (Res *= p)")
-            found_any = True
+        reso_meta = meta
 
 # Helper to report convergence for residuals
 def report_convergence(data):
@@ -444,7 +522,7 @@ def report_convergence(data):
 
 # Perform update
 if args.param_type == "resolution" and skip_write:
-    # Already reported CONVERGED; nothing to write
+    # Already reported CONVERGED per group; nothing to write
     pass
 elif all_new_data:
     # Ensure all_new_data only has one value per key for the file update 
@@ -460,13 +538,17 @@ elif all_new_data:
     success_count = param_file.update(cleaned_data, key_len=cat["key_len"], start_col=cat["start_col"])
     param_file.write()
     if args.param_type == "resolution" and reso_meta is not None:
-        report_reso_convergence(
-            reso_meta["pull_sigma"],
-            reso_meta["mean_chi2"],
-            reso_meta["sample_old"],
-            reso_meta["sample_new"],
-            True,
-        )
+        metas = reso_meta if isinstance(reso_meta, list) else [reso_meta]
+        for m in metas:
+            if m.get("updated"):
+                report_reso_convergence(
+                    m["pull_sigma"],
+                    m["mean_chi2"],
+                    m["sample_old"],
+                    m["sample_new"],
+                    True,
+                    m.get("label", ""),
+                )
     print(colored(f"\n[SUCCESS] Updated {success_count} entries total for Run {args.run_num} {args.suffix}", "green", attrs=["bold"]))
     print(f"File: {target_file.relative_to(config.ANALYZER_DIR)}\n")
 else:
