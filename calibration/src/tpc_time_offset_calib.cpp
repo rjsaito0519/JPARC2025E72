@@ -247,7 +247,7 @@ int main(Int_t argc, char** argv) {
     TString base_dir = ANALYZER_DIR + "/param/TPCPRM";
     TString e72_dir = base_dir + "/e72";
     TString run_param_path = Form("%s/TPCParam_e72_run%05d", e72_dir.Data(), run_number);
-    TString base_param_path = Form("%s/TPCParam_0_yoffset_adjusted", base_dir.Data());
+    TString base_param_path = Form("%s/TPCParam_example", base_dir.Data());
     // 2. Determine which parameter file to use as base
     TString input_param_path = run_param_path;
     if (!fs::exists(input_param_path.Data())) {

@@ -647,7 +647,7 @@ int main(Int_t argc, char** argv) {
   const TString base_dir = ANALYZER_DIR + "/param/TPCPRM";
   const TString e72_dir = base_dir + "/e72";
   const TString run_param_path = Form("%s/TPCParam_e72_run%05d", e72_dir.Data(), run_number);
-  const TString template_path = ANALYZER_DIR + "/param/TPCPRM/TPCParam_e72_run02594";
+  const TString template_path = ANALYZER_DIR + "/param/TPCPRM/TPCParam_example";
 
   TString input_param_path = run_param_path;
   if (!fs::exists(run_param_path.Data())) {

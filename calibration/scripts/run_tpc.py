@@ -132,7 +132,7 @@ def update_tpcprm_phase_stamp(
 ) -> None:
     """
     TPCPRM の run 別ファイルを更新する（旧 TPCPHASE コメントブロックは除去）。
-    ファイルが無ければ TPCParam_0_yoffset_adjusted をコピーしてから更新。
+    ファイルが無ければ TPCParam_example をコピーしてから更新。
     patch_kcobo=True かつ TpcPhase に TpcPhase_CoboFallback があるとき、--fit-step 1 の kCobo 行を更新。
     """
     param_dir = config.PARAM_DIR
