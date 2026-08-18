@@ -18,9 +18,27 @@ def colored(text, color):
     codes = {"green": "32", "cyan": "36", "yellow": "33", "red": "31"}
     return f"\033[{codes.get(color, '0')}m{text}\033[0m"
 
+def set_central_momentum(path, mom):
+    lines = path.read_text().splitlines(keepends=True)
+    found = False
+    out = []
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("CentralMomentum:") and not stripped.startswith("#"):
+            prefix_ws = line[: len(line) - len(stripped)]
+            newline = "\n" if line.endswith("\n") else ""
+            out.append(f"{prefix_ws}CentralMomentum: {mom}{newline}")
+            found = True
+        else:
+            out.append(line)
+    if not found:
+        print(colored(f"Error: CentralMomentum: not found in {path}", "red"))
+        sys.exit(1)
+    path.write_text("".join(out))
+
 parser = argparse.ArgumentParser(
     prog="make_runlist",
-    usage="python3 create_runlist.py <run_num> <suffix> [--bcout | --bcin] [--ref RUN]",
+    usage="python3 create_runlist.py <run_num> <suffix> [--bcout | --bcin | --d5] [--ref RUN] [--mom P]",
     description="Tool to create analyzer .conf and .yml runlist files with smart storage management.",
     add_help=True,
 )
@@ -31,9 +49,14 @@ parser.add_argument("suffix",  type=str, help="Input suffixes (e.g. Pi_hdprm K_t
 group = parser.add_mutually_exclusive_group()
 group.add_argument('--bcout', action="store_true", help='Set mode to BcOut calibration')
 group.add_argument('--bcin', action="store_true", help='Set mode to BcIn calibration')
+group.add_argument('--d5', action="store_true", help='Set mode to D5Tracking')
 parser.add_argument(
     "--ref", type=int, default=None,
     help="Use calibrated params from this run (default: run_num)",
+)
+parser.add_argument(
+    "--mom", type=float, default=None,
+    help="D5 central momentum in GeV/c (rewrite CentralMomentum in TM)",
 )
 
 args = parser.parse_args()
@@ -43,12 +66,16 @@ SUB_DIR = config.SUB_DIR
 param_run = args.ref if args.ref is not None else args.run_num
 use_ref = args.ref is not None
 
+if args.mom is not None and not args.d5:
+    print(colored("Error: --mom is only valid with --d5", "red"))
+    sys.exit(1)
+
 # 0. Ensure directory structures exist
 (config.OUTPUT_DIR / "root" / f"run{args.run_num:05d}").mkdir(parents=True, exist_ok=True)
 (config.SCRATCH_DIR / f"run{args.run_num:05d}").mkdir(parents=True, exist_ok=True)
 (config.DECODE_DIR / f"run{args.run_num:05d}").mkdir(parents=True, exist_ok=True)
 
-for param_type in ["conf", "USER", "HDPRM", "HDPHC", "DCTDC", "DCDRFT", "DCGEO"]:
+for param_type in ["conf", "USER", "HDPRM", "HDPHC", "DCTDC", "DCDRFT", "DCGEO", "TM"]:
     (config.PARAM_DIR / param_type / SUB_DIR).mkdir(parents=True, exist_ok=True)
 
 # Determine Mode
@@ -62,16 +89,25 @@ if args.bcout:
 elif args.bcin:
     prefix = "BcIn"
     mode_label = "bcin"
+elif args.d5:
+    prefix = "D5"
+    mode_label = "d5"
 
 set1 = set(args.suffix)
 set2 = {"0", "Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"}
 set3 = {"0", "Pi_tdc", "K_tdc", "Pi_drift", "K_drift", "Pi_resi", "K_resi"}
+set_d5 = {"Pi", "K"}
 FINAL_SUFFIXES = ["hdphc", "resi"]
 
 if mode_label == "hodo":
     diff = set1 - set2
     if diff or not set1:
         print(f"Error: Invalid suffixes {diff}. Use: 0, Pi/K_hdprm, Pi/K_t0, Pi/K_hdphc")
+        sys.exit(1)
+elif mode_label == "d5":
+    diff = set1 - set_d5
+    if diff or not set1:
+        print(f"Error: Invalid suffixes {diff}. Use: Pi, K")
         sys.exit(1)
 else:
     diff = set1 - set3
@@ -86,14 +122,50 @@ PARAM_DEFS = {
     "DCTDC:":  {"dir": "DCTDC",  "prefix": "DCTdcParam_run",       "tpl": "DCTdcParam_e72_example"},
     "DCDRFT:": {"dir": "DCDRFT", "prefix": "DCDriftParam_run",     "tpl": "DCDriftParam_e72_example.root"},
     "DCGEO:":  {"dir": "DCGEO",  "prefix": "DCGeomParam_run",      "tpl": "DCGeomParam_e72_example"},
+    "D5MTX:":  {"dir": "TM",     "prefix": "D5TransferMatrix_run", "tpl": "D5TransferMatrix_example.param"},
 }
+
+NOSUFFIX_KEYS = {"USER:", "D5MTX:"}
+
+def resolve_param_rel_path(p_key, suffix_head):
+    p_info = PARAM_DEFS[p_key]
+    run_for_file = args.run_num if p_key == "D5MTX:" else param_run
+    filename = f"{p_info['prefix']}{run_for_file:05d}"
+    if p_key not in NOSUFFIX_KEYS:
+        filename += f"_{suffix_head}"
+    if p_key == "DCDRFT:":
+        filename += ".root"
+
+    target_path_abs = config.PARAM_DIR / p_info['dir'] / SUB_DIR / filename
+    if target_path_abs.exists():
+        return f"param/{p_info['dir']}/{SUB_DIR}/{filename}"
+    elif use_ref:
+        print(colored(
+            f"Error: --ref {param_run} param not found: {target_path_abs}",
+            "red",
+        ))
+        sys.exit(1)
+    else:
+        return f"param/{p_info['dir']}/{p_info['tpl']}"
+
+d5_mtx_dest = None
+if mode_label == "d5":
+    d5_mtx_src = config.PARAM_DIR / "TM" / "D5TransferMatrix_example.param"
+    d5_mtx_dest = config.PARAM_DIR / "TM" / SUB_DIR / f"D5TransferMatrix_run{args.run_num:05d}"
+    if not d5_mtx_dest.exists():
+        if not d5_mtx_src.exists():
+            print(colored(f"Error: TM template not found: {d5_mtx_src}", "red"))
+            sys.exit(1)
+        shutil.copy(d5_mtx_src, d5_mtx_dest)
+    if args.mom is not None:
+        set_central_momentum(d5_mtx_dest, args.mom)
 
 all_runs_info = []
 
 for suffix in args.suffix:
     suffix_head = suffix.split("_")[0]
     suffix_type = suffix.split("_")[1] if "_" in suffix else suffix
-    is_final = suffix_type in FINAL_SUFFIXES
+    is_final = suffix_type in FINAL_SUFFIXES or mode_label == "d5"
     
     # 1. Update Conf File
     conf_dir = config.PARAM_DIR / "conf"
@@ -108,32 +180,19 @@ for suffix in args.suffix:
         shutil.copy(conf_dir / example_base, conf_target_file)
 
     buf = []
+    has_d5mtx = False
     with open(conf_target_file) as f:
         for line in f:
             s_list = line.split()
             if len(s_list) > 1 and s_list[0] in PARAM_DEFS:
                 p_key = s_list[0]
-                p_info = PARAM_DEFS[p_key]
-                filename = f"{p_info['prefix']}{param_run:05d}"
-                if p_key != "USER:": filename += f"_{suffix_head}"
-                if p_key == "DCDRFT:": filename += ".root"
-                
-                # Use relative path from ANALYZER_DIR for configuration consistency
-                target_path_abs = config.PARAM_DIR / p_info['dir'] / SUB_DIR / filename
-                if target_path_abs.exists():
-                    rel_path = f"param/{p_info['dir']}/{SUB_DIR}/{filename}"
-                elif use_ref:
-                    print(colored(
-                        f"Error: --ref {param_run} param not found: {target_path_abs}",
-                        "red",
-                    ))
-                    sys.exit(1)
-                else:
-                    # Use template/default file
-                    rel_path = f"param/{p_info['dir']}/{p_info['tpl']}"
-                
-                s_list[1] = rel_path
+                if p_key == "D5MTX:":
+                    has_d5mtx = True
+                s_list[1] = resolve_param_rel_path(p_key, suffix_head)
             buf.append(s_list)
+
+    if mode_label == "d5" and not has_d5mtx:
+        buf.append(["D5MTX:", resolve_param_rel_path("D5MTX:", suffix_head)])
 
     with open(conf_target_file, mode='w') as f:
         for l in buf:
@@ -162,6 +221,10 @@ for suffix in args.suffix:
     if mode_label == "hodo":
         binary = "./bin/Hodoscope"
         unit = 100000
+    elif mode_label == "d5":
+        binary = "./bin/D5Tracking"
+        unit = 20000
+        option = "-n 2"
     elif args.bcin:
         binary = "./bin/BcInTracking"
         unit = 50000
@@ -206,6 +269,10 @@ with open(runlist_target_file, "w") as f_out:
 # Output Report
 print(colored(f"\n[SUCCESS] Setup for Run {args.run_num} {args.suffix} ({prefix})", "green"))
 print(f"  - Params from: run{param_run:05d}" + (" (--ref)" if use_ref else ""))
+if d5_mtx_dest is not None:
+    print(f"  - D5MTX: {d5_mtx_dest}")
+    if args.mom is not None:
+        print(f"  - CentralMomentum: {args.mom} GeV/c")
 print(f"  - Stable Link: {symlink_path}")
 
 # Final verification display (Like 'cat')
