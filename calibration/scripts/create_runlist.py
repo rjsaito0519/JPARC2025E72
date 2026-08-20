@@ -139,7 +139,7 @@ def resolve_param_rel_path(p_key, suffix_head):
     target_path_abs = config.PARAM_DIR / p_info['dir'] / SUB_DIR / filename
     if target_path_abs.exists():
         return f"param/{p_info['dir']}/{SUB_DIR}/{filename}"
-    elif use_ref:
+    elif use_ref and p_key != "D5MTX:":
         print(colored(
             f"Error: --ref {param_run} param not found: {target_path_abs}",
             "red",

@@ -183,42 +183,99 @@ namespace ana_helper {
         );
         
         if (evnum_within_range > 500. || conf.hdprm_typical_value.par.empty()) {
-            Double_t mip_pos          = h->GetBinCenter(h->GetMaximumBin());
-            // Double_t mip_half_width   = 20.0;
-            Double_t mip_half_width   = h->GetStdDev();
+            Int_t mip_peak_bin     = h->GetMaximumBin();
+            Double_t mip_pos      = h->GetBinCenter(mip_peak_bin);
+            Double_t mip_peak_h   = h->GetBinContent(mip_peak_bin);
             std::pair<Double_t, Double_t> mip_n_sigma(1.8, 2.2);
             h->GetXaxis()->UnZoom();
-            
+
+            Int_t bin_left = mip_peak_bin;
+            Int_t bin_left_lim = h->FindBin(mip_range_left);
+            while (bin_left > bin_left_lim && h->GetBinContent(bin_left) > 0.5*mip_peak_h) --bin_left;
+            Int_t bin_right = mip_peak_bin;
+            while (bin_right < h->GetNbinsX() && h->GetBinContent(bin_right) > 0.3*mip_peak_h) ++bin_right;
+
+            Double_t bin_w = h->GetBinWidth(mip_peak_bin);
+            Double_t local_left  = mip_pos - h->GetBinCenter(bin_left);
+            Double_t local_right = h->GetBinCenter(bin_right) - mip_pos;
+            if (local_left  < bin_w) local_left  = bin_w;
+            if (local_right < bin_w) local_right = bin_w;
+            Double_t mip_half_width = 0.5*(local_left + local_right);
+
+            Double_t prefit_min = mip_pos - local_left;
+            if (prefit_min < mip_range_left) prefit_min = mip_range_left;
+            Double_t prefit_max = mip_pos + local_right;
+
             // -- first fit -----
-            f_prefit->SetRange(mip_pos-mip_half_width, mip_pos+mip_half_width);
+            f_prefit->SetRange(prefit_min, prefit_max);
             f_prefit->SetParameter(1, mip_pos);
             f_prefit->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
             f_prefit->SetParameter(2, mip_half_width*conf.hdprm_mip_half_width_ratio);
-            h->Fit(f_prefit, "0QEMR", "", mip_range_left, mip_pos+mip_half_width);
+            h->Fit(f_prefit, "0QEMR", "", prefit_min, prefit_max);
             for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
             delete f_prefit;
 
             // -- second fit -----
-            Double_t fit_range_min = par[1]-mip_n_sigma.first*par[2] > mip_range_left ? par[1]-mip_n_sigma.first*par[2] : mip_range_left;
-            TF1 *f_fit_mip_g = new TF1( Form("mip_gauss_%s", h->GetName()), "gausn", fit_range_min, par[1]+mip_n_sigma.second*par[2]);
-            f_fit_mip_g->SetParameter(1, par[1]);
-            f_fit_mip_g->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
-            f_fit_mip_g->SetParameter(2, par[2]*0.9);
+            Double_t fit_mean  = par[1];
+            Double_t fit_sigma = par[2];
+            if (fit_sigma > 2.0*mip_half_width) fit_sigma = mip_half_width;
+            if (fit_sigma < 0.3*mip_half_width) fit_sigma = mip_half_width;
+
+            TF1 *f_fit_mip_g = new TF1( Form("mip_gauss_%s", h->GetName()), "gausn(0)+pol0(3)", prefit_min, prefit_max);
+            f_fit_mip_g->SetParameter(0, par[0]);
+            f_fit_mip_g->SetParameter(1, fit_mean);
+            f_fit_mip_g->SetParameter(2, fit_sigma*0.9);
+            f_fit_mip_g->SetParameter(3, 0.0);
             f_fit_mip_g->SetLineColor(kOrange);
             f_fit_mip_g->SetLineWidth(2.0);
-            h->Fit(f_fit_mip_g, "0QEMR", "", fit_range_min, par[1]+mip_n_sigma.second*par[2]);
-            Double_t chi_square_g = f_fit_mip_g->GetChisquare();
-            Double_t p_value_g = TMath::Prob(chi_square_g, f_fit_mip_g->GetNDF());
 
-            TF1 *f_fit_mip_l = new TF1( Form("mip_landau_%s", h->GetName()), "landaun", fit_range_min, par[1]+mip_n_sigma.second*par[2]);
-            f_fit_mip_l->SetParameter(1, par[1]);
-            f_fit_mip_l->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
-            f_fit_mip_l->SetParameter(2, par[2]*0.9);
+            TF1 *f_fit_mip_l = new TF1( Form("mip_landau_%s", h->GetName()), "landaun(0)+pol0(3)", prefit_min, prefit_max);
+            f_fit_mip_l->SetParameter(0, par[0]);
+            f_fit_mip_l->SetParameter(1, fit_mean);
+            f_fit_mip_l->SetParameter(2, fit_sigma*0.9);
+            f_fit_mip_l->SetParameter(3, 0.0);
             f_fit_mip_l->SetLineColor(kOrange);
             f_fit_mip_l->SetLineWidth(2.0);
-            h->Fit(f_fit_mip_l, "0QEMR", "", fit_range_min, par[1]+mip_n_sigma.second*par[2]);
-            Double_t chi_square_l = f_fit_mip_l->GetChisquare();
-            Double_t p_value_l = TMath::Prob(chi_square_l, f_fit_mip_l->GetNDF());
+
+            Double_t fit_range_min = 0.0;
+            Double_t fit_range_max = 0.0;
+            Double_t chi_square_g = 0.0;
+            Double_t chi_square_l = 0.0;
+            Double_t p_value_g = 0.0;
+            Double_t p_value_l = 0.0;
+
+            for (Int_t iround = 0; iround < 2; ++iround) {
+                fit_range_min = fit_mean - mip_n_sigma.first*fit_sigma;
+                if (fit_range_min < mip_range_left) fit_range_min = mip_range_left;
+                fit_range_max = fit_mean + mip_n_sigma.second*fit_sigma;
+
+                Double_t mip_bg = h->GetBinContent(h->FindBin(fit_range_min));
+                if (mip_bg < 0.0) mip_bg = 0.0;
+
+                f_fit_mip_g->SetRange(fit_range_min, fit_range_max);
+                f_fit_mip_g->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
+                f_fit_mip_g->SetParameter(3, mip_bg);
+                f_fit_mip_g->SetParLimits(3, 0.0, h->GetMaximum());
+                h->Fit(f_fit_mip_g, "0QEMR", "", fit_range_min, fit_range_max);
+                chi_square_g = f_fit_mip_g->GetChisquare();
+                p_value_g = TMath::Prob(chi_square_g, f_fit_mip_g->GetNDF());
+
+                f_fit_mip_l->SetRange(fit_range_min, fit_range_max);
+                f_fit_mip_l->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
+                f_fit_mip_l->SetParameter(3, mip_bg);
+                f_fit_mip_l->SetParLimits(3, 0.0, h->GetMaximum());
+                h->Fit(f_fit_mip_l, "0QEMR", "", fit_range_min, fit_range_max);
+                chi_square_l = f_fit_mip_l->GetChisquare();
+                p_value_l = TMath::Prob(chi_square_l, f_fit_mip_l->GetNDF());
+
+                if (chi_square_g <= chi_square_l) {
+                    fit_mean  = f_fit_mip_g->GetParameter(1);
+                    fit_sigma = f_fit_mip_g->GetParameter(2);
+                } else {
+                    fit_mean  = f_fit_mip_l->GetParameter(1);
+                    fit_sigma = f_fit_mip_l->GetParameter(2);
+                }
+            }
 
             // // -- debug ------
             // std::cout << "gauss:  " << p_value_g << ", " << f_fit_mip_g->GetChisquare() << std::endl;
@@ -228,7 +285,7 @@ namespace ana_helper {
 
             // if (p_value_g >= p_value_l) {
             if (chi_square_g <= chi_square_l) {
-                for (Int_t i = 0, n_par = f_fit_mip_g->GetNpar(); i < n_par; i++) {
+                for (Int_t i = 0; i < 3; i++) {
                     result.par.push_back(f_fit_mip_g->GetParameter(i));
                     result.err.push_back(f_fit_mip_g->GetParError(i));
                 }
@@ -244,12 +301,12 @@ namespace ana_helper {
                 result.chi_square = chi_square_g;
                 delete f_fit_mip_l;
             } else {
-                for (Int_t i = 0, n_par = f_fit_mip_l->GetNpar(); i < n_par; i++) {
+                for (Int_t i = 0; i < 3; i++) {
                     result.par.push_back(f_fit_mip_l->GetParameter(i));
                     result.err.push_back(f_fit_mip_l->GetParError(i));
                 }
                 // Use actual maximum of the function as the representative peak (user suggestion)
-                result.par[4] = f_fit_mip_l->GetMaximumX(fit_range_min, par[1]+mip_n_sigma.second*par[2]);
+                result.par[4] = f_fit_mip_l->GetMaximumX(fit_range_min, fit_range_max);
 
                 // -- draw -----
                 h->GetXaxis()->SetRangeUser(
