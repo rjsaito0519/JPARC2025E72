@@ -11,11 +11,16 @@ run_tpc: TPC 周りの便利フロントエンド
   ./run_tpc.py <root_file> gain [--run N] [--target-mpv 200] [...]
   ./run_tpc.py <root_file> drift [--run N] [--mode hit|trk] [--vdrift V] [--debug]
 
-  - phase : tpc_phase_from_tpcbcout + tpc_phase_plot（root は tpcbcout）
+  入力 ROOT の命名（dst_create_runlist / create_runlist と揃える）:
+  - phase : run{NNNNN}_TPCHitBcOut.root（DATA_DIR symlink 可。旧 dst_tpchit_bcout_tracking_* も可）
+  - offset / gain / drift : run{NNNNN}_TPCTracking.root または hadd 済み tracking ROOT
+            （hit 側 hadd は TPCHitBcOut 由来。旧 tpc_runXXXXX / dst_tpctracking_* も可）
+
+  - phase : tpc_phase_from_tpcbcout + tpc_phase_plot
             → --fit-step 1 なら kCobo(3) 行を TTree から更新（TPCPRM へのコメント追記はしない）
-  - offset: tpc_time_offset_calib（root は tpc_runXXXXX 等）
+  - offset: tpc_time_offset_calib
             → QA PDF に p0 / Δp0 の分布（1D + TPC 上の 2D マップ）を含む
-  - gain  : tpc_gain_calib（root は tpc_runXXXXX 等）
+  - gain  : tpc_gain_calib
             → TPCCl_dE_* の Landau fit から MPV を求めて ATY=0 の gain を更新
   - drift : tpc_drift_calib（layer ごとの ResY vs Y 傾き → δv を aty=2 の p1 に加算）
             → --mode は hit/trk ヒストの優先順（無い方へフォールバック）
@@ -198,7 +203,7 @@ def get_run_number_from_root(root_path: Path) -> int:
     except Exception:
         pass
 
-    # Fallback: filename runNNNNN
+    # Fallback: filename runNNNNN (e.g. run03773_TPCHitBcOut.root / run03773_TPCTracking.root)
     match = re.search(r"run(\d+)", path.name, re.IGNORECASE)
     if match:
         return int(match.group(1))
@@ -212,7 +217,11 @@ def main():
     parser.add_argument(
         "root_file",
         type=Path,
-        help="Input ROOT file (tpcbcout for phase, tpc_runXXXXX / hadd for offset/gain/drift).",
+        help=(
+            "Input ROOT: phase=runNNNNN_TPCHitBcOut.root; "
+            "offset/gain/drift=runNNNNN_TPCTracking.root or hadd ROOT "
+            "(legacy dst_tpchit_bcout_tracking_* / tpc_run* also OK)."
+        ),
     )
     parser.add_argument(
         "cmd",

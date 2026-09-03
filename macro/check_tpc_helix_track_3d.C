@@ -4,25 +4,11 @@
 //
 // Usage:
 //   root -l
-//   .L check_tpc_helix_track_3d.C+
+//   .L check_tpc_helix_track_3d.C    // 解釈実行（ACLiC の + は使わない）
 //   helix_set_path("file.root")
-//   helix_event()              // 1 イベント（ランダム）
-//   helix_event(123)           // entry 固定
-//   helix_status()             // 現在のフィルタ設定
-//   helix_coords_help()        // 座標系と ROOT 3D 軸の対応表
-//   .L 読み込み時に空の TPC フレーム窓を開く（helix_open_gui）。データは helix_set_path 後に helix_event()
-//   SetMomRange(0.3, 0.8); SetMomTrackIndex(1);
-//   SetPidFilter(0x6, 0x2);    // (pid & 0x6) == 0x2  → K ビット必須
-//   SetRequireK0(kTRUE);
-//   SetCloseDistMax(20); SetNtTpcRange(2, 2);
-//   helix_next(50000)          // フィルタに合う次の entry を表示
-//   helix_browse_filtered()    // Enter=helix_next(), q=終了
-//   helix_reset_config()       // フィルタをデフォルトに
-//   SetHelixViewMargin(0.25)   // 3D 引き（余白。既定 0.22）
-//   SetHelixPreferHitTheta(kTRUE)  // 螺旋 θ 区間を helix_t 優先（ビームの長い線を抑制）
-//   SetHelixDisplayTargetOrigin(kTRUE)  // 縦軸 z をターゲット中心 (z'=0) で表示
-//   SetHelixDrawCalpos(kTRUE)      // calpos_* を小十字で重ね描画（座標検証）
-//   SetHelixDrawLayerRings(kTRUE)  // 底面にレイヤー区切り 33 本（既定 ON）
+//   helix_event(0)                  // または helix_event() でランダム
+//   helix_help()                    // コマンド一覧
+//   helix_open_gui()                // 空フレームだけ欲しいとき（自動起動なし）
 //
 // 必須枝: run_number, event_number, ntTpc, nhtrack, pid,
 //         helix_cx, helix_cy, helix_z0, helix_r, helix_dz, helix_t,
@@ -573,6 +559,28 @@ helix_coords_help()
             << "Frame: octagon at (x,z)=(0,0); target cylinder (holder incl.) at z=Z_TARGET, r="
             << kTPC_TARGET_RADIUS << " mm.\n"
             << "====================================================\n" << std::endl;
+}
+
+void
+helix_help()
+{
+  std::cout
+    << "\n=== check_tpc_helix_track_3d ===\n"
+    << "  helix_set_path(\"file.root\")   open DST (tree \"tpc\")\n"
+    << "  helix_event([entry])            draw one event (-1 = random)\n"
+    << "  helix_next([max_scan])          next entry matching filters\n"
+    << "  helix_browse()                  Enter=random, q=quit\n"
+    << "  helix_browse_filtered()         Enter=helix_next, q=quit\n"
+    << "  helix_status() / helix_reset_config()\n"
+    << "  helix_coords_help()             axis conventions\n"
+    << "  helix_open_gui()                empty TPC frame (manual)\n"
+    << "Filters: SetMomRange, SetMomTrackIndex, SetPidFilter,\n"
+    << "  SetSkipAccidental, SetRequireBeamTrack, SetNtTpcRange,\n"
+    << "  SetCloseDistMax, SetRequireK0, SetK0MassWindow, SetScanStart\n"
+    << "Display: SetHelixViewMargin, SetHelixPreferHitTheta,\n"
+    << "  SetHelixDisplayTargetOrigin, SetHelixDrawCalpos, SetHelixDrawLayerRings\n"
+    << "=================================\n"
+    << std::endl;
 }
 
 //______________________________________________________________________________
@@ -1562,21 +1570,39 @@ draw_helix_tracks_3d()
 }
 
 //______________________________________________________________________________
+static void
+ensure_helix_canvas()
+{
+  if(gHlxCanvas && gHlxCanvas->IsZombie()) {
+    gHlxCanvas = nullptr;
+    gHlxView = nullptr;
+  }
+  if(!gHlxCanvas) {
+    gStyle->SetCanvasPreferGL(kFALSE); // X11/SSH 転送では GL より軽いことが多い
+    gHlxCanvas = new TCanvas("cHlx3d", "TPC Helix 3D View", 900, 900);
+  }
+}
+
+static Bool_t
+helix_prompt_continue(const char* tag)
+{
+  std::cout << "[" << tag << "] Enter=次, q=終了 > " << std::flush;
+  char line[32];
+  if(!std::fgets(line, sizeof(line), stdin))
+    return kFALSE;
+  if(line[0] == 'q' || line[0] == 'Q')
+    return kFALSE;
+  return kTRUE;
+}
+
+//______________________________________________________________________________
 void
 helix_event(Long64_t evnum = -1)
 {
   if(!load_helix_event(evnum))
     return;
 
-  if(gHlxCanvas && gHlxCanvas->IsZombie()) {
-    gHlxCanvas = nullptr;
-    gHlxView = nullptr;
-  }
-
-  if(!gHlxCanvas) {
-    gStyle->SetCanvasPreferGL(kFALSE); // X11/SSH 転送では GL より軽いことが多い
-    gHlxCanvas = new TCanvas("cHlx3d", "TPC Helix 3D View", 900, 900);
-  }
+  ensure_helix_canvas();
 
   gHlxCanvas->cd();
   gHlxCanvas->Clear();
@@ -1642,14 +1668,10 @@ helix_browse_filtered(Long64_t maxSteps = -1)
                "（entry 直指定は helix_event(n)）\n"
             << std::endl;
 
-  char line[32];
   for(Long64_t step = 0; maxSteps < 0 || step < maxSteps; ++step) {
     if(helix_next() < 0)
       break;
-    std::cout << "[browse_filtered] Enter=次, q=終了 > " << std::flush;
-    if(!std::fgets(line, sizeof(line), stdin))
-      break;
-    if(line[0] == 'q' || line[0] == 'Q')
+    if(!helix_prompt_continue("browse_filtered"))
       break;
   }
   std::cout << "helix_browse_filtered: 終了しました。" << std::endl;
@@ -1669,20 +1691,16 @@ helix_browse(Long64_t maxSteps = -1)
                "（Ctrl+D でも終了）\n"
             << std::endl;
 
-  char line[32];
   for(Long64_t step = 0; maxSteps < 0 || step < maxSteps; ++step) {
     helix_event(-1);
-    std::cout << "[browse] Enter=次, q=終了 > " << std::flush;
-    if(!std::fgets(line, sizeof(line), stdin))
-      break;
-    if(line[0] == 'q' || line[0] == 'Q')
+    if(!helix_prompt_continue("browse"))
       break;
   }
   std::cout << "helix_browse: 終了しました。" << std::endl;
 }
 
 //______________________________________________________________________________
-// .L / ACLiC 読み込み直後に空の 3D フレームだけ表示（以前の挙動を復元）
+// 空の 3D フレームだけ表示（手動。読み込み時の自動起動はしない）
 void
 helix_open_gui()
 {
@@ -1696,8 +1714,7 @@ helix_open_gui()
     return;
   }
 
-  gStyle->SetCanvasPreferGL(kFALSE);
-  gHlxCanvas = new TCanvas("cHlx3d", "TPC Helix 3D View", 900, 900);
+  ensure_helix_canvas();
   gHlxCanvas->cd();
   gHlxCanvas->Clear();
   clear_helix_objects();
@@ -1706,5 +1723,3 @@ helix_open_gui()
   gHlxCanvas->Update();
   std::cout << "[helix] GUI ready (empty frame). helix_set_path(\"file.root\"); helix_event(0);" << std::endl;
 }
-
-helix_open_gui();
