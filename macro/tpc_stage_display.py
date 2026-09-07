@@ -179,6 +179,8 @@ g_ax = None
 g_checkbox_ax = None
 g_checkbox = None
 g_track_artists: dict = {}  # itrack -> list[Artist]（interactive 表示切替用）
+g_track_visible: dict = {}  # itrack -> bool（interactive でのチェックボックス状態）
+g_current_render_kwargs: dict = {}  # export_current() が再描画に使う render_stage 引数
 
 
 def set_path(path: str, backend: str = "uproot") -> None:
@@ -562,12 +564,13 @@ def _ensure_figure(interactive: bool = False) -> None:
 
 def _setup_track_checkboxes(ev, track_artists: dict) -> None:
     """トラックごとの ON/OFF チェックボックスを g_checkbox_ax に配置する（interactive 表示専用）。"""
-    global g_checkbox, g_track_artists
+    global g_checkbox, g_track_artists, g_track_visible
     g_track_artists = track_artists
+    g_track_visible = {itrack: True for itrack in range(ev.ntTpc)}
     if g_checkbox_ax is None:
         return
     g_checkbox_ax.clear()
-    g_checkbox_ax.set_title("tracks", fontsize=9)
+    g_checkbox_ax.set_title("tracks\n('s': export PNG)", fontsize=9)
     labels = [f"tr{itrack}" for itrack in range(ev.ntTpc)]
     if not labels:
         g_checkbox = None
@@ -578,10 +581,45 @@ def _setup_track_checkboxes(ev, track_artists: dict) -> None:
 
 def _on_track_checkbox_clicked(label: str) -> None:
     itrack = int(label[2:])  # "tr3" -> 3
+    g_track_visible[itrack] = not g_track_visible.get(itrack, True)
     for artist in g_track_artists.get(itrack, []):
-        artist.set_visible(not artist.get_visible())
+        artist.set_visible(g_track_visible[itrack])
     if g_fig is not None:
         g_fig.canvas.draw_idle()
+
+
+def export_current(path: Optional[str] = None, dpi: int = 300) -> Optional[str]:
+    """
+    直近の show(interactive=True) で表示中のイベントを、その時点でチェックボックスで
+    非表示にしたトラックの状態を保ったまま、タイトル・凡例なし／背景透過のエクスポート用
+    画像として別ファイルに保存する（画面のウィンドウ自体はそのまま維持される）。
+    path 省略時は "tpc_export_run{run}_ev{event}_{stage}.png" を使う。
+    """
+    if not g_current_render_kwargs:
+        print("Error: 表示中のイベントがありません。先に show(..., interactive=True) を呼んでください。")
+        return None
+    ev = base.g_event_helix
+    if path is None:
+        path = f"tpc_export_run{ev.runnum}_ev{ev.evnum}_{g_current_render_kwargs['stage']}.png"
+    export_fig = plt.figure(figsize=(8, 8))
+    export_ax = export_fig.add_subplot(111, projection="3d")
+    render_stage(
+        export_ax, ev, g_extra,
+        track_visible=dict(g_track_visible),
+        for_export=True,
+        **g_current_render_kwargs,
+    )
+    base._helix_apply_transparent_bg(export_fig, export_ax)
+    export_fig.savefig(path, dpi=dpi, transparent=True)
+    plt.close(export_fig)
+    print(f"Saved: {path}")
+    return path
+
+
+def _on_interactive_key_press(event) -> None:
+    if getattr(event, "key", "") not in ("s", "S"):
+        return
+    export_current()
 
 
 def show(
@@ -599,25 +637,35 @@ def show(
     保存画像はスライド等への貼り付け用に、タイトル・凡例なし、背景透過、高解像度（既定 dpi=300）にする。
     interactive=True なら、トラックごとの ON/OFF チェックボックスを画面に表示する
     （X11 転送など、実際に matplotlib ウィンドウが表示できる環境が必要）。
+    interactive 表示中に 's' キーを押すか、export_current() を呼ぶと、その時点で
+    非表示にしたトラックの状態を保ったまま、タイトル・凡例なし／背景透過の画像として
+    別途 PNG 保存できる（ウィンドウはそのまま維持される）。
     draw_pads=True で全 TPC パッド＋ヒットパッドを描画する（重いので既定 False）。
     """
+    global g_current_render_kwargs
     res = load_event(entry)
     if res is None:
         return None
     use_interactive = bool(interactive) and not save
     _ensure_figure(interactive=use_interactive)
-    track_artists = render_stage(
-        g_ax, base.g_event_helix, g_extra, stage=stage, entry_label=res,
+    g_current_render_kwargs = dict(
+        stage=stage, entry_label=res,
         vertex_close_dist_max=vertex_close_dist_max, draw_pads=draw_pads,
-        for_export=bool(save),
+    )
+    track_artists = render_stage(
+        g_ax, base.g_event_helix, g_extra, for_export=bool(save), **g_current_render_kwargs,
     )
     if use_interactive:
         _setup_track_checkboxes(base.g_event_helix, track_artists)
+        g_fig.canvas.mpl_connect("key_press_event", _on_interactive_key_press)
     if save:
         base._helix_apply_transparent_bg(g_fig, g_ax)
         g_fig.savefig(save, dpi=save_dpi, transparent=True)
         print(f"Saved: {save}")
     else:
+        if use_interactive:
+            print("Tip: チェックボックスでトラックを非表示にした後、"
+                  "'s' キーで現在の状態を PNG (透過・凡例なし) にエクスポートできます。")
         plt.show()
     return res
 
