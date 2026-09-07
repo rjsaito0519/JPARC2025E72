@@ -77,6 +77,7 @@
 #include <TTreeReader.h>
 #include <TTreeReaderValue.h>
 #include <TCanvas.h>
+#include <TROOT.h>
 #include <TStyle.h>
 #include <TLegend.h>
 #include <TPaveText.h>
@@ -1157,7 +1158,8 @@ static Bool_t FitSliceGaussMean(TH1D* py, Int_t cobo, Int_t slice_idx, Double_t 
   sliceFit.SetParNames("Constant", "Mean", "Sigma", "Background");
   sliceFit.SetParLimits(2, min_step_gauss_sigma, 20.0);
 
-  const Int_t fit_status = py_fit->Fit(&sliceFit, "Q");
+  // N0: 描画・結果ヒスト格納なし（ビン数×CoBo で MakeDefCanvas 多発を防ぐ）
+  const Int_t fit_status = py_fit->Fit(&sliceFit, "QN0");
   Bool_t ok = kFALSE;
   if (fit_status == 0) {
     mean_resy = sliceFit.GetParameter(1);
@@ -1313,6 +1315,9 @@ static void SmoothMovingAverage(std::vector<Double_t>& y, Int_t half_window,
 //_____________________________________________________________________________
 int main(int argc, char* argv[])
 {
+  // Fit / Projection 時の一時キャンバス生成を抑止（結果は変えない）
+  gROOT->SetBatch(kTRUE);
+
   if (argc < 2) {
     std::cerr << "Usage: " << argv[0]
               << " <TpcPhase.root> [tpcbcout.root] [--fit-step N] [--smooth N] [--vdrift V] ...\n"

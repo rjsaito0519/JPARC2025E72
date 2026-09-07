@@ -28,3 +28,7 @@ param
 *.swp
 *~
 .DS_Store
+
+docs
+results
+*.root

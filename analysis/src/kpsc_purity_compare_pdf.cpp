@@ -2,13 +2,14 @@
 // Kp scattering purity review: multipage PDF from DstKpScattering output.
 //
 // Usage:
-//   kpsc_purity_compare_pdf <kpsc.root> [-o <out.pdf>] [-r <run>]
+//   kpsc_purity_compare_pdf <kpsc.root> [-o <out.pdf>] [-r <run>] [--forslide]
 //
 // Input:
 //   TTree "kpsc" from bin/DstKpScattering output.
 //
 // Output (default):
 //   OUTPUT_DIR/img/runXXXXX/kpsc_purity_compare_runXXXXX.pdf
+//   --forslide: tip-cut figures only (mmass 2D / tip mmass / PID), slide styling.
 
 #include "ana_helper.h"
 #include "paths.h"
@@ -21,6 +22,8 @@
 #include <TLegend.h>
 #include <TLine.h>
 #include <TMath.h>
+#include <TPad.h>
+#include <TProfile.h>
 #include <TROOT.h>
 #include <TString.h>
 #include <TStyle.h>
@@ -39,6 +42,12 @@ constexpr Double_t kMK = 0.494;
 constexpr Double_t kMmassWindowDiag = 0.15;
 constexpr Double_t kMmassWindowTight = 0.10;
 constexpr Double_t kAngleMissKGood = 0.3;
+constexpr Double_t kAngleMissKTip = 0.1;
+constexpr Double_t kCloseDistTip = 5.0;
+constexpr Double_t kPidYMaxSlide = 500.;
+constexpr Double_t kSlideMmassHi = 0.8;
+constexpr Double_t kSlideCloseDistHi = 30.;
+constexpr Double_t kSlideDedxHi = 500.;
 constexpr Double_t kSidebandLo = 0.65;
 constexpr Double_t kSidebandHi = 0.85;
 constexpr Double_t kNsigmaPionWindow = 3.0;
@@ -56,7 +65,10 @@ constexpr const char* kCutC3 =
 constexpr const char* kCutC4 =
   "mmass>0 && effective_ntTpc<=4 && abs(mmass-0.494)<0.15";
 constexpr const char* kCutGood =
-  "mmass>0 && effective_ntTpc==2 && angle_miss_k<0.3 && abs(mmass-0.494)<0.1";
+  "mmass>0 && effective_ntTpc==2 && diff_angle<0.3 && abs(mmass-0.494)<0.1";
+// Tip cut (no mmass window): Nt==2 + tight angle + close_dist.
+constexpr const char* kCutTip =
+  "mmass>0 && effective_ntTpc==2 && diff_angle<0.1 && close_dist<5";
 constexpr const char* kCutWorking =
   "mmass>0 && effective_ntTpc==2 && abs(mmass-0.494)<0.15"
   " && nsigma_k_sel>-2 && nsigma_k_sel<2"
@@ -84,10 +96,11 @@ const CutSet kSummaryCuts[] = {
   {"B2", "B2: Nt==2", kCutB2, kBlue + 1},
   {"B3", "B3: Nt<=3", kCutB3, kAzure + 2},
   {"B4", "B4: Nt<=4", kCutB4, kCyan + 2},
-  {"C2", "C2: Nt2+MMKW", kCutC2, kRed + 1},
-  {"C3", "C3: Nt<=3+MMKW", kCutC3, kOrange + 7},
-  {"C4", "C4: Nt<=4+MMKW", kCutC4, kMagenta + 1},
+  {"C2", "C2: Nt2+MMass_Peak_Wide", kCutC2, kRed + 1},
+  {"C3", "C3: Nt<=3+MMass_Peak_Wide", kCutC3, kOrange + 7},
+  {"C4", "C4: Nt<=4+MMass_Peak_Wide", kCutC4, kMagenta + 1},
   {"G", "G: good (AM+MM0.1)", kCutGood, kOrange + 2},
+  {"T", "T: tip (Nt2+AM0.1+cd5)", kCutTip, kViolet + 1},
   {"D", "D: working", kCutWorking, kGreen + 2},
 };
 
@@ -112,9 +125,11 @@ struct Var2D
 void
 usage(const char* argv0)
 {
-  std::cerr << "Usage: " << argv0 << " <kpsc.root> [-o <out.pdf>] [-r <run>]\n"
+  std::cerr << "Usage: " << argv0
+            << " <kpsc.root> [-o <out.pdf>] [-r <run>] [--forslide]\n"
             << "  Reads TTree kpsc.\n"
-            << "  Default PDF: OUTPUT_DIR/img/runXXXXX/kpsc_purity_compare_runXXXXX.pdf\n";
+            << "  Default PDF: OUTPUT_DIR/img/runXXXXX/kpsc_purity_compare_runXXXXX.pdf\n"
+            << "  --forslide: tip-cut slide pages only (no legends/titles).\n";
 }
 
 Int_t
@@ -209,7 +224,7 @@ DrawTree2D(TTree* t, TCanvas& c, const char* yvar, const char* xvar,
   const TString drawSpec = Form("%s:%s>>%s(%d,%g,%g,%d,%g,%g)",
                               yvar, xvar, name, nbx, xlo, xhi, nby, ylo, yhi);
   t->Draw(drawSpec, cut, opt);
-  auto* h = dynamic_cast<TH2D*>(gPad->GetPrimitive(name));
+  auto* h = dynamic_cast<TH1*>(gPad->GetPrimitive(name));
   if (h) {
     h->SetTitle(title);
     if (h->GetEntries() > 0. && h->GetMaximum() > 0.) {
@@ -319,17 +334,18 @@ DrawSummaryTable(TTree* t, TCanvas& c, PdfWriter& writer)
   tx->DrawLatex(0.08, y, Form("sideband Nt<=4 : %.0f", CountEvents(t, kCutSidebandNt4)));
   y -= 0.045;
   tx->SetTextColor(kGreen + 2);
-  tx->DrawLatex(0.08, y, Form("Nt2+MMKW + pi veto : %.0f", CountEvents(t, kCutPiVeto)));
+  tx->DrawLatex(0.08, y, Form("Nt2+MMass_Peak_Wide + pi veto : %.0f", CountEvents(t, kCutPiVeto)));
 
   tx->SetTextColor(kBlack);
   tx->SetTextSize(0.022);
-  tx->DrawLatex(0.08, 0.16, Form("MMKW: |mmass - %.3f| < %.2f GeV (diag) / %.2f (good)",
+  tx->DrawLatex(0.08, 0.16, Form("MMass_Peak_Wide: |mmass - %.3f| < %.2f GeV (diag) / %.2f (good)",
                                  kMK, kMmassWindowDiag, kMmassWindowTight));
-  tx->DrawLatex(0.08, 0.12, Form("good cut: Nt==2 && angle_miss_k<%.1f && |mmass-m_K|<%.2f",
+  tx->DrawLatex(0.08, 0.12, Form("good cut: Nt==2 && diff_angle<%.1f && |mmass-m_K|<%.2f",
                                  kAngleMissKGood, kMmassWindowTight));
-  tx->DrawLatex(0.08, 0.08, Form("sideband: %.2f < mmass < %.2f GeV", kSidebandLo, kSidebandHi));
-  tx->DrawLatex(0.08, 0.04, Form("#pi-like K: |n#sigma_{#pi}|<%.0f && n#sigma_{K}<%.0f",
-                                 kNsigmaPionWindow, kNsigmaKaonReject));
+  tx->DrawLatex(0.08, 0.08, Form("tip cut: Nt==2 && diff_angle<%.2f && close_dist<%.0f (no mmass window)",
+                                 kAngleMissKTip, kCloseDistTip));
+  tx->DrawLatex(0.08, 0.04, Form("sideband: %.2f < mmass < %.2f GeV; #pi-like K: |n#sigma_{#pi}|<%.0f && n#sigma_{K}<%.0f",
+                                 kSidebandLo, kSidebandHi, kNsigmaPionWindow, kNsigmaKaonReject));
 
   writer.Print(c);
 }
@@ -416,7 +432,9 @@ DrawPair1D(TTree* t, TCanvas& c, PdfWriter& writer,
 
 void
 DrawMmass2D(TTree* t, TCanvas& c, PdfWriter& writer,
-            const Var2D& v, const char* baseCut, const char* pageTitle)
+            const Var2D& v, const char* baseCut, const char* pageTitle,
+            Int_t nby = 120, Double_t ylo = 0., Double_t yhi = 1.2,
+            Bool_t drawBands = true, Bool_t markGoodAngle = false)
 {
   static Int_t mm2dIdx = 0;
   ++mm2dIdx;
@@ -428,18 +446,214 @@ DrawMmass2D(TTree* t, TCanvas& c, PdfWriter& writer,
   const TString hname = Form("h_mmass_vs_%s_%d", v.var, mm2dIdx);
   const TString title = Form("%s; %s;missing mass [GeV]", pageTitle, v.xtitle);
   DrawTree2D(t, c, "mmass", v.var, baseCut, hname, title,
-             v.nbx, v.xlo, v.xhi, 120, 0., 1.2, "COL");
-  if (auto* h = dynamic_cast<TH2D*>(gPad->GetPrimitive(hname)))
+             v.nbx, v.xlo, v.xhi, nby, ylo, yhi, "COL");
+  auto* h = dynamic_cast<TH2D*>(gPad->GetPrimitive(hname));
+  if (h && drawBands)
     DrawMmassBands(h);
+  if (h && markGoodAngle) {
+    auto* lAng = new TLine(kAngleMissKGood, ylo, kAngleMissKGood, yhi);
+    lAng->SetLineColor(kOrange + 2);
+    lAng->SetLineStyle(2);
+    lAng->SetLineWidth(2);
+    lAng->Draw("same");
+  }
 
   auto* tx = new TLatex();
   tx->SetNDC();
   tx->SetTextSize(0.028);
-  if (auto* h = dynamic_cast<TH2D*>(gPad->GetPrimitive(hname)))
+  if (h)
     tx->DrawLatex(0.14, 0.92, Form("entries = %.0f", h->GetEntries()));
   tx->DrawLatex(0.14, 0.87, baseCut);
 
   writer.Print(c);
+}
+
+// mmass–diff_angle V: zoom / slices / profile / |p| correlation (Nt2 focus).
+void
+DrawDiffAngleVStudy(TTree* t, TCanvas& c, PdfWriter& writer)
+{
+  constexpr Double_t kZoomLo = 0.30;
+  constexpr Double_t kZoomHi = 0.70;
+  constexpr Int_t kNbAngle = 64;
+  constexpr Double_t kAngHi = TMath::Pi();
+  const Var2D vAng{"diff_angle", "#angle(p_{miss},p_{K}) [rad]",
+                   kNbAngle, 0., kAngHi};
+
+  // --- summary numbers ---
+  {
+    c.Clear();
+    c.cd();
+    StyleCanvas(c);
+    const Double_t nNt2 = CountEvents(t, kCutB2);
+    const Double_t nTip = CountEvents(
+      t, "mmass>0 && effective_ntTpc==2 && diff_angle<0.3");
+    const Double_t nTipPeak = CountEvents(t, kCutGood);
+    const Double_t nWing = CountEvents(
+      t, "mmass>0 && effective_ntTpc==2 && diff_angle>=0.3");
+    const Double_t nWingPeak = CountEvents(
+      t,
+      "mmass>0 && effective_ntTpc==2 && diff_angle>=0.3"
+      " && abs(mmass-0.494)<0.1");
+
+    auto* tx = new TLatex();
+    tx->SetNDC();
+    tx->SetTextSize(0.032);
+    tx->DrawLatex(0.08, 0.92, "diff_angle V study (kinematics consistency)");
+    tx->SetTextSize(0.026);
+    tx->DrawLatex(0.08, 0.84,
+                  "mmass = miss from beam+target-p; diff_angle = #angle(p_{miss},p_{K})");
+    tx->DrawLatex(0.08, 0.78,
+                  "V near m_{K}: correlated proton resolution (not global mom flip)");
+    tx->SetTextSize(0.028);
+    Double_t y = 0.68;
+    tx->DrawLatex(0.08, y, Form("Nt2 (B2)                 : %.0f", nNt2));
+    y -= 0.05;
+    tx->DrawLatex(0.08, y, Form("Nt2 && diff_angle<0.3    : %.0f  (%.1f%% of Nt2)",
+                                nTip, nNt2 > 0. ? 100. * nTip / nNt2 : 0.));
+    y -= 0.05;
+    tx->DrawLatex(0.08, y, Form("good (tip + |mmass-m_K|<0.1): %.0f  (%.1f%% of Nt2)",
+                                nTipPeak, nNt2 > 0. ? 100. * nTipPeak / nNt2 : 0.));
+    y -= 0.05;
+    tx->DrawLatex(0.08, y, Form("Nt2 && diff_angle>=0.3   : %.0f", nWing));
+    y -= 0.05;
+    tx->DrawLatex(0.08, y,
+                  Form("wing && |mmass-m_K|<0.1  : %.0f  (wrong-K-like band?)",
+                       nWingPeak));
+    y -= 0.08;
+    tx->SetTextSize(0.024);
+    tx->SetTextColor(kGray + 2);
+    tx->DrawLatex(0.08, y, "Next pages: zoom 2D (Base/Nt2/sideband), profile, angle slices, |p| corr.");
+    writer.Print(c);
+  }
+
+  // --- zoomed 2D ---
+  DrawMmass2D(t, c, writer, vAng, kCutBase,
+              "ZOOM: mmass vs diff_angle (Base)", 80, kZoomLo, kZoomHi, true, true);
+  DrawMmass2D(t, c, writer, vAng, kCutB2,
+              "ZOOM: mmass vs diff_angle (Nt2)", 80, kZoomLo, kZoomHi, true, true);
+  DrawMmass2D(t, c, writer, vAng, kCutSidebandNt2,
+              "ZOOM: mmass vs diff_angle (Nt2 sideband)", 80, kZoomLo, kZoomHi,
+              true, true);
+
+  // --- profile <mmass> vs diff_angle ---
+  {
+    c.Clear();
+    c.cd();
+    StyleCanvas(c);
+    static Int_t profIdx = 0;
+    ++profIdx;
+    const TString pname = Form("h_mmass_prof_dang_%d", profIdx);
+    if (auto* old = gDirectory->Get(pname))
+      delete old;
+    auto* prof = new TProfile(pname,
+                              "Nt2: <mmass> vs diff_angle; #angle(p_{miss},p_{K}) [rad];"
+                              "<missing mass> [GeV]",
+                              kNbAngle, 0., kAngHi, kZoomLo, kZoomHi, "s");
+    t->Project(pname, "mmass:diff_angle", kCutB2, "prof");
+    auto* pc = static_cast<TProfile*>(prof->Clone(Form("%s_c", pname.Data())));
+    pc->SetDirectory(nullptr);
+    delete prof;
+    pc->SetLineColor(kBlue + 1);
+    pc->SetMarkerColor(kBlue + 1);
+    pc->SetMarkerStyle(20);
+    pc->SetMarkerSize(0.7);
+    pc->GetYaxis()->SetRangeUser(kZoomLo, kZoomHi);
+    pc->Draw("E1");
+    auto* lMk = new TLine(0., kMK, kAngHi, kMK);
+    lMk->SetLineColor(kRed + 1);
+    lMk->SetLineWidth(2);
+    lMk->Draw("same");
+    auto* lAng = new TLine(kAngleMissKGood, kZoomLo, kAngleMissKGood, kZoomHi);
+    lAng->SetLineColor(kOrange + 2);
+    lAng->SetLineStyle(2);
+    lAng->SetLineWidth(2);
+    lAng->Draw("same");
+    auto* tx = new TLatex();
+    tx->SetNDC();
+    tx->SetTextSize(0.028);
+    tx->DrawLatex(0.14, 0.92, Form("entries = %.0f  (%s)", pc->GetEntries(), kCutB2));
+    tx->DrawLatex(0.14, 0.87, "red: m_{K}; orange dashed: good cut angle");
+    writer.Print(c);
+  }
+
+  // --- mmass 1D in angle slices (Nt2) ---
+  {
+    c.Clear();
+    c.cd();
+    StyleCanvas(c);
+    struct Slice {
+      const char* name;
+      const char* cut;
+      const char* label;
+      Color_t color;
+    };
+    const Slice slices[] = {
+      {"tip",
+       "mmass>0 && effective_ntTpc==2 && diff_angle<0.1",
+       "diff_angle<0.1", kBlue + 1},
+      {"mid",
+       "mmass>0 && effective_ntTpc==2 && diff_angle>=0.1 && diff_angle<0.3",
+       "0.1#leq diff_angle<0.3", kOrange + 7},
+      {"wing",
+       "mmass>0 && effective_ntTpc==2 && diff_angle>=0.3",
+       "diff_angle#geq0.3", kGray + 2},
+    };
+    std::vector<TH1D*> hs;
+    for (const auto& s : slices) {
+      auto* h = Fill1D(t, "mmass", s.cut, Form("h_mmass_dang_%s", s.name),
+                       "missing mass [GeV]", 100, kZoomLo, kZoomHi);
+      h->SetLineColor(s.color);
+      h->SetLineWidth(2);
+      hs.push_back(h);
+    }
+    const Double_t ymax = HistMax(hs);
+    hs.front()->SetMaximum(ymax > 0. ? ymax * 1.25 : 1.);
+    hs.front()->SetTitle("Nt2: mmass in diff_angle slices (zoom)");
+    hs.front()->GetXaxis()->SetTitle("missing mass [GeV]");
+    hs.front()->Draw("hist");
+    for (std::size_t i = 1; i < hs.size(); ++i)
+      hs[i]->Draw("hist same");
+    auto* leg = new TLegend(0.50, 0.62, 0.88, 0.88);
+    leg->SetBorderSize(0);
+    leg->SetFillStyle(0);
+    for (std::size_t i = 0; i < hs.size(); ++i)
+      leg->AddEntry(hs[i], Form("%s (%.0f)", slices[i].label, hs[i]->GetEntries()), "l");
+    leg->Draw();
+    writer.Print(c);
+  }
+
+  // --- |p| correlation (Nt2, zoomed mmass) ---
+  {
+    const Var2D vSigned{"diff_p_miss_k_signed",
+                        "|p_{miss}|-|p_{K}| [GeV/c]", 100, -0.5, 0.5};
+    DrawMmass2D(t, c, writer, vSigned, kCutB2,
+                "ZOOM: mmass vs Diff_P_MissK_Signed (Nt2)",
+                80, kZoomLo, kZoomHi, true, false);
+  }
+  {
+    c.Clear();
+    c.cd();
+    StyleCanvas(c, true);
+    static Int_t corrIdx = 0;
+    ++corrIdx;
+    const TString hname = Form("h_dang_vs_dpsigned_%d", corrIdx);
+    DrawTree2D(t, c, "diff_angle", "diff_p_miss_k_signed", kCutB2, hname,
+               "Nt2: diff_angle vs Diff_P_MissK_Signed;"
+               "|p_{miss}|-|p_{K}| [GeV/c];#angle(p_{miss},p_{K}) [rad]",
+               100, -0.5, 0.5, kNbAngle, 0., kAngHi, "COL");
+    auto* lAng = new TLine(-0.5, kAngleMissKGood, 0.5, kAngleMissKGood);
+    lAng->SetLineColor(kOrange + 2);
+    lAng->SetLineStyle(2);
+    lAng->SetLineWidth(2);
+    lAng->Draw("same");
+    auto* tx = new TLatex();
+    tx->SetNDC();
+    tx->SetTextSize(0.028);
+    if (auto* h = dynamic_cast<TH2D*>(gPad->GetPrimitive(hname)))
+      tx->DrawLatex(0.14, 0.92, Form("entries = %.0f", h->GetEntries()));
+    tx->DrawLatex(0.14, 0.87, kCutB2);
+    writer.Print(c);
+  }
 }
 
 void
@@ -733,6 +947,286 @@ DrawPidNsigmaOverlay(TTree* t, TCanvas& c, PdfWriter& writer,
   writer.Print(c);
 }
 
+void
+StyleSlideAxes(TH1* h, const char* xtitle, const char* ytitle)
+{
+  if (!h)
+    return;
+  h->SetTitle("");
+  h->GetXaxis()->SetTitle(xtitle);
+  h->GetYaxis()->SetTitle(ytitle);
+  h->GetXaxis()->CenterTitle(false);
+  h->GetYaxis()->CenterTitle(false);
+  h->GetXaxis()->SetTitleSize(0.050);
+  h->GetYaxis()->SetTitleSize(0.050);
+  h->GetXaxis()->SetLabelSize(0.045);
+  h->GetYaxis()->SetLabelSize(0.045);
+  h->GetXaxis()->SetTitleOffset(1.10);
+  h->GetYaxis()->SetTitleOffset(1.25);
+}
+
+// Plot ~70% (left, fixed aspect), cut note on the right.
+struct SlideLayout
+{
+  TPad* plot = nullptr;
+  TPad* note = nullptr;
+};
+
+SlideLayout
+BeginSlidePage(TCanvas& c, Bool_t zPalette)
+{
+  c.Clear();
+  c.cd();
+  // Left ~70%: plot. Extra top margin so any title band stays above axes
+  // and can be cropped out of a screenshot of the figure body.
+  auto* plot = new TPad("slide_plot", "", 0.01, 0.04, 0.70, 0.92);
+  plot->SetFillStyle(0);
+  plot->SetLeftMargin(0.14);
+  plot->SetRightMargin(zPalette ? 0.15 : 0.05);
+  plot->SetBottomMargin(0.14);
+  plot->SetTopMargin(0.12);
+  plot->Draw();
+
+  auto* note = new TPad("slide_note", "", 0.71, 0.04, 0.99, 0.92);
+  note->SetFillStyle(0);
+  note->SetLeftMargin(0.05);
+  note->SetRightMargin(0.05);
+  note->Draw();
+  return {plot, note};
+}
+
+void
+DrawSlideCutNote(TPad* note, const std::vector<TString>& lines)
+{
+  if (!note)
+    return;
+  note->cd();
+  auto* tx = new TLatex();
+  tx->SetNDC();
+  tx->SetTextAlign(13);
+  tx->SetTextFont(42);
+  tx->SetTextSize(0.070);
+  Double_t y = 0.92;
+  for (const auto& line : lines) {
+    if (line.IsNull()) {
+      y -= 0.04;
+      continue;
+    }
+    tx->DrawLatex(0.04, y, line);
+    y -= 0.085;
+  }
+}
+
+const std::vector<TString> kSlideNoteBase = {
+  "cut:",
+  "M_{miss} > 0",
+};
+
+const std::vector<TString> kSlideNoteTip = {
+  "cut:",
+  "M_{miss} > 0",
+  "N_{TPC}^{eff} = 2",
+  "diff_angle < 0.1",
+  "d_{close} < 5 mm",
+};
+
+void
+DrawSlideMmass2D(TTree* t, TCanvas& c, PdfWriter& writer, const Var2D& v)
+{
+  static Int_t slide2dIdx = 0;
+  ++slide2dIdx;
+
+  auto pads = BeginSlidePage(c, true);
+  pads.plot->cd();
+
+  const TString hname = Form("h_slide_mmass_vs_%s_%d", v.var, slide2dIdx);
+  const TString title = Form(";%s;M_{miss} [GeV/c^{2}]", v.xtitle);
+  DrawTree2D(t, c, "mmass", v.var, kCutBase, hname, title,
+             v.nbx, v.xlo, v.xhi, 100, 0., kSlideMmassHi, "COLZ");
+  if (auto* h = dynamic_cast<TH1*>(gPad->GetPrimitive(hname))) {
+    h->SetTitle("");
+    StyleSlideAxes(h, v.xtitle, "M_{miss} [GeV/c^{2}]");
+  }
+
+  DrawSlideCutNote(pads.note, kSlideNoteBase);
+  c.cd();
+  writer.Print(c);
+}
+
+void
+DrawSlide1D(TTree* t, TCanvas& c, PdfWriter& writer,
+            const char* var, const char* xtitle, const char* cut,
+            Int_t nb, Double_t xlo, Double_t xhi, Color_t color,
+            const std::vector<TString>& noteLines)
+{
+  static Int_t slide1dIdx = 0;
+  ++slide1dIdx;
+
+  auto pads = BeginSlidePage(c, false);
+  pads.plot->cd();
+
+  const TString hname = Form("h_slide_%s_%d", var, slide1dIdx);
+  auto* h = Fill1D(t, var, cut, hname, "", nb, xlo, xhi);
+  h->SetLineColor(color);
+  h->SetLineWidth(2);
+  StyleSlideAxes(h, xtitle, "Counts");
+  if (h->GetMaximum() > 0.)
+    h->SetMaximum(h->GetMaximum() * 1.15);
+  h->Draw("hist");
+
+  DrawSlideCutNote(pads.note, noteLines);
+  c.cd();
+  writer.Print(c);
+}
+
+void
+DrawSlideMmassOverlay(TTree* t, TCanvas& c, PdfWriter& writer)
+{
+  static Int_t ovIdx = 0;
+  ++ovIdx;
+
+  auto pads = BeginSlidePage(c, false);
+  pads.plot->cd();
+
+  auto* hAll = Fill1D(t, "mmass", kCutBase,
+                      Form("h_slide_mmass_all_%d", ovIdx), "", 100, 0., kSlideMmassHi);
+  auto* hTip = Fill1D(t, "mmass", kCutTip,
+                      Form("h_slide_mmass_tip_%d", ovIdx), "", 100, 0., kSlideMmassHi);
+  hAll->SetLineColor(kGray + 2);
+  hAll->SetLineWidth(2);
+  hTip->SetLineColor(kRed + 1);
+  hTip->SetLineWidth(2);
+  StyleSlideAxes(hAll, "M_{miss} [GeV/c^{2}]", "Counts");
+  const Double_t ymax = std::max(hAll->GetMaximum(), hTip->GetMaximum());
+  hAll->SetMaximum(ymax > 0. ? ymax * 1.20 : 1.);
+  hAll->Draw("hist");
+  hTip->Draw("hist same");
+
+  const std::vector<TString> note = {
+    "gray: M_{miss} > 0",
+    "",
+    "red (tip):",
+    "M_{miss} > 0",
+    "N_{TPC}^{eff} = 2",
+    "diff_angle < 0.1",
+    "d_{close} < 5 mm",
+  };
+  DrawSlideCutNote(pads.note, note);
+  c.cd();
+  writer.Print(c);
+}
+
+void
+DrawSlideDedxVsQp(TTree* t, TCanvas& c, PdfWriter& writer,
+                  const char* cut, const char* htag, Bool_t allTracks,
+                  const std::vector<TString>& noteLines)
+{
+  static Int_t slidePidIdx = 0;
+  ++slidePidIdx;
+
+  auto pads = BeginSlidePage(c, true);
+  pads.plot->cd();
+  PreparePalette();
+
+  gROOT->cd();
+  const TString hname = Form("h_slide_dedx_%s_%d", htag, slidePidIdx);
+  if (auto* old = gROOT->FindObject(hname))
+    delete old;
+
+  auto* h = new TH2D(hname, ";q#timesp [GeV/c];dE/dx [a.u.]",
+                     150, -1.5, 1.5, 150, 0., kSlideDedxHi);
+  const char* cutUse = (cut && cut[0] != '\0') ? cut : "";
+  if (allTracks) {
+    t->Project(hname, "dEdx:charge*mom0", cutUse);
+  } else {
+    t->Project(hname, "dEdx[i_kcand]:charge[i_kcand]*mom0[i_kcand]", cutUse);
+    t->Draw(Form("dEdx[i_p]:charge[i_p]*mom0[i_p]>>+%s", hname.Data()),
+            cutUse, "goff");
+  }
+
+  pads.plot->cd();
+  StyleSlideAxes(h, "q#timesp [GeV/c]", "dE/dx [a.u.]");
+  if (h->GetEntries() > 0. && h->Integral() > 0. && h->GetMaximum() > 0.) {
+    h->SetMinimum(0.);
+    h->SetMaximum(h->GetMaximum() * 1.05);
+  }
+  h->Draw("COLZ");
+  gPad->SetLogz(1);
+
+  DrawSlideCutNote(pads.note, noteLines);
+  c.cd();
+  writer.Print(c);
+  pads.plot->cd();
+  gPad->SetLogz(0);
+}
+
+void
+DrawForSlide(TTree* t, TCanvas& c, PdfWriter& writer)
+{
+  gStyle->SetOptStat(0);
+  gStyle->SetOptTitle(0);
+  c.SetCanvasSize(1000, 700);
+
+  const Var2D slide2d[] = {
+    {"effective_ntTpc", "N_{TPC}^{eff}", 11, -0.5, 10.5},
+    {"diff_angle", "diff_angle", 100, 0., TMath::Pi()},
+    {"close_dist", "d_{close} [mm]", 100, 0., kSlideCloseDistHi},
+  };
+  for (const auto& v : slide2d)
+    DrawSlideMmass2D(t, c, writer, v);
+
+  DrawSlide1D(t, c, writer, "mmass", "M_{miss} [GeV/c^{2}]", kCutBase,
+              100, 0., kSlideMmassHi, kGray + 2, kSlideNoteBase);
+  DrawSlide1D(t, c, writer, "mmass", "M_{miss} [GeV/c^{2}]", kCutTip,
+              100, 0., kSlideMmassHi, kRed + 1, kSlideNoteTip);
+  DrawSlideMmassOverlay(t, c, writer);
+
+  const std::vector<TString> noteAllTracks = {
+    "cut: (none)",
+    "all TPC tracks",
+  };
+  const std::vector<TString> noteTipTracks = {
+    "cut (tip):",
+    "M_{miss} > 0",
+    "N_{TPC}^{eff} = 2",
+    "diff_angle < 0.1",
+    "d_{close} < 5 mm",
+    "",
+    "tracks: K cand + p",
+  };
+  DrawSlideDedxVsQp(t, c, writer, "", "all", true, noteAllTracks);
+  DrawSlideDedxVsQp(t, c, writer, kCutTip, "tip", false, noteTipTracks);
+}
+
+void
+DrawTipPidPages(TTree* t, TCanvas& c, PdfWriter& writer)
+{
+  const Int_t oldStat = gStyle->GetOptStat();
+  gStyle->SetOptStat(0);
+  const Var1D pidVars[] = {
+    {"nsigma_p_sel", "n#sigma_{p}^{sel}", 100, -10., 10.},
+    {"nsigma_pi_p_sel", "n#sigma_{#pi}^{p,sel}", 100, -10., 10.},
+    {"nsigma_k_sel", "n#sigma_{K}^{sel}", 100, -10., 10.},
+    {"nsigma_pi_sel", "n#sigma_{#pi}^{sel}", 100, -10., 10.},
+  };
+  for (const auto& v : pidVars) {
+    c.Clear();
+    c.cd();
+    StyleCanvas(c);
+    const TString hname = Form("h_tip_%s", v.var);
+    auto* h = Fill1D(t, v.var, kCutTip, hname, v.title, v.nb, v.xlo, v.xhi);
+    h->SetLineColor(kViolet + 1);
+    h->SetLineWidth(2);
+    h->SetTitle(Form("tip cut: %s", v.title));
+    h->GetXaxis()->SetTitle(v.title);
+    h->GetYaxis()->SetTitle("Counts");
+    h->SetMaximum(kPidYMaxSlide);
+    h->Draw("hist");
+    writer.Print(c);
+  }
+  gStyle->SetOptStat(oldStat);
+}
+
 } // namespace
 
 int
@@ -741,6 +1235,7 @@ main(int argc, char** argv)
   Int_t run = -1;
   TString inPath;
   TString outPdf;
+  Bool_t forSlide = false;
 
   for (int i = 1; i < argc; ++i) {
     TString a(argv[i]);
@@ -748,6 +1243,8 @@ main(int argc, char** argv)
       run = TString(argv[++i]).Atoi();
     } else if (a == "-o" && i + 1 < argc) {
       outPdf = argv[++i];
+    } else if (a == "--forslide") {
+      forSlide = true;
     } else if (a == "-h" || a == "--help") {
       usage(argv[0]);
       return 0;
@@ -775,7 +1272,7 @@ main(int argc, char** argv)
 
   gROOT->SetBatch(kTRUE);
   PreparePalette();
-  gStyle->SetOptStat(1110);
+  gStyle->SetOptStat(forSlide ? 0 : 1110);
 
   TFile f(inPath, "READ");
   if (!f.IsOpen() || f.IsZombie()) {
@@ -800,14 +1297,28 @@ main(int argc, char** argv)
     runOut = 0;
 
   const TString imgDir = ana_helper::get_img_dir(OUTPUT_DIR, runOut);
-  if (outPdf.IsNull())
-    outPdf = Form("%s/kpsc_purity_compare_run%05d.pdf", imgDir.Data(), runOut);
+  if (outPdf.IsNull()) {
+    if (forSlide)
+      outPdf = Form("%s/kpsc_purity_slide_run%05d.pdf", imgDir.Data(), runOut);
+    else
+      outPdf = Form("%s/kpsc_purity_compare_run%05d.pdf", imgDir.Data(), runOut);
+  }
 
   TCanvas c("c_kpsc_purity", "kpsc purity compare", 900, 700);
   PdfWriter writer(outPdf);
 
+  if (forSlide) {
+    DrawForSlide(t, c, writer);
+    writer.Close(c);
+    std::cout << "Wrote " << outPdf << " (" << writer.Pages() << " pages, forslide)"
+              << std::endl;
+    return 0;
+  }
+
+  // A, B2, C2, G, T, D
   const std::vector<CutSet> mmassCuts = {
-    kSummaryCuts[0], kSummaryCuts[1], kSummaryCuts[4], kSummaryCuts[7], kSummaryCuts[8]};
+    kSummaryCuts[0], kSummaryCuts[1], kSummaryCuts[4],
+    kSummaryCuts[7], kSummaryCuts[8], kSummaryCuts[9]};
 
   DrawSummaryTable(t, c, writer);
   DrawNtMmassOverlay(t, c, writer);
@@ -823,59 +1334,66 @@ main(int argc, char** argv)
   DrawKaonRegionDedx(t, c, writer);
   DrawPidNsigmaOverlay(t, c, writer, kCutBase, kCutGood);
   DrawNsigma2D(t, c, writer, kCutGood, "good");
+  DrawTipPidPages(t, c, writer);
 
   const Var2D mmass2dVars[] = {
     {"effective_ntTpc", "effective_ntTpc", 11, -0.5, 10.5},
-    {"dp_miss", "dp_{miss} [GeV/c]", 100, 0., 1.},
-    {"angle_miss_k", "#angle(p_{miss},p_{K}) [rad]", 100, 0., TMath::Pi()},
+    {"diff_p_miss_k", "dp_{miss} [GeV/c]", 100, 0., 1.},
+    {"diff_angle", "#angle(p_{miss},p_{K}) [rad]", 100, 0., TMath::Pi()},
     {"nsigma_k_sel", "n#sigma_{K}^{sel}", 100, -10., 10.},
     {"nsigma_pi_sel", "n#sigma_{#pi}^{sel}", 100, -10., 10.},
     {"nsigma_p_sel", "n#sigma_{p}^{sel}", 100, -10., 10.},
     {"close_dist", "close_{dist} [mm]", 100, 0., 50.},
-    {"dphi", "d#phi [rad]", 64, 0., TMath::Pi()},
+    {"delta_phi_scat", "d#phi [rad]", 64, 0., TMath::Pi()},
     {"n_proton", "n_{proton}", 11, -0.5, 10.5},
     {"n_qminus", "n_{q-}", 11, -0.5, 10.5},
   };
   for (const auto& v : mmass2dVars)
     DrawMmass2D(t, c, writer, v, kCutBase, Form("mmass vs %s (kinematics OK)", v.var));
 
+  DrawDiffAngleVStudy(t, c, writer);
+
   const Var1D peakVars[] = {
     {"nsigma_k_sel", "n#sigma_{K}^{sel}", 100, -10., 10.},
     {"nsigma_pi_sel", "n#sigma_{#pi}^{sel}", 100, -10., 10.},
     {"nsigma_p_sel", "n#sigma_{p}^{sel}", 100, -10., 10.},
-    {"angle_miss_k", "#angle(p_{miss},p_{K}) [rad]", 100, 0., TMath::Pi()},
-    {"dp_miss", "dp_{miss} [GeV/c]", 100, 0., 1.},
+    {"diff_angle", "#angle(p_{miss},p_{K}) [rad]", 100, 0., TMath::Pi()},
+    {"diff_p_miss_k", "dp_{miss} [GeV/c]", 100, 0., 1.},
     {"close_dist", "close_{dist} [mm]", 100, 0., 50.},
-    {"dphi", "d#phi [rad]", 64, 0., TMath::Pi()},
+    {"delta_phi_scat", "d#phi [rad]", 64, 0., TMath::Pi()},
   };
   for (const auto& v : peakVars) {
     DrawPair1D(t, c, writer, v.var, v.title,
-               kCutC2, "C2: Nt2+MMKW peak", kRed + 1,
+               kCutC2, "C2: Nt2+MMass_Peak_Wide peak", kRed + 1,
                kCutSidebandNt2, "Nt2 sideband", kGray + 2,
                v.nb, v.xlo, v.xhi,
                Form("Peak vs sideband (Nt2): %s", v.var));
     DrawPair1D(t, c, writer, v.var, v.title,
-               kCutC4, "C4: Nt<=4+MMKW peak", kGreen + 2,
+               kCutC4, "C4: Nt<=4+MMass_Peak_Wide peak", kGreen + 2,
                kCutSidebandNt4, "Nt<=4 sideband", kGray + 2,
                v.nb, v.xlo, v.xhi,
                Form("Peak vs sideband (Nt<=4): %s", v.var));
   }
 
-  DrawNsigma2D(t, c, writer, kCutC2, "Nt2+MMKW");
-  DrawNsigma2D(t, c, writer, kCutC4, "Nt<=4+MMKW");
+  DrawNsigma2D(t, c, writer, kCutC2, "Nt2+MMass_Peak_Wide");
+  DrawNsigma2D(t, c, writer, kCutC4, "Nt<=4+MMass_Peak_Wide");
 
-  DrawPair1D(t, c, writer, "dp_miss", "dp_{miss} [GeV/c]",
-             kCutC2, "C2: Nt2+MMKW", kRed + 1,
+  DrawPair1D(t, c, writer, "diff_p_miss_k", "dp_{miss} [GeV/c]",
+             kCutC2, "C2: Nt2+MMass_Peak_Wide", kRed + 1,
              kCutWorking, "D: working", kGreen + 2,
-             100, 0., 1., "dp_{miss}: Nt2+MMKW vs working cut");
-  DrawPair1D(t, c, writer, "angle_miss_k", "#angle(p_{miss},p_{K}) [rad]",
-             kCutC2, "C2: Nt2+MMKW", kRed + 1,
+             100, 0., 1., "dp_{miss}: Nt2+MMass_Peak_Wide vs working cut");
+  DrawPair1D(t, c, writer, "diff_angle", "#angle(p_{miss},p_{K}) [rad]",
+             kCutC2, "C2: Nt2+MMass_Peak_Wide", kRed + 1,
              kCutGood, "G: good", kOrange + 2,
-             100, 0., TMath::Pi(), "angle_miss_k: Nt2+MMKW vs good cut");
-  DrawPair1D(t, c, writer, "cos_theta_k_cm", "cos#theta_{K}^{CM}",
+             100, 0., TMath::Pi(), "diff_angle: Nt2+MMass_Peak_Wide vs good cut");
+  DrawPair1D(t, c, writer, "cos_theta_cm", "cos#theta_{K}^{CM}",
              kCutGood, "G: good", kOrange + 2,
              kCutWorking, "D: working", kGreen + 2,
              100, -1., 1., "cos#theta_{K}^{CM}: good vs working");
+  DrawPair1D(t, c, writer, "mmass", "missing mass [GeV]",
+             kCutGood, "G: good", kOrange + 2,
+             kCutTip, "T: tip", kViolet + 1,
+             120, 0., 1.2, "mmass: good vs tip cut");
 
   writer.Close(c);
   std::cout << "Wrote " << outPdf << " (" << writer.Pages() << " pages)" << std::endl;

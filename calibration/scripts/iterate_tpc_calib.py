@@ -471,7 +471,9 @@ class IterOrchestrator:
             )
 
         token = f"tpc_recon_{tag}_{os.getpid()}_{int(time.time())}"
-        ec_file = Path(f"/tmp/tpc_iter_{token}.ec")
+        scratch_dir = Path("/group/had/sks/Users/sryuta/tmp")
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+        ec_file = scratch_dir / f"tpc_iter_{token}.ec"
         if ec_file.exists():
             ec_file.unlink()
         pane_script = (

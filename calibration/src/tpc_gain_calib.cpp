@@ -403,7 +403,8 @@ static void DrawGainCalibPanel(TH1D* h, TF1* fFit, Bool_t fit_ok, Double_t fit_m
 }
 
 static Bool_t FillTreeHists(TFile* f, const TString& tree_name, Int_t clsize_min, Int_t clsize_max,
-                            Double_t min_abs_cos_theta, Bool_t pion_tracks_only, Bool_t fill_per_pad,
+                            Bool_t use_cos_cut, Double_t min_abs_cos_theta, Double_t alpha_inner,
+                            Double_t alpha_outer, Bool_t pion_tracks_only, Bool_t fill_per_pad,
                             std::vector<TH1D*>& h_layers,
                             std::map<std::pair<Int_t, Int_t>, TH1D*>& h_pads, Long64_t& n_hits_filled) {
   h_layers.clear();
@@ -471,9 +472,15 @@ static Bool_t FillTreeHists(TFile* f, const TString& tree_name, Int_t clsize_min
           continue;
         const Int_t cs = static_cast<Int_t>(v_cs[ih]);
         if (cs < clsize_min || cs > clsize_max) continue;
-        if (TMath::Abs(TMath::Cos(v_td[ih])) < min_abs_cos_theta) continue;
         const Int_t layer = static_cast<Int_t>(v_ly[ih]);
         if (layer < 0 || layer >= tpc::NumOfLayersTPC) continue;
+        if (use_cos_cut) {
+          if (TMath::Abs(TMath::Cos(v_td[ih])) < min_abs_cos_theta) continue;
+        } else {
+          // Wiki: |α| < 0.1 (L0-9), |α| < 0.2 (L10-29); theta_diff ≡ α
+          const Double_t alpha_max = (layer <= 9) ? alpha_inner : alpha_outer;
+          if (TMath::Abs(v_td[ih]) >= alpha_max) continue;
+        }
         h_layers[layer]->Fill(v_de[ih]);
         if (fill_per_pad && v_rw) {
           if (ih >= static_cast<Int_t>(v_rw->size())) continue;
@@ -498,6 +505,12 @@ static Bool_t FillTreeHists(TFile* f, const TString& tree_name, Int_t clsize_min
 
   std::cout << "Tree fill: " << n_hits_filled << " hits passed cuts (" << iev << " events) into "
             << (fill_per_pad ? "pad+layer" : "layer") << " histograms." << std::endl;
+  if (use_cos_cut) {
+    std::cout << Form("  angle cut: |cos(theta_diff)| >= %.4f", min_abs_cos_theta) << std::endl;
+  } else {
+    std::cout << Form("  angle cut: |theta_diff| < %.4f (L0-9), < %.4f (L10+)", alpha_inner, alpha_outer)
+              << std::endl;
+  }
   if (fill_per_pad) {
     std::cout << "  " << h_pads.size() << " pads with at least one hit." << std::endl;
   }
@@ -512,8 +525,9 @@ int main(Int_t argc, char** argv) {
                  "[--min-width W] "
                  "[--max-chi2-ndf X] [--min-fit-ndf N] [--min-fit-prob P] [--rebin N] "
                  "[--mpv-min X] [--mpv-max X] [--de-source all|pion] [--tree] [--layer] "
-                 "[--tree-name NAME] [--clsize-min N] [--clsize-max N] [--min-abs-cos-theta X] "
-                 "[--ave] [--debug] [--replace] [--mode hit|trk]"
+                 "[--tree-name NAME] [--clsize-min N] [--clsize-max N] "
+                 "[--alpha-inner A] [--alpha-outer A] [--min-abs-cos-theta X] "
+                 "[--ave] [--asad-avg] [--debug] [--replace] [--mode hit|trk]"
               << std::endl;
     return EXIT_FAILURE;
   }
@@ -535,15 +549,19 @@ int main(Int_t argc, char** argv) {
   Int_t rebin = 1;
   Double_t mpv_min = 100.0;
   Double_t mpv_max = 0.0;  // <=0 means disabled
-  TString de_source = "all";
+  TString de_source = "pion";
   Bool_t debug_mode = kFALSE;
   Bool_t replace_mode = kFALSE;
-  Bool_t use_asad_mean_fill = kFALSE;
+  Bool_t use_neighbor_mean_fill = kFALSE;  // --ave: Wiki adjacent-row average
+  Bool_t use_asad_mean_fill = kFALSE;      // --asad-avg: layer+ASAD average
   Bool_t use_tree = kFALSE;
   Bool_t layer_fit = kFALSE;
   TString tree_name = "tpc";
   Int_t clsize_min = 1;
   Int_t clsize_max = 1;
+  Double_t alpha_inner = 0.1;   // |theta_diff| max for L0-9
+  Double_t alpha_outer = 0.2;   // |theta_diff| max for L10+
+  Bool_t use_cos_cut = kFALSE;  // set only when --min-abs-cos-theta is given
   Double_t min_abs_cos_theta = 0.95;
   TString mode = "hit";
 
@@ -590,7 +608,9 @@ int main(Int_t argc, char** argv) {
       replace_mode = kTRUE;
     } else if (arg == "--mode" && i + 1 < argc) {
       mode = argv[++i];
-    } else if (arg == "--ave" || arg == "--asad-avg") {
+    } else if (arg == "--ave") {
+      use_neighbor_mean_fill = kTRUE;
+    } else if (arg == "--asad-avg") {
       use_asad_mean_fill = kTRUE;
     } else if (arg == "--tree") {
       use_tree = kTRUE;
@@ -602,9 +622,19 @@ int main(Int_t argc, char** argv) {
       clsize_min = std::atoi(argv[++i]);
     } else if (arg == "--clsize-max" && i + 1 < argc) {
       clsize_max = std::atoi(argv[++i]);
+    } else if (arg == "--alpha-inner" && i + 1 < argc) {
+      alpha_inner = std::atof(argv[++i]);
+    } else if (arg == "--alpha-outer" && i + 1 < argc) {
+      alpha_outer = std::atof(argv[++i]);
     } else if (arg == "--min-abs-cos-theta" && i + 1 < argc) {
       min_abs_cos_theta = std::atof(argv[++i]);
+      use_cos_cut = kTRUE;
     }
+  }
+
+  if (use_neighbor_mean_fill && use_asad_mean_fill) {
+    std::cout << "[WARN] both --ave and --asad-avg specified; using --ave (neighbor fill)." << std::endl;
+    use_asad_mean_fill = kFALSE;
   }
 
   const Bool_t tree_layer_mode = use_tree && layer_fit;
@@ -773,9 +803,12 @@ int main(Int_t argc, char** argv) {
   tpc::InitializeHistograms(hDeltaGainMap);
 
   Int_t n_updated = 0;
+  Int_t n_filled_by_neighbor = 0;
   Int_t n_filled_by_asad = 0;
   Int_t n_total_pads = 0;
   std::set<std::pair<Int_t, Int_t>> pads_updated;
+  std::set<std::pair<Int_t, Int_t>> pads_outlier_scale;  // scale forced to 1; not used as --ave sources
+  std::set<std::pair<Int_t, Int_t>> pads_filled_by_neighbor;
   std::set<std::pair<Int_t, Int_t>> pads_filled_by_asad;
   std::map<Int_t, std::pair<Double_t, Int_t>> layer_mpv_stats;
   std::map<Int_t, std::pair<Double_t, Double_t>> layer_prefit_seed;
@@ -787,8 +820,8 @@ int main(Int_t argc, char** argv) {
     std::vector<TH1D*> h_layers;
     std::map<std::pair<Int_t, Int_t>, TH1D*> h_pads_unused;
     Long64_t n_hits_filled = 0;
-    if (!FillTreeHists(f, tree_name, clsize_min, clsize_max, min_abs_cos_theta, pion_tracks_only, kFALSE, h_layers,
-                       h_pads_unused, n_hits_filled)) {
+    if (!FillTreeHists(f, tree_name, clsize_min, clsize_max, use_cos_cut, min_abs_cos_theta, alpha_inner,
+                       alpha_outer, pion_tracks_only, kFALSE, h_layers, h_pads_unused, n_hits_filled)) {
       f->Close();
       delete hGainScale;
       delete hMPV;
@@ -880,8 +913,8 @@ int main(Int_t argc, char** argv) {
   if (tree_pad_mode) {
     const Bool_t pion_tracks_only = (de_source == "pion");
     Long64_t n_hits_filled = 0;
-    if (!FillTreeHists(f, tree_name, clsize_min, clsize_max, min_abs_cos_theta, pion_tracks_only, kTRUE,
-                       h_tree_layers, h_tree_pads, n_hits_filled)) {
+    if (!FillTreeHists(f, tree_name, clsize_min, clsize_max, use_cos_cut, min_abs_cos_theta, alpha_inner,
+                       alpha_outer, pion_tracks_only, kTRUE, h_tree_layers, h_tree_pads, n_hits_filled)) {
       f->Close();
       delete hGainScale;
       delete hMPV;
@@ -1090,7 +1123,9 @@ int main(Int_t argc, char** argv) {
         const Double_t old = entry.p[1];
         entry.p[1] = replace_mode ? scale : (old * scale);
         n_updated++;
-        pads_updated.insert({entry.layer, entry.row});
+        const auto pad_key = std::make_pair(entry.layer, entry.row);
+        pads_updated.insert(pad_key);
+        if (outlier_scale) pads_outlier_scale.insert(pad_key);
         hGainScale->Fill(scale);
         hMPV->Fill(mpv);
         if (std::isfinite(mpv) && mpv > 0.0) {
@@ -1140,35 +1175,121 @@ int main(Int_t argc, char** argv) {
   }
   }  // end hist / tree-pad mode
 
-  // 未更新パッド補完（同一レイヤーかつ同一 ASAD の、Landau 更新済みパッドの gain 平均）
-  if (use_asad_mean_fill) {
-    std::map<std::pair<Int_t, Int_t>, std::pair<Double_t, Int_t>> lasad_stats;  // (layer, asad) -> (sum gain, count)
+  // 未更新パッド補完
+  // --ave: 同 layer の row±1（信頼できる Landau 更新済み）の平均（Wiki）
+  //   - 両隣とも有効なときだけ埋める（片隣だけは悪影響を避けるためスキップ）
+  //   - outlier scale / 非正 / layer 中央値から大きく外れた gain は参照しない
+  // --asad-avg: 同 layer+ASAD の更新済み平均（旧方式; 参照元は同様に vet）
+  if (use_neighbor_mean_fill || use_asad_mean_fill) {
+    auto gain_ok_for_fill_source = [](Double_t g) {
+      return std::isfinite(g) && g > 0.0;
+    };
+
+    // layer ごとの「信頼できる」更新 gain から中央値を作り、極端な参照を弾く
+    std::map<Int_t, std::vector<Double_t>> layer_good_gains;
     for (const auto& e : entries) {
       if (e.is_comment || e.aty != 0 || e.p.size() < 2) continue;
       if (tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
       const auto key = std::make_pair(e.layer, e.row);
-      if (!pads_updated.count(key)) continue;
-      const Int_t asad = tpc::GetASADId(e.layer, e.row);
-      auto& st = lasad_stats[{e.layer, asad}];
-      st.first += e.p[1];
-      st.second += 1;
+      if (!pads_updated.count(key) || pads_outlier_scale.count(key)) continue;
+      if (!gain_ok_for_fill_source(e.p[1])) continue;
+      layer_good_gains[e.layer].push_back(e.p[1]);
     }
-    for (auto& e : entries) {
-      if (e.is_comment || e.aty != 0 || e.p.size() < 2) continue;
-      if (tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
-      const auto key = std::make_pair(e.layer, e.row);
-      if (pads_updated.count(key)) continue;
-      const Int_t asad = tpc::GetASADId(e.layer, e.row);
-      const auto it = lasad_stats.find({e.layer, asad});
-      if (it == lasad_stats.end() || it->second.second <= 0) continue;
-      const Double_t old_g = e.p[1];
-      const Double_t mean_gain = it->second.first / static_cast<Double_t>(it->second.second);
-      e.p[1] = mean_gain;
-      pads_filled_by_asad.insert(key);
-      n_filled_by_asad++;
-      std::cout << Form("  layer+ASAD-mean fill (gain): L=%2d R=%3d (ASAD=%2d, n=%3d) gain: %10.6f -> %10.6f",
-                        e.layer, e.row, asad, it->second.second, old_g, e.p[1])
-                << std::endl;
+    std::map<Int_t, Double_t> layer_gain_median;
+    for (auto& kv : layer_good_gains) {
+      auto& v = kv.second;
+      if (v.empty()) continue;
+      std::sort(v.begin(), v.end());
+      const size_t mid = v.size() / 2;
+      layer_gain_median[kv.first] =
+          (v.size() % 2 == 0) ? 0.5 * (v[mid - 1] + v[mid]) : v[mid];
+    }
+
+    auto is_trusted_source = [&](Int_t layer, Int_t row, Double_t gain) -> Bool_t {
+      const auto key = std::make_pair(layer, row);
+      if (!pads_updated.count(key) || pads_outlier_scale.count(key)) return kFALSE;
+      if (!gain_ok_for_fill_source(gain)) return kFALSE;
+      const auto it_med = layer_gain_median.find(layer);
+      if (it_med == layer_gain_median.end() || !(it_med->second > 0.0)) return kFALSE;
+      const Double_t med = it_med->second;
+      // 同 layer 中央値の 1/2〜2 倍の外は noisy / 外れ pad とみなして参照しない
+      if (gain < 0.5 * med || gain > 2.0 * med) return kFALSE;
+      return kTRUE;
+    };
+
+    if (use_neighbor_mean_fill) {
+      std::map<std::pair<Int_t, Int_t>, Double_t> updated_gain;
+      for (const auto& e : entries) {
+        if (e.is_comment || e.aty != 0 || e.p.size() < 2) continue;
+        if (tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
+        if (!is_trusted_source(e.layer, e.row, e.p[1])) continue;
+        updated_gain[{e.layer, e.row}] = e.p[1];
+      }
+      Int_t n_skip_one_nb = 0;
+      Int_t n_skip_no_nb = 0;
+      for (auto& e : entries) {
+        if (e.is_comment || e.aty != 0 || e.p.size() < 2) continue;
+        if (tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
+        const auto key = std::make_pair(e.layer, e.row);
+        if (pads_updated.count(key)) continue;
+        Double_t sum = 0.0;
+        Int_t n_nb = 0;
+        for (const Int_t drow : {-1, 1}) {
+          const auto nk = std::make_pair(e.layer, e.row + drow);
+          const auto it = updated_gain.find(nk);
+          if (it == updated_gain.end()) continue;
+          sum += it->second;
+          ++n_nb;
+        }
+        if (n_nb == 0) {
+          ++n_skip_no_nb;
+          continue;
+        }
+        if (n_nb < 2) {
+          ++n_skip_one_nb;
+          continue;  // 片隣だけの埋めはしない
+        }
+        const Double_t old_g = e.p[1];
+        e.p[1] = sum / static_cast<Double_t>(n_nb);
+        pads_filled_by_neighbor.insert(key);
+        n_filled_by_neighbor++;
+        std::cout << Form("  neighbor-mean fill (gain): L=%2d R=%3d (n_nb=%d) gain: %10.6f -> %10.6f", e.layer,
+                          e.row, n_nb, old_g, e.p[1])
+                  << std::endl;
+      }
+      if (n_skip_one_nb > 0 || n_skip_no_nb > 0) {
+        std::cout << Form("  neighbor-mean fill skipped: one-neighbor=%d, no-trusted-neighbor=%d",
+                          n_skip_one_nb, n_skip_no_nb)
+                  << std::endl;
+      }
+    } else if (use_asad_mean_fill) {
+      std::map<std::pair<Int_t, Int_t>, std::pair<Double_t, Int_t>> lasad_stats;  // (layer, asad) -> (sum, count)
+      for (const auto& e : entries) {
+        if (e.is_comment || e.aty != 0 || e.p.size() < 2) continue;
+        if (tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
+        if (!is_trusted_source(e.layer, e.row, e.p[1])) continue;
+        const Int_t asad = tpc::GetASADId(e.layer, e.row);
+        auto& st = lasad_stats[{e.layer, asad}];
+        st.first += e.p[1];
+        st.second += 1;
+      }
+      for (auto& e : entries) {
+        if (e.is_comment || e.aty != 0 || e.p.size() < 2) continue;
+        if (tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
+        const auto key = std::make_pair(e.layer, e.row);
+        if (pads_updated.count(key)) continue;
+        const Int_t asad = tpc::GetASADId(e.layer, e.row);
+        const auto it = lasad_stats.find({e.layer, asad});
+        if (it == lasad_stats.end() || it->second.second <= 0) continue;
+        const Double_t old_g = e.p[1];
+        const Double_t mean_gain = it->second.first / static_cast<Double_t>(it->second.second);
+        e.p[1] = mean_gain;
+        pads_filled_by_asad.insert(key);
+        n_filled_by_asad++;
+        std::cout << Form("  layer+ASAD-mean fill (gain): L=%2d R=%3d (ASAD=%2d, n=%3d) gain: %10.6f -> %10.6f",
+                          e.layer, e.row, asad, it->second.second, old_g, e.p[1])
+                  << std::endl;
+      }
     }
   }
 
@@ -1183,7 +1304,7 @@ int main(Int_t argc, char** argv) {
     if (!std::isfinite(now)) continue;
     const Int_t bin_idx = tpc::GetPadId(e.layer, e.row) + 1;
     hGainMap->SetBinContent(bin_idx, now);
-    if (pads_updated.count(key) || pads_filled_by_asad.count(key)) {
+    if (pads_updated.count(key) || pads_filled_by_neighbor.count(key) || pads_filled_by_asad.count(key)) {
       const Double_t delta = now - old;
       hDeltaGainMap->SetBinContent(bin_idx, delta);
       max_abs_delta_gain = std::max(max_abs_delta_gain, std::abs(delta));
@@ -1247,6 +1368,9 @@ int main(Int_t argc, char** argv) {
   }
 
   std::cout << "Done! Updated " << n_updated << " out of " << n_total_pads << " aty==0 pads." << std::endl;
+  if (use_neighbor_mean_fill) {
+    std::cout << "neighbor-mean filled pads (gain): " << n_filled_by_neighbor << std::endl;
+  }
   if (use_asad_mean_fill) {
     std::cout << "layer+ASAD-mean filled pads (gain): " << n_filled_by_asad << std::endl;
   }

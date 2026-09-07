@@ -81,8 +81,10 @@ static Bool_t gHlxHelixPreferHitTheta = kTRUE;
 static Bool_t gHlxDisplayTargetOrigin = kFALSE;
 // calpos_* 枝があれば螺旋上の参照点を重ね描画（座標変換の目視検証）
 static Bool_t gHlxDrawCalpos = kTRUE;
-// 底面に TPC レイヤー区切り（パッド内外境界）の円を描画
-static Bool_t gHlxDrawLayerRings = kTRUE;
+// 底面に TPC レイヤー区切り（パッド内外境界）の円を描画（既定 OFF: 重い）
+static Bool_t gHlxDrawLayerRings = kFALSE;
+// トラック進行方向（ヒット列 / helix_t の向き）を短い矢印で表示
+static Bool_t gHlxDrawDirection = kTRUE;
 
 // TPCPadHelper::padParameter と同じ（マクロ単体で .L 可能にするため埋め込み）
 static const Int_t kHelixNumTpcLayers = 32;
@@ -422,7 +424,10 @@ helix_status()
             << (gHlxDisplayTargetOrigin ? "yes" : "no") << std::endl;
   std::cout << "  draw calpos overlay: " << (gHlxDrawCalpos ? "yes" : "no")
             << (gHlxBranches.has_calpos ? "" : "  [calpos MISSING]") << std::endl;
-  std::cout << "  draw layer rings (bottom): " << (gHlxDrawLayerRings ? "yes (33 boundaries)" : "no") << std::endl;
+  std::cout << "  draw layer rings (bottom): " << (gHlxDrawLayerRings ? "yes (33 boundaries)" : "no (default)")
+            << std::endl;
+  std::cout << "  draw direction arrows: "
+            << (gHlxDrawDirection ? "yes (CalcHelixMom + charge, MM-consistent)" : "no") << std::endl;
   std::cout << "  prefer helix_t theta: " << (gHlxHelixPreferHitTheta ? "yes" : "no") << std::endl;
   std::cout << "===========================\n" << std::endl;
 }
@@ -541,6 +546,14 @@ SetHelixDrawLayerRings(Bool_t on = kTRUE)
 }
 
 void
+SetHelixDrawDirection(Bool_t on = kTRUE)
+{
+  gHlxDrawDirection = on;
+  std::cout << "[helix] SetHelixDrawDirection: "
+            << (on ? "yes (TPCLocalTrackHelix::CalcHelixMom / charge)" : "no") << std::endl;
+}
+
+void
 helix_coords_help()
 {
   std::cout << "\n=== TPC Helix 3D: coordinate & axis conventions ===\n"
@@ -578,7 +591,9 @@ helix_help()
     << "  SetSkipAccidental, SetRequireBeamTrack, SetNtTpcRange,\n"
     << "  SetCloseDistMax, SetRequireK0, SetK0MassWindow, SetScanStart\n"
     << "Display: SetHelixViewMargin, SetHelixPreferHitTheta,\n"
-    << "  SetHelixDisplayTargetOrigin, SetHelixDrawCalpos, SetHelixDrawLayerRings\n"
+    << "  SetHelixDisplayTargetOrigin, SetHelixDrawCalpos,\n"
+    << "  SetHelixDrawLayerRings (default off), SetHelixDrawDirection\n"
+    << "    (direction = CalcHelixMom + charge; same sense as MM)\n"
     << "=================================\n"
     << std::endl;
 }
@@ -852,6 +867,158 @@ DrawHelixPolylineSegments(Double_t cx, Double_t cy, Double_t z0, Double_t rr, Do
   }
 }
 
+static void
+DrawDirectionArrow3D(Double_t tipX, Double_t tipY, Double_t tipZ, Double_t dirX, Double_t dirY, Double_t dirZ,
+                     Int_t col, Double_t shaftLen = 45.0)
+{
+  const Double_t nrm = TMath::Sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+  if(!(nrm > 1e-9) || !TMath::Finite(nrm))
+    return;
+  const Double_t ux = dirX / nrm;
+  const Double_t uy = dirY / nrm;
+  const Double_t uz = dirZ / nrm;
+
+  const Double_t baseX = tipX - shaftLen * ux;
+  const Double_t baseY = tipY - shaftLen * uy;
+  const Double_t baseZ = tipZ - shaftLen * uz;
+
+  TPolyLine3D* shaft = new TPolyLine3D(2);
+  shaft->SetLineColor(col);
+  shaft->SetLineWidth(3);
+  shaft->SetPoint(0, baseX, baseY, baseZ);
+  shaft->SetPoint(1, tipX, tipY, tipZ);
+  shaft->Draw("same");
+  gHlxHelixLines.push_back(shaft);
+
+  // 先端の V（表示空間で適当な直交ベクトル）
+  Double_t px = -uy, py = ux, pz = 0.0;
+  Double_t pn = TMath::Sqrt(px * px + py * py + pz * pz);
+  if(pn < 1e-9) {
+    px = 0.0;
+    py = -uz;
+    pz = uy;
+    pn = TMath::Sqrt(px * px + py * py + pz * pz);
+  }
+  if(pn < 1e-9)
+    return;
+  px /= pn;
+  py /= pn;
+  pz /= pn;
+
+  const Double_t headLen = shaftLen * 0.32;
+  const Double_t headW = shaftLen * 0.18;
+  const Double_t hx = tipX - headLen * ux;
+  const Double_t hy = tipY - headLen * uy;
+  const Double_t hz = tipZ - headLen * uz;
+
+  TPolyLine3D* head = new TPolyLine3D(3);
+  head->SetLineColor(col);
+  head->SetLineWidth(3);
+  head->SetPoint(0, hx + headW * px, hy + headW * py, hz + headW * pz);
+  head->SetPoint(1, tipX, tipY, tipZ);
+  head->SetPoint(2, hx - headW * px, hy - headW * py, hz - headW * pz);
+  head->Draw("same");
+  gHlxHelixLines.push_back(head);
+}
+
+// TPCLocalTrackHelix::CalcHelixMom と同じ向き（表示座標）。
+// DetectorID.hh: HSPolarity = +1 → charge>0 で p を反転（missing mass と同じ）。
+static Bool_t
+HelixMomDirToDisplay(Double_t helix_dz, Double_t t, Int_t charge, Double_t& dX, Double_t& dY, Double_t& dZ)
+{
+  constexpr Int_t kHSPolarity = 1;
+  const Double_t p_t = 1.0;
+  const Double_t px_local = -p_t * TMath::Sin(t);
+  const Double_t py_local = p_t * TMath::Cos(t);
+  const Double_t pz_local = p_t * helix_dz;
+  Double_t px = -px_local;
+  Double_t py = pz_local;
+  Double_t pz = py_local;
+  if(kHSPolarity * charge > 0) {
+    px = -px;
+    py = -py;
+    pz = -pz;
+  }
+  // TPCGlobalToDisplay: X=z, Y=x, Z=y
+  dX = pz;
+  dY = px;
+  dZ = py;
+  return TMath::Finite(dX) && TMath::Finite(dY) && TMath::Finite(dZ);
+}
+
+static Double_t
+HelixPickThetaForMom(const HelixEventData& ev, Int_t itrack, Double_t cx, Double_t cy, Double_t z0,
+                     Double_t rr, Double_t helix_dz, Double_t tmin, Double_t tmax)
+{
+  const Bool_t haveRange = TMath::Finite(tmin) && TMath::Finite(tmax) && TMath::Abs(tmax - tmin) > 1e-12;
+
+  // vtx があれば GetMomAtVertex に寄せて、頂点に近い θ で評価
+  if(haveRange && gHlxBranches.has_vtxTpc && ev.ntTpc == 2 && !ev.vtxTpc.empty() &&
+     !ev.vtyTpc.empty() && !ev.vtzTpc.empty() && ev.vtxTpc[0].size() >= 2U &&
+     ev.vtyTpc[0].size() >= 2U && ev.vtzTpc[0].size() >= 2U) {
+    const Double_t vx = ev.vtxTpc[0][1];
+    const Double_t vy = ev.vtyTpc[0][1];
+    const Double_t vz = ev.vtzTpc[0][1];
+    if(TMath::Finite(vx) && TMath::Finite(vy) && TMath::Finite(vz)) {
+      Double_t best_t = 0.5 * (tmin + tmax);
+      Double_t best_d2 = std::numeric_limits<Double_t>::max();
+      const Int_t nSample = 64;
+      for(Int_t i = 0; i <= nSample; ++i) {
+        const Double_t t =
+          tmin + (tmax - tmin) * static_cast<Double_t>(i) / static_cast<Double_t>(nSample);
+        const Double_t xi = cx + rr * TMath::Cos(t);
+        const Double_t yi = cy + rr * TMath::Sin(t);
+        const Double_t zi = z0 + helix_dz * rr * t;
+        Double_t xg, yg, zg;
+        HelixInternalToTPCGlobal(xi, yi, zi, xg, yg, zg);
+        const Double_t d2 =
+          (xg - vx) * (xg - vx) + (yg - vy) * (yg - vy) + (zg - vz) * (zg - vz);
+        if(d2 < best_d2) {
+          best_d2 = d2;
+          best_t = t;
+        }
+      }
+      return best_t;
+    }
+  }
+
+  if(haveRange)
+    return 0.5 * (tmin + tmax);
+
+  if(itrack < static_cast<Int_t>(ev.helix_t.size()) && !ev.helix_t[itrack].empty()) {
+    for(Double_t th : ev.helix_t[itrack]) {
+      if(TMath::Finite(th))
+        return th;
+    }
+  }
+  return 0.0;
+}
+
+static void
+DrawHelixDirectionArrow(const HelixEventData& ev, Int_t itrack, Double_t cx, Double_t cy, Double_t z0,
+                        Double_t rr, Double_t helix_dz, Double_t tmin, Double_t tmax, Int_t col)
+{
+  if(!TMath::Finite(rr) || !(TMath::Abs(rr) > 1e-9))
+    return;
+  if(!gHlxBranches.has_charge || itrack >= static_cast<Int_t>(ev.charge.size()))
+    return;
+
+  const Int_t charge = ev.charge[itrack];
+  if(charge == 0)
+    return;
+
+  const Double_t t_eval = HelixPickThetaForMom(ev, itrack, cx, cy, z0, rr, helix_dz, tmin, tmax);
+
+  Double_t tipX, tipY, tipZ;
+  HelixPointToDisplay(cx, cy, z0, rr, helix_dz, t_eval, tipX, tipY, tipZ);
+
+  Double_t dirX, dirY, dirZ;
+  if(!HelixMomDirToDisplay(helix_dz, t_eval, charge, dirX, dirY, dirZ))
+    return;
+
+  DrawDirectionArrow3D(tipX, tipY, tipZ, dirX, dirY, dirZ, col);
+}
+
 //______________________________________________________________________________
 void
 clear_helix_objects()
@@ -961,8 +1128,8 @@ draw_tpc_frame_and_corner_axes()
   for(Int_t y_sign = -1; y_sign <= 1; y_sign += 2) {
     Double_t y_orig = y_sign * frameHalfHeight;
     TPolyLine3D* octagon = new TPolyLine3D(nOctagonSides + 1);
-    octagon->SetLineColor(kGray + 1);
-    octagon->SetLineWidth(2);
+    octagon->SetLineColor(kGray);
+    octagon->SetLineWidth(1);
     for(Int_t i = 0; i <= nOctagonSides; i++) {
       Int_t idx = i % nOctagonSides;
       octagon->SetPoint(i, HelixPlotLongZ(octagon_z_orig[idx]), octagon_x_orig[idx], y_orig);
@@ -972,8 +1139,8 @@ draw_tpc_frame_and_corner_axes()
 
   for(Int_t i = 0; i < nOctagonSides; i++) {
     TPolyLine3D* edge = new TPolyLine3D(2);
-    edge->SetLineColor(kGray + 1);
-    edge->SetLineWidth(2);
+    edge->SetLineColor(kGray);
+    edge->SetLineWidth(1);
     edge->SetPoint(0, HelixPlotLongZ(octagon_z_orig[i]), octagon_x_orig[i], -frameHalfHeight);
     edge->SetPoint(1, HelixPlotLongZ(octagon_z_orig[i]), octagon_x_orig[i], frameHalfHeight);
     push_line(edge);
@@ -986,7 +1153,7 @@ draw_tpc_frame_and_corner_axes()
     for(std::size_t ib = 0; ib < layerBounds.size(); ++ib) {
       const Double_t rBound = layerBounds[ib];
       TPolyLine3D* ring = new TPolyLine3D(nLayerSeg + 1);
-      ring->SetLineColor(kGray + 1);
+      ring->SetLineColor(kGray);
       ring->SetLineStyle(3);
       ring->SetLineWidth(1);
       for(Int_t i = 0; i <= nLayerSeg; ++i) {
@@ -1382,7 +1549,9 @@ draw_helix_info_overlay()
 
   std::ostringstream hdr;
   hdr << "Run " << gHlxEvent.runnum << "  Ev " << gHlxEvent.evnum << "  entry " << gHlxCurrentEntry;
-  pt->AddText(hdr.str().c_str());
+  TText* hdrText = pt->AddText(hdr.str().c_str());
+  hdrText->SetTextFont(62); // bold
+  hdrText->SetTextSize(0.026);
 
   std::ostringstream ntline;
   ntline << "ntTpc=" << gHlxEvent.ntTpc;
@@ -1409,7 +1578,9 @@ draw_helix_info_overlay()
       tl << " q=" << gHlxEvent.charge[it];
     if(gHlxBranches.has_dEdx && it < static_cast<Int_t>(gHlxEvent.dEdx.size()))
       tl << " dEdx=" << HelixFormatSigFig(gHlxEvent.dEdx[it]);
-    pt->AddText(tl.str().c_str());
+    TText* trText = pt->AddText(tl.str().c_str());
+    trText->SetTextColor(PidLineColor(pv));
+    trText->SetTextFont(42); // 3D 描画上の色と対応させ、bold ヘッダーと区別
   }
 
   if(gHlxBranches.has_closeDistTpc && gHlxEvent.ntTpc == 2) {
@@ -1516,6 +1687,8 @@ draw_helix_tracks_3d()
       Int_t nHelixSample = static_cast<Int_t>(
         TMath::Min(640.0, TMath::Max(96.0, 64.0 + 80.0 * tspan / TMath::TwoPi())));
       DrawHelixPolylineSegments(cx, cy, z0, rr, dz, tmin, tmax, col, nHelixSample);
+      if(gHlxDrawDirection)
+        DrawHelixDirectionArrow(gHlxEvent, itrack, cx, cy, z0, rr, dz, tmin, tmax, col);
       const Double_t dTgt = HelixMinDistToTargetMm(cx, cy, z0, rr, dz, tmin, tmax);
       if(TMath::Finite(dTgt))
         std::cout << "  [helix] tr" << itrack << " min|helix-target|=" << dTgt << " mm (drawn theta range)"
@@ -1523,6 +1696,8 @@ draw_helix_tracks_3d()
     } else {
       std::cout << "  [helix line] tr" << itrack << " skipped: haveTrange=" << haveTrange
                 << " finite_r=" << TMath::Finite(rr) << std::endl;
+      if(gHlxDrawDirection && TMath::Finite(rr))
+        DrawHelixDirectionArrow(gHlxEvent, itrack, cx, cy, z0, rr, dz, tmin, tmax, col);
     }
 
     if(itrack < static_cast<Int_t>(gHlxEvent.nhtrack.size()) && gHlxEvent.nhtrack[itrack] > 0 &&

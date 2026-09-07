@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create DST runlist / conf / symlink for TPCHitBcOut, TPCHelix, TPCTracking."""
+"""Create DST runlist / conf / symlink for TPCHitBcOut, TPCHelix, TPCTracking, KpScattering, PidSample."""
 
 import argparse
 import os
@@ -21,6 +21,8 @@ MIGRATE_PATTERNS = [
     (re.compile(r"^dst_tpchit_bcout_tracking_run(\d{5})\.root$"), "TPCHitBcOut"),
     (re.compile(r"^dst_tpchelix_run(\d{5})\.root$"), "TPCHelix"),
     (re.compile(r"^dst_tpctracking_run(\d{5})\.root$"), "TPCTracking"),
+    (re.compile(r"^dst_kpscattering_run(\d{5})\.root$"), "KpScattering"),
+    (re.compile(r"^dst_pidsample_run(\d{5})\.root$"), "PidSample"),
     # mis-tagged from early migrate
     (re.compile(r"^run(\d{5})_TPCTrack\.root$"), "TPCTracking"),
 ]
@@ -40,6 +42,7 @@ MODES = {
         "option_key": "option",
         "option_val": "-n 2",
         "required_inputs": ["TPC", "BcOut"],
+        "input_hint": "create_runlist.py --tpchit / --bcout first",
     },
     "tpchelix": {
         "cli": "--tpchelix",
@@ -55,6 +58,7 @@ MODES = {
         "option_key": "moption",
         "option_val": "-n 4",
         "required_inputs": ["TPC"],
+        "input_hint": "create_runlist.py --tpchit first",
     },
     "tpctrack": {
         "cli": "--tpctrack",
@@ -70,6 +74,39 @@ MODES = {
         "option_key": "option",
         "option_val": "-n 2",
         "required_inputs": ["TPC"],
+        "input_hint": "create_runlist.py --tpchit first",
+    },
+    "kpscattering": {
+        "cli": "--kpsc",
+        "flag": "kpscattering",
+        "bin": "./bin/DstKpScattering",
+        "tag": "KpScattering",
+        "mode_label": "kpscattering",
+        "yml_prefix": "dst_kpscattering",
+        "tpl_yml": "dst_kpscattering_example.yml",
+        "tpl_conf": "analyzer_e72_dst_kpscattering_example.conf",
+        "dstin": ["TPCHelix", "D5"],
+        "unit": 50000,
+        "option_key": "option",
+        "option_val": "",
+        "required_inputs": ["TPCHelix", "D5"],
+        "input_hint": "dst_create_runlist.py --tpchelix and create_runlist.py --d5 first",
+    },
+    "pidsample": {
+        "cli": "--pidsample",
+        "flag": "pidsample",
+        "bin": "./bin/DstTpcDedxPidSamples",
+        "tag": "PidSample",
+        "mode_label": "pidsample",
+        "yml_prefix": "dst_pidsample",
+        "tpl_yml": "dst_pidsample_example.yml",
+        "tpl_conf": "analyzer_e72_dst_pidsample_example.conf",
+        "dstin": ["TPCHelix", "D5"],
+        "unit": 50000,
+        "option_key": "option",
+        "option_val": "",
+        "required_inputs": ["TPCHelix", "D5"],
+        "input_hint": "dst_create_runlist.py --tpchelix and create_runlist.py --d5 first",
     },
 }
 
@@ -369,7 +406,10 @@ def write_dst_runlist(path: Path, mode: dict, runs_info: list):
             for d in info["dstin"]:
                 f_out.write(f"      - {d}\n")
             f_out.write(f"    unit: {info['unit']}\n")
-            f_out.write(f"    {info['option_key']}: \"{info['option_val']}\"\n")
+            opt_key = info.get("option_key")
+            opt_val = info.get("option_val")
+            if opt_key and opt_val:
+                f_out.write(f"    {opt_key}: \"{opt_val}\"\n")
 
 
 def batch_runlist_name(mode: dict, run_nums: list) -> str:
@@ -389,8 +429,7 @@ def setup_dst_run(run_num: int, mode: dict, ref):
         for p in missing:
             print(colored(
                 f"Error: missing input for run {run_num:05d} {mode['cli']}: {p}\n"
-                f"       (expected symlink or file; create via create_runlist.py "
-                f"--tpchit / --bcout first)",
+                f"       (expected symlink or file; {mode['input_hint']})",
                 "red",
             ))
         return None
@@ -515,13 +554,15 @@ def migrate_dst_roots(run_nums=None, dry_run: bool = False):
 def main():
     parser = argparse.ArgumentParser(
         prog="dst_create_runlist",
-        description="Create DST conf/runlist/symlink for TPCHitBcOut / TPCHelix / TPCTracking.",
+        description="Create DST conf/runlist/symlink for TPCHitBcOut / TPCHelix / TPCTracking / KpScattering / PidSample.",
     )
     parser.add_argument("run_nums", type=int, nargs="*", help="Run number(s)")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--tpchit-bcout", action="store_true", help="DstTPCHitBcOutTracking")
     group.add_argument("--tpchelix", action="store_true", help="DstTPCHelixTracking")
     group.add_argument("--tpctrack", action="store_true", help="DstTPCTracking (tag: TPCTracking)")
+    group.add_argument("--kpsc", action="store_true", help="DstKpScattering (tag: KpScattering)")
+    group.add_argument("--pidsample", action="store_true", help="DstTpcDedxPidSamples (tag: PidSample)")
     parser.add_argument("--ref", type=int, default=None, help="Borrow params from this run")
     parser.add_argument(
         "--migrate", action="store_true",
@@ -537,6 +578,10 @@ def main():
         mode = MODES["tpchelix"]
     elif args.tpctrack:
         mode = MODES["tpctrack"]
+    elif args.kpsc:
+        mode = MODES["kpscattering"]
+    elif args.pidsample:
+        mode = MODES["pidsample"]
 
     if args.migrate:
         migrate_dst_roots(args.run_nums or None, dry_run=args.dry_run)
@@ -546,7 +591,7 @@ def main():
     if mode is None:
         if not args.migrate:
             print(colored(
-                "Error: choose one of --tpchit-bcout / --tpchelix / --tpctrack "
+                "Error: choose one of --tpchit-bcout / --tpchelix / --tpctrack / --kpsc / --pidsample "
                 "(or --migrate only)",
                 "red",
             ))

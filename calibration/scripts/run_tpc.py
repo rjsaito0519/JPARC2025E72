@@ -437,7 +437,15 @@ def main():
     parser.add_argument(
         "--ave",
         action="store_true",
-        help="[offset|gain] Fill pads not updated by fit with mean of updated pads on same layer and ASAD (center-frame excluded).",
+        help="[offset] layer+ASAD mean fill; [gain] fill missing pads with mean of same-layer row±1 "
+        "trusted updated pads (both neighbors required; outlier/extreme gains excluded; "
+        "center-frame excluded).",
+    )
+    parser.add_argument(
+        "--asad-avg",
+        action="store_true",
+        help="[gain] Fill missing pads with mean of updated pads on same layer and ASAD "
+        "(legacy; ignored if --ave is also set).",
     )
     # gain 用オプション
     parser.add_argument(
@@ -495,17 +503,19 @@ def main():
         type=str,
         choices=["all", "pion"],
         default=None,
-        help="[gain] dE histogram source: all (TPCCl_dE_*) or pion (TPCCl_dE_Pion_*).",
+        help="[gain] dE histogram source: all (TPCCl_dE_*) or pion (TPCCl_dE_Pion_*). "
+        "Default: pion.",
     )
     de_source_group.add_argument(
         "--pion",
         action="store_true",
-        help="[gain] Shortcut of --de-source pion.",
+        help="[gain] Shortcut of --de-source pion (also the default).",
     )
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="[phase/gain] Skip writing TPCPRM (phase) or dry-run style (gain uses C++ --debug).",
+        help="[phase/offset/gain/drift] Run the same analysis/QA but do not write TPCPRM "
+        "(status check; gain uses C++ --debug).",
     )
     parser.add_argument(
         "--replace",
@@ -544,11 +554,26 @@ def main():
         help="[gain] Maximum track_cluster_size for tree fill (default: 1).",
     )
     parser.add_argument(
+        "--alpha-inner",
+        type=float,
+        default=None,
+        metavar="A",
+        help="[gain] --tree: max |theta_diff| for layers 0-9 (C++ default 0.1).",
+    )
+    parser.add_argument(
+        "--alpha-outer",
+        type=float,
+        default=None,
+        metavar="A",
+        help="[gain] --tree: max |theta_diff| for layers 10+ (C++ default 0.2).",
+    )
+    parser.add_argument(
         "--min-abs-cos-theta",
         type=float,
-        default=0.95,
+        default=None,
         metavar="X",
-        help="[gain] Minimum |cos(theta_diff)| for tree fill (default: 0.95).",
+        help="[gain] --tree: if set, use legacy uniform |cos(theta_diff)| cut instead of "
+        "layer-dependent |theta_diff| (Wiki alpha).",
     )
 
     parser.set_defaults(update_tpcprm=None)
@@ -773,7 +798,7 @@ def main():
             opts += ["--mpv-min", str(args.mpv_min)]
         if args.mpv_max is not None:
             opts += ["--mpv-max", str(args.mpv_max)]
-        de_source = "all"
+        de_source = "pion"
         if args.pion:
             de_source = "pion"
         elif args.de_source is not None:
@@ -785,6 +810,8 @@ def main():
             opts += ["--replace"]
         if args.ave:
             opts += ["--ave"]
+        if args.asad_avg:
+            opts += ["--asad-avg"]
         if args.tree:
             opts += ["--tree"]
         if args.layer:
@@ -794,7 +821,12 @@ def main():
         if args.tree or args.layer:
             opts += ["--clsize-min", str(args.clsize_min)]
             opts += ["--clsize-max", str(args.clsize_max)]
-            opts += ["--min-abs-cos-theta", str(args.min_abs_cos_theta)]
+            if args.alpha_inner is not None:
+                opts += ["--alpha-inner", str(args.alpha_inner)]
+            if args.alpha_outer is not None:
+                opts += ["--alpha-outer", str(args.alpha_outer)]
+            if args.min_abs_cos_theta is not None:
+                opts += ["--min-abs-cos-theta", str(args.min_abs_cos_theta)]
 
         cmd = " ".join(opts)
         print(colored(f">>> TPC gain calib (tpc_gain_calib), run={run_num}", "cyan"))
