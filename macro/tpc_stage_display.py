@@ -48,7 +48,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import check_tpc_helix_track_3d as base  # noqa: E402  座標変換・PID色・フレーム描画を再利用
 
 STAGES = ["cluster", "helix", "pid", "vertex"]
-NEUTRAL_COLOR = "0.35"  # PID 確定前のグレー
+# 初期カメラ視点。check_tpc_helix_track_3d.py の HELIX_VIEW_ELEV/AZIM (50.0/-90.0) は
+# 上から見下ろす角度が強いため、本スクリプトではもう少し低い（水平に近い）角度にする。
+VIEW_ELEV = 40.0
+VIEW_AZIM = -90.0
+NEUTRAL_COLOR = "0.35"  # PID 確定前のグレー（未使用、後方互換のため残置）
+# PID 確定前（cluster/helix 段階）のトラック識別色。PID 色（K=青,p=赤,pi=緑）や
+# 頂点マーカー色（マゼンタ/金/水色）と被らない色を選び、トラックごとに順に割り当てる。
+NEUTRAL_TRACK_COLORS = ["tab:orange", "tab:purple", "tab:brown", "tab:pink", "tab:olive"]
 VERTEX_CLOSE_DIST_MAX_DEFAULT = 50.0  # mm; これより遠いペアの最近接点は表示しない（見た目のノイズ抑制）
 
 # --- TPC pad geometry: tpc::padParameter（include/TPCPadHelper.hh）の写し ---
@@ -401,12 +408,15 @@ def render_stage(
     vertex_close_dist_max: float = VERTEX_CLOSE_DIST_MAX_DEFAULT,
     track_visible: Optional[dict] = None,
     draw_pads: bool = False,
+    for_export: bool = False,
 ) -> dict:
     """
     指定 stage までの要素を累積描画する（内部で ax.clear() する）。
     track_visible: {itrack: bool} で特定トラックを非表示にできる（省略時は全トラック表示）。
     draw_pads: True で全 TPC パッド（背景・薄灰）とヒットパッド（トラック色）を描画する。
       パッド数が多く（32層・計5768枚）描画が重くなるため既定は False。
+    for_export: True なら凡例（トラック名・頂点ラベル等）を描画しない
+      （画像保存時に画面を占有する凡例を省くため。show(save=...) から自動的に True になる）。
     戻り値: {itrack: [Artist, ...]} （interactive なトラック表示切替に使う）。
     """
     if stage not in STAGES:
@@ -433,7 +443,8 @@ def render_stage(
             color, pk = base.pid_display_color(pid_code)
             lbl = f"tr{itrack} {pk} (pid=0x{pid_code:x}, {base.decode_pid_candidates(pid_code)})"
         else:
-            color, lbl = NEUTRAL_COLOR, None
+            color = NEUTRAL_TRACK_COLORS[itrack % len(NEUTRAL_TRACK_COLORS)]
+            lbl = None
 
         artists: List = []
         visible = track_visible.get(itrack, True)
@@ -483,12 +494,13 @@ def render_stage(
     ax.set_ylim(ymin, ymax)
     ax.set_zlim(zmin, zmax)
 
-    title = f"TPC [{stage}] (Run {ev.runnum}, Event {ev.evnum}"
-    if entry_label is not None:
-        title += f", entry {entry_label}"
-    title += ")"
-    ax.set_title(title, fontsize=10)
-    if show_pid:
+    if not for_export:
+        title = f"TPC [{stage}] (Run {ev.runnum}, Event {ev.evnum}"
+        if entry_label is not None:
+            title += f", entry {entry_label}"
+        title += ")"
+        ax.set_title(title, fontsize=10)
+    if show_pid and not for_export:
         ax.legend(loc="upper left", fontsize=7)
 
     if show_vertex:
@@ -514,7 +526,7 @@ def render_stage(
         ax.set_box_aspect((1, 1, 1))
     except Exception:
         pass
-    ax.view_init(elev=base.HELIX_VIEW_ELEV, azim=base.HELIX_VIEW_AZIM)
+    ax.view_init(elev=VIEW_ELEV, azim=VIEW_AZIM)
     with warnings.catch_warnings():
         # interactive 版は checkbox 用 Axes を add_axes で手動配置しているため
         # tight_layout 非対応の UserWarning が出るが、実害はない。
@@ -575,7 +587,7 @@ def show(
     entry: int = -1,
     stage: str = "vertex",
     save: Optional[str] = None,
-    save_dpi: int = 150,
+    save_dpi: int = 300,
     interactive: bool = False,
     vertex_close_dist_max: float = VERTEX_CLOSE_DIST_MAX_DEFAULT,
     draw_pads: bool = False,
@@ -583,6 +595,7 @@ def show(
     """
     1 イベントを読み込み、指定 stage まで累積描画する。
     save 指定時は PNG 保存のみ（画面表示なし、interactive は無視される）。
+    保存画像はスライド等への貼り付け用に、タイトル・凡例なし、背景透過、高解像度（既定 dpi=300）にする。
     interactive=True なら、トラックごとの ON/OFF チェックボックスを画面に表示する
     （X11 転送など、実際に matplotlib ウィンドウが表示できる環境が必要）。
     draw_pads=True で全 TPC パッド＋ヒットパッドを描画する（重いので既定 False）。
@@ -595,11 +608,13 @@ def show(
     track_artists = render_stage(
         g_ax, base.g_event_helix, g_extra, stage=stage, entry_label=res,
         vertex_close_dist_max=vertex_close_dist_max, draw_pads=draw_pads,
+        for_export=bool(save),
     )
     if use_interactive:
         _setup_track_checkboxes(base.g_event_helix, track_artists)
     if save:
-        g_fig.savefig(save, dpi=save_dpi)
+        base._helix_apply_transparent_bg(g_fig, g_ax)
+        g_fig.savefig(save, dpi=save_dpi, transparent=True)
         print(f"Saved: {save}")
     else:
         plt.show()
@@ -612,7 +627,7 @@ def _parse_cli(argv: List[str]) -> argparse.Namespace:
     p.add_argument("entry", type=int, nargs="?", default=-1, help="entry 番号（省略時 or 負値でランダム）")
     p.add_argument("--stage", choices=STAGES, default="vertex", help="表示する段階（既定 vertex=全段階）")
     p.add_argument("--save", help="PNG 保存先パス（省略時は画面表示）")
-    p.add_argument("--save-dpi", type=int, default=150)
+    p.add_argument("--save-dpi", type=int, default=300)
     p.add_argument("--backend", choices=["auto", "uproot", "pyroot"], default="uproot")
     p.add_argument(
         "--interactive", action="store_true",
