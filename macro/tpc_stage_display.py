@@ -50,12 +50,11 @@ import check_tpc_helix_track_3d as base  # noqa: E402  座標変換・PID色・�
 STAGES = ["cluster", "helix", "pid", "vertex"]
 # 初期カメラ視点。check_tpc_helix_track_3d.py の HELIX_VIEW_ELEV/AZIM (50.0/-90.0) は
 # 上から見下ろす角度が強いため、本スクリプトではもう少し低い（水平に近い）角度にする。
-VIEW_ELEV = 40.0
+VIEW_ELEV = 35.0
 VIEW_AZIM = -90.0
 NEUTRAL_COLOR = "0.35"  # PID 確定前のグレー（未使用、後方互換のため残置）
-# PID 確定前（cluster/helix 段階）のトラック識別色。PID 色（K=青,p=赤,pi=緑）や
-# 頂点マーカー色（マゼンタ/金/水色）と被らない色を選び、トラックごとに順に割り当てる。
-NEUTRAL_TRACK_COLORS = ["tab:orange", "tab:purple", "tab:brown", "tab:pink", "tab:olive"]
+# PID 確定前（cluster/helix 段階）のトラック色。カラフルにせず単色（オレンジ）に統一する。
+NEUTRAL_TRACK_COLORS = ["tab:orange"]
 VERTEX_CLOSE_DIST_MAX_DEFAULT = 50.0  # mm; これより遠いペアの最近接点は表示しない（見た目のノイズ抑制）
 
 # --- TPC pad geometry: tpc::padParameter（include/TPCPadHelper.hh）の写し ---
