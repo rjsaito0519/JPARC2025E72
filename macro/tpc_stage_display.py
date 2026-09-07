@@ -386,7 +386,7 @@ def _draw_hit_pads_for_track(ax, ex: StageExtra, itrack: int, color, visible: bo
     if not polys:
         return None
     coll = Poly3DCollection(
-        polys, facecolor=color, edgecolor="0.2", linewidths=0.3, alpha=0.9, zorder=3, visible=visible,
+        polys, facecolor=color, edgecolor=color, linewidths=1.4, alpha=1.0, zorder=3, visible=visible,
     )
     ax.add_collection3d(coll)
     return coll
@@ -443,7 +443,7 @@ def render_stage(
             cy = np.asarray(ex.track_cluster_y[itrack], dtype=float)
             cz = np.asarray(ex.track_cluster_z[itrack], dtype=float)
             mx, my, mz = base.tpc_local_to_display_vec(cx, cy, cz)
-            sc = ax.scatter(mx, my, mz, color=color, marker="o", s=30, alpha=0.85, visible=visible)
+            sc = ax.scatter(mx, my, mz, color=color, marker="o", s=16, alpha=0.85, visible=visible)
             artists.append(sc)
 
         if show_helix:
