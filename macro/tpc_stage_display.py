@@ -570,7 +570,7 @@ def _setup_track_checkboxes(ev, track_artists: dict) -> None:
     if g_checkbox_ax is None:
         return
     g_checkbox_ax.clear()
-    g_checkbox_ax.set_title("tracks\n('s': export PNG)", fontsize=9)
+    g_checkbox_ax.set_title("tracks\n('e': export PNG)", fontsize=9)
     labels = [f"tr{itrack}" for itrack in range(ev.ntTpc)]
     if not labels:
         g_checkbox = None
@@ -617,7 +617,9 @@ def export_current(path: Optional[str] = None, dpi: int = 300) -> Optional[str]:
 
 
 def _on_interactive_key_press(event) -> None:
-    if getattr(event, "key", "") not in ("s", "S"):
+    # 's' は matplotlib 既定のショートカット（Figure を名前を付けて保存）と衝突して
+    # export_current() が発火しないことがあるため 'e'（export）を使う。
+    if getattr(event, "key", "") not in ("e", "E"):
         return
     export_current()
 
@@ -637,9 +639,13 @@ def show(
     保存画像はスライド等への貼り付け用に、タイトル・凡例なし、背景透過、高解像度（既定 dpi=300）にする。
     interactive=True なら、トラックごとの ON/OFF チェックボックスを画面に表示する
     （X11 転送など、実際に matplotlib ウィンドウが表示できる環境が必要）。
-    interactive 表示中に 's' キーを押すか、export_current() を呼ぶと、その時点で
-    非表示にしたトラックの状態を保ったまま、タイトル・凡例なし／背景透過の画像として
-    別途 PNG 保存できる（ウィンドウはそのまま維持される）。
+    チェックボックスで好きなトラックを非表示にしたあと、その状態を PNG に書き出すには
+    二通りある:
+      (a) 表示中のウィンドウで 'e' キーを押す（'s' は matplotlib 標準の保存ダイアログと
+          衝突するため使わない）。
+      (b) ウィンドウを閉じたあと、Python 側で export_current("out.png") を呼ぶ
+          （チェックボックスの状態は show() を呼び直すまで記憶されている）。
+    (a) が反応しない環境では (b) を使ってください。
     draw_pads=True で全 TPC パッド＋ヒットパッドを描画する（重いので既定 False）。
     """
     global g_current_render_kwargs
@@ -665,7 +671,9 @@ def show(
     else:
         if use_interactive:
             print("Tip: チェックボックスでトラックを非表示にした後、"
-                  "'s' キーで現在の状態を PNG (透過・凡例なし) にエクスポートできます。")
+                  "'e' キーで現在の状態を PNG (透過・凡例なし) にエクスポートできます。")
+            print("     反応しない場合は、ウィンドウを閉じてから "
+                  "export_current(\"out.png\") を呼んでください（状態は記憶されています）。")
         plt.show()
     return res
 
