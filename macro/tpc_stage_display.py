@@ -50,7 +50,7 @@ import check_tpc_helix_track_3d as base  # noqa: E402  座標変換・PID色・�
 STAGES = ["cluster", "helix", "pid", "vertex"]
 # 初期カメラ視点。check_tpc_helix_track_3d.py の HELIX_VIEW_ELEV/AZIM (50.0/-90.0) は
 # 上から見下ろす角度が強いため、本スクリプトではもう少し低い（水平に近い）角度にする。
-VIEW_ELEV = 35.0
+VIEW_ELEV = 18.0
 VIEW_AZIM = -90.0
 NEUTRAL_COLOR = "0.35"  # PID 確定前のグレー（未使用、後方互換のため残置）
 # PID 確定前（cluster/helix 段階）のトラック色。カラフルにせず単色（オレンジ）に統一する。
