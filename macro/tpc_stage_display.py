@@ -180,6 +180,8 @@ g_checkbox_ax = None
 g_checkbox = None
 g_track_artists: dict = {}  # itrack -> list[Artist]（interactive 表示切替用）
 g_track_visible: dict = {}  # itrack -> bool（interactive でのチェックボックス状態）
+g_vertex_artists: List = []  # vertex 段階の Artist 一覧（interactive 表示切替用）
+g_vertex_visible: bool = True  # interactive でのチェックボックス状態
 g_current_render_kwargs: dict = {}  # export_current() が再描画に使う render_stage 引数
 
 
@@ -315,54 +317,48 @@ def _collect_bounds_with_clusters(ev, ex: StageExtra):
     return xmin, xmax, ymin, ymax, zmin, zmax
 
 
-def _draw_pairwise_vertices(ax, ev, ex: StageExtra, close_dist_max: float) -> None:
+def _draw_vertices(ax, ev, ex: StageExtra, close_dist_max: float) -> List:
     """
-    全トラックペアの最近接点（vtxTpc[i][j], closeDistTpc[i][j]）のうち、
-    closeDist <= close_dist_max のものをマゼンタの X 印で描画する。
-    C++/旧 Python 版の "ntTpc==2 のみ" という制約はここでは外している
-    （vtxTpc は元々 [it][it_pair] の全ペア行列: DstTPCHelixTracking.cc FillHelixPairKinematics）。
+    頂点マーカーをまとめて描画する。Lambda/K0 等の粒子種は区別せず、すべて同じ
+    見た目（マゼンタの X）の汎用 "vertex" として描画する（凡例ラベルも先頭の 1 点にのみ付与）。
+    含まれる頂点:
+      - 全トラックペアの最近接点（vtxTpc[i][j], closeDistTpc[i][j]）のうち closeDist <= close_dist_max のもの
+        （C++/旧 Python 版の "ntTpc==2 のみ" という制約はここでは外している。vtxTpc は元々
+        [it][it_pair] の全ペア行列: DstTPCHelixTracking.cc FillHelixPairKinematics）。
+      - Lambda / K0 の崩壊点（lambda_vtx_*, k0_vtx_*）。
+    戻り値: 描画した Artist のリスト（interactive な表示 ON/OFF 切替用）。
     """
-    if len(ev.vtxTpc) == 0:
-        return
-    for i in range(ev.ntTpc):
-        if i >= len(ev.vtxTpc):
-            continue
-        for j in range(i + 1, ev.ntTpc):
-            if j >= len(ev.vtxTpc[i]):
-                continue
-            vx, vy, vz = ev.vtxTpc[i][j], ev.vtyTpc[i][j], ev.vtzTpc[i][j]
-            if not (math.isfinite(vx) and math.isfinite(vy) and math.isfinite(vz)):
-                continue
-            cd = ev.closeDistTpc[i][j] if (i < len(ev.closeDistTpc) and j < len(ev.closeDistTpc[i])) else float("nan")
-            if math.isfinite(cd) and cd > close_dist_max:
-                continue
-            mx, my, mz = base.tpc_local_to_display(vx, vy, vz)
-            lbl = f"vtx tr{i}-tr{j} (closeDist={cd:.3g}mm)" if math.isfinite(cd) else f"vtx tr{i}-tr{j}"
-            ax.scatter([mx], [my], [mz], c="magenta", marker="x", s=110, linewidths=2.2, label=lbl, zorder=9)
+    artists: List = []
+    labeled = False
 
+    def _scatter(vx: float, vy: float, vz: float) -> None:
+        nonlocal labeled
+        if not (math.isfinite(vx) and math.isfinite(vy) and math.isfinite(vz)):
+            return
+        mx, my, mz = base.tpc_local_to_display(vx, vy, vz)
+        lbl = "vertex" if not labeled else None
+        labeled = True
+        sc = ax.scatter([mx], [my], [mz], c="magenta", marker="x", s=140, linewidths=2.2, label=lbl, zorder=9)
+        artists.append(sc)
 
-def _draw_decay_vertices(ax, ex: StageExtra) -> None:
-    """Lambda (gold star) / K0 (cyan star) の崩壊点を、対応する track_id ペアの位置に描画する。"""
+    if len(ev.vtxTpc) != 0:
+        for i in range(ev.ntTpc):
+            if i >= len(ev.vtxTpc):
+                continue
+            for j in range(i + 1, ev.ntTpc):
+                if j >= len(ev.vtxTpc[i]):
+                    continue
+                cd = ev.closeDistTpc[i][j] if (i < len(ev.closeDistTpc) and j < len(ev.closeDistTpc[i])) else float("nan")
+                if math.isfinite(cd) and cd > close_dist_max:
+                    continue
+                _scatter(ev.vtxTpc[i][j], ev.vtyTpc[i][j], ev.vtzTpc[i][j])
+
     for k in range(len(ex.lambda_vtx_x)):
-        vx, vy, vz = ex.lambda_vtx_x[k], ex.lambda_vtx_y[k], ex.lambda_vtx_z[k]
-        if not (math.isfinite(vx) and math.isfinite(vy) and math.isfinite(vz)):
-            continue
-        mx, my, mz = base.tpc_local_to_display(vx, vy, vz)
-        id1 = ex.lambda_track_id1[k] if k < len(ex.lambda_track_id1) else -1
-        id2 = ex.lambda_track_id2[k] if k < len(ex.lambda_track_id2) else -1
-        mass = ex.lambda_mass[k] if k < len(ex.lambda_mass) else float("nan")
-        ax.scatter([mx], [my], [mz], c="gold", marker="*", s=260, edgecolors="0.3", linewidths=0.6,
-                   label=f"Lambda vtx (tr{id1}-tr{id2}, m={mass:.4g})", zorder=10)
+        _scatter(ex.lambda_vtx_x[k], ex.lambda_vtx_y[k], ex.lambda_vtx_z[k])
     for k in range(len(ex.k0_vtx_x)):
-        vx, vy, vz = ex.k0_vtx_x[k], ex.k0_vtx_y[k], ex.k0_vtx_z[k]
-        if not (math.isfinite(vx) and math.isfinite(vy) and math.isfinite(vz)):
-            continue
-        mx, my, mz = base.tpc_local_to_display(vx, vy, vz)
-        id1 = ex.k0_track_id1[k] if k < len(ex.k0_track_id1) else -1
-        id2 = ex.k0_track_id2[k] if k < len(ex.k0_track_id2) else -1
-        mass = ex.k0_mass[k] if k < len(ex.k0_mass) else float("nan")
-        ax.scatter([mx], [my], [mz], c="cyan", marker="*", s=260, edgecolors="0.3", linewidths=0.6,
-                   label=f"K0 vtx (tr{id1}-tr{id2}, m={mass:.4g})", zorder=10)
+        _scatter(ex.k0_vtx_x[k], ex.k0_vtx_y[k], ex.k0_vtx_z[k])
+
+    return artists
 
 
 def _draw_pad_background(ax) -> None:
@@ -408,17 +404,20 @@ def render_stage(
     entry_label=None,
     vertex_close_dist_max: float = VERTEX_CLOSE_DIST_MAX_DEFAULT,
     track_visible: Optional[dict] = None,
+    vertex_visible: bool = True,
     draw_pads: bool = False,
     for_export: bool = False,
-) -> dict:
+):
     """
     指定 stage までの要素を累積描画する（内部で ax.clear() する）。
     track_visible: {itrack: bool} で特定トラックを非表示にできる（省略時は全トラック表示）。
+    vertex_visible: False なら vertex 段階の頂点マーカーを非表示にする（省略時は表示）。
     draw_pads: True で全 TPC パッド（背景・薄灰）とヒットパッド（トラック色）を描画する。
       パッド数が多く（32層・計5768枚）描画が重くなるため既定は False。
     for_export: True なら凡例（トラック名・頂点ラベル等）を描画しない
       （画像保存時に画面を占有する凡例を省くため。show(save=...) から自動的に True になる）。
-    戻り値: {itrack: [Artist, ...]} （interactive なトラック表示切替に使う）。
+    戻り値: ({itrack: [Artist, ...]}, [Artist, ...]) のタプル
+      （それぞれ interactive なトラック / vertex 表示切替に使う）。
     """
     if stage not in STAGES:
         raise ValueError(f"unknown stage {stage!r}; must be one of {STAGES}")
@@ -489,9 +488,11 @@ def render_stage(
 
         track_artists[itrack] = artists
 
+    vertex_artists: List = []
     if show_vertex:
-        _draw_pairwise_vertices(ax, ev, ex, vertex_close_dist_max)
-        _draw_decay_vertices(ax, ex)
+        vertex_artists = _draw_vertices(ax, ev, ex, vertex_close_dist_max)
+        for artist in vertex_artists:
+            artist.set_visible(vertex_visible)
 
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
@@ -535,7 +536,7 @@ def render_stage(
         # tight_layout 非対応の UserWarning が出るが、実害はない。
         warnings.simplefilter("ignore", UserWarning)
         plt.tight_layout()
-    return track_artists
+    return track_artists, vertex_artists
 
 
 g_interactive_mode = False
@@ -562,28 +563,40 @@ def _ensure_figure(interactive: bool = False) -> None:
         g_checkbox_ax = None
 
 
-def _setup_track_checkboxes(ev, track_artists: dict) -> None:
-    """トラックごとの ON/OFF チェックボックスを g_checkbox_ax に配置する（interactive 表示専用）。"""
-    global g_checkbox, g_track_artists, g_track_visible
+def _setup_track_checkboxes(ev, track_artists: dict, vertex_artists: List) -> None:
+    """トラックごと + vertex 全体の ON/OFF チェックボックスを g_checkbox_ax に配置する（interactive 表示専用）。"""
+    global g_checkbox, g_track_artists, g_track_visible, g_vertex_artists, g_vertex_visible
     g_track_artists = track_artists
     g_track_visible = {itrack: True for itrack in range(ev.ntTpc)}
+    g_vertex_artists = vertex_artists
+    g_vertex_visible = True
     if g_checkbox_ax is None:
         return
     g_checkbox_ax.clear()
     g_checkbox_ax.set_title("tracks\n('e': export PNG)", fontsize=9)
     labels = [f"tr{itrack}" for itrack in range(ev.ntTpc)]
+    states = [True] * len(labels)
+    if vertex_artists:
+        labels.append("vertex")
+        states.append(True)
     if not labels:
         g_checkbox = None
         return
-    g_checkbox = CheckButtons(g_checkbox_ax, labels, [True] * len(labels))
-    g_checkbox.on_clicked(_on_track_checkbox_clicked)
+    g_checkbox = CheckButtons(g_checkbox_ax, labels, states)
+    g_checkbox.on_clicked(_on_checkbox_clicked)
 
 
-def _on_track_checkbox_clicked(label: str) -> None:
-    itrack = int(label[2:])  # "tr3" -> 3
-    g_track_visible[itrack] = not g_track_visible.get(itrack, True)
-    for artist in g_track_artists.get(itrack, []):
-        artist.set_visible(g_track_visible[itrack])
+def _on_checkbox_clicked(label: str) -> None:
+    global g_vertex_visible
+    if label == "vertex":
+        g_vertex_visible = not g_vertex_visible
+        for artist in g_vertex_artists:
+            artist.set_visible(g_vertex_visible)
+    else:
+        itrack = int(label[2:])  # "tr3" -> 3
+        g_track_visible[itrack] = not g_track_visible.get(itrack, True)
+        for artist in g_track_artists.get(itrack, []):
+            artist.set_visible(g_track_visible[itrack])
     if g_fig is not None:
         g_fig.canvas.draw_idle()
 
@@ -606,6 +619,7 @@ def export_current(path: Optional[str] = None, dpi: int = 300) -> Optional[str]:
     render_stage(
         export_ax, ev, g_extra,
         track_visible=dict(g_track_visible),
+        vertex_visible=g_vertex_visible,
         for_export=True,
         **g_current_render_kwargs,
     )
@@ -637,9 +651,10 @@ def show(
     1 イベントを読み込み、指定 stage まで累積描画する。
     save 指定時は PNG 保存のみ（画面表示なし、interactive は無視される）。
     保存画像はスライド等への貼り付け用に、タイトル・凡例なし、背景透過、高解像度（既定 dpi=300）にする。
-    interactive=True なら、トラックごとの ON/OFF チェックボックスを画面に表示する
+    interactive=True なら、トラックごと + vertex（stage="vertex" の場合のみ）の
+    ON/OFF チェックボックスを画面に表示する
     （X11 転送など、実際に matplotlib ウィンドウが表示できる環境が必要）。
-    チェックボックスで好きなトラックを非表示にしたあと、その状態を PNG に書き出すには
+    チェックボックスで好きなトラック/vertex を非表示にしたあと、その状態を PNG に書き出すには
     二通りある:
       (a) 表示中のウィンドウで 'e' キーを押す（'s' は matplotlib 標準の保存ダイアログと
           衝突するため使わない）。
@@ -658,11 +673,11 @@ def show(
         stage=stage, entry_label=res,
         vertex_close_dist_max=vertex_close_dist_max, draw_pads=draw_pads,
     )
-    track_artists = render_stage(
+    track_artists, vertex_artists = render_stage(
         g_ax, base.g_event_helix, g_extra, for_export=bool(save), **g_current_render_kwargs,
     )
     if use_interactive:
-        _setup_track_checkboxes(base.g_event_helix, track_artists)
+        _setup_track_checkboxes(base.g_event_helix, track_artists, vertex_artists)
         g_fig.canvas.mpl_connect("key_press_event", _on_interactive_key_press)
     if save:
         base._helix_apply_transparent_bg(g_fig, g_ax)
@@ -670,7 +685,7 @@ def show(
         print(f"Saved: {save}")
     else:
         if use_interactive:
-            print("Tip: チェックボックスでトラックを非表示にした後、"
+            print("Tip: チェックボックスでトラック/vertex を非表示にした後、"
                   "'e' キーで現在の状態を PNG (透過・凡例なし) にエクスポートできます。")
             print("     反応しない場合は、ウィンドウを閉じてから "
                   "export_current(\"out.png\") を呼んでください（状態は記憶されています）。")
