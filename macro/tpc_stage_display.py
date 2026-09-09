@@ -601,12 +601,57 @@ def _on_checkbox_clicked(label: str) -> None:
         g_fig.canvas.draw_idle()
 
 
+def _apply_opaque_white_bg(fig, ax) -> None:
+    """
+    Figure / 3D Axes の背景・パネルを白背景・不透明にする
+    （base._helix_apply_transparent_bg の白背景版）。
+    JPEG はアルファチャンネルを持てないため、.jpg 保存時（GIF アニメ化用フレーム等、
+    容量を抑えたい場合を想定）はこちらを使う。
+    """
+    fig.patch.set_alpha(1.0)
+    fig.patch.set_facecolor("white")
+    if ax is None:
+        return
+    ax.set_facecolor("white")
+    try:
+        ax.xaxis.pane.set_alpha(1.0)
+        ax.yaxis.pane.set_alpha(1.0)
+        ax.zaxis.pane.set_alpha(1.0)
+        ax.xaxis.pane.set_facecolor("white")
+        ax.yaxis.pane.set_facecolor("white")
+        ax.zaxis.pane.set_facecolor("white")
+        ax.xaxis.pane.set_edgecolor("none")
+        ax.yaxis.pane.set_edgecolor("none")
+        ax.zaxis.pane.set_edgecolor("none")
+    except Exception:
+        pass
+
+
+def _is_jpeg_path(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in (".jpg", ".jpeg")
+
+
+def _savefig_auto_bg(fig, ax, path: str, dpi: int) -> None:
+    """
+    保存先の拡張子に応じて背景を切り替えて savefig する。
+    .jpg / .jpeg: 白背景・不透明（JPEG は透過非対応、容量抑制用）
+    それ以外（.png 等）: 従来通り透過背景
+    """
+    if _is_jpeg_path(path):
+        _apply_opaque_white_bg(fig, ax)
+        fig.savefig(path, dpi=dpi, facecolor="white")
+    else:
+        base._helix_apply_transparent_bg(fig, ax)
+        fig.savefig(path, dpi=dpi, transparent=True)
+
+
 def export_current(path: Optional[str] = None, dpi: int = 300) -> Optional[str]:
     """
     直近の show(interactive=True) で表示中のイベントを、その時点でチェックボックスで
     非表示にしたトラック・頂点の状態を保ったまま、タイトル・凡例なし／背景透過のエクスポート用
     画像として別ファイルに保存する（画面のウィンドウ自体はそのまま維持される）。
     path 省略時は "tpc_export_run{run}_ev{event}_{stage}.png" を使う。
+    拡張子が .jpg/.jpeg の場合は白背景・不透明（透過非対応の JPEG 用）で保存する。
     """
     if not g_current_render_kwargs:
         print("Error: 表示中のイベントがありません。先に show(..., interactive=True) を呼んでください。")
@@ -623,8 +668,7 @@ def export_current(path: Optional[str] = None, dpi: int = 300) -> Optional[str]:
         for_export=True,
         **g_current_render_kwargs,
     )
-    base._helix_apply_transparent_bg(export_fig, export_ax)
-    export_fig.savefig(path, dpi=dpi, transparent=True)
+    _savefig_auto_bg(export_fig, export_ax, path, dpi)
     plt.close(export_fig)
     print(f"Saved: {path}")
     return path
@@ -649,8 +693,10 @@ def show(
 ) -> Optional[int]:
     """
     1 イベントを読み込み、指定 stage まで累積描画する。
-    save 指定時は PNG 保存のみ（画面表示なし、interactive は無視される）。
-    保存画像はスライド等への貼り付け用に、タイトル・凡例なし、背景透過、高解像度（既定 dpi=300）にする。
+    save 指定時は画像保存のみ（画面表示なし、interactive は無視される）。
+    保存画像はスライド等への貼り付け用に、タイトル・凡例なし、高解像度（既定 dpi=300）にする。
+    背景は保存先拡張子で自動判定する: .png（既定）は透過、.jpg/.jpeg は白背景・不透明
+    （JPEG は透過非対応。GIF アニメ化用フレーム等、容量を抑えたい場合に .jpg を指定する）。
     interactive=True なら、トラックごと + vertex（stage="vertex" の場合のみ）の
     ON/OFF チェックボックスを画面に表示する
     （X11 転送など、実際に matplotlib ウィンドウが表示できる環境が必要）。
@@ -680,8 +726,7 @@ def show(
         _setup_track_checkboxes(base.g_event_helix, track_artists, vertex_artists)
         g_fig.canvas.mpl_connect("key_press_event", _on_interactive_key_press)
     if save:
-        base._helix_apply_transparent_bg(g_fig, g_ax)
-        g_fig.savefig(save, dpi=save_dpi, transparent=True)
+        _savefig_auto_bg(g_fig, g_ax, save, save_dpi)
         print(f"Saved: {save}")
     else:
         if use_interactive:
@@ -698,7 +743,11 @@ def _parse_cli(argv: List[str]) -> argparse.Namespace:
     p.add_argument("rootfile", help="DstTPCHelixTracking 出力 ROOT ファイル（tree 'tpc'）")
     p.add_argument("entry", type=int, nargs="?", default=-1, help="entry 番号（省略時 or 負値でランダム）")
     p.add_argument("--stage", choices=STAGES, default="vertex", help="表示する段階（既定 vertex=全段階）")
-    p.add_argument("--save", help="PNG 保存先パス（省略時は画面表示）")
+    p.add_argument(
+        "--save",
+        help="保存先パス（省略時は画面表示）。拡張子で背景を自動判定: "
+             ".png=透過（既定）、.jpg/.jpeg=白背景・不透明（GIF化用など容量を抑えたい場合）",
+    )
     p.add_argument("--save-dpi", type=int, default=300)
     p.add_argument("--backend", choices=["auto", "uproot", "pyroot"], default="uproot")
     p.add_argument(
