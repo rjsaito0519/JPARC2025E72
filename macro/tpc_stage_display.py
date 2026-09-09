@@ -455,8 +455,9 @@ def render_stage(
             cy = np.asarray(ex.track_cluster_y[itrack], dtype=float)
             cz = np.asarray(ex.track_cluster_z[itrack], dtype=float)
             mx, my, mz = base.tpc_local_to_display_vec(cx, cy, cz)
-            # helix 曲線が乗る段階（helix 以降）はヘリックス線を主役にし、点は控えめにする。
-            cluster_marker_size = 8 if show_helix else 16
+            # PID 色分け以降（pid/vertex 段階）はヘリックス線を主役にし、点は控えめにする。
+            # helix 段階は cluster 段階と同じ大きさのまま（線と点を見比べやすくする）。
+            cluster_marker_size = 8 if show_pid else 16
             sc = ax.scatter(mx, my, mz, color=color, marker="o", s=cluster_marker_size, alpha=0.85, visible=visible)
             artists.append(sc)
 
