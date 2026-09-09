@@ -307,24 +307,32 @@ def _collect_bounds_with_clusters(ev, ex: StageExtra):
 def _draw_vertices(ax, ev, ex: StageExtra, close_dist_max: float) -> List:
     """
     頂点マーカーをまとめて描画する。Lambda/K0 等の粒子種は区別せず、すべて同じ
-    見た目（マゼンタの X）の汎用 "vertex" として描画する（凡例ラベルも先頭の 1 点にのみ付与）。
-    含まれる頂点:
+    見た目（マゼンタの X）の汎用 "vertex" として描画する。
+    凡例には、分かる範囲でどのトラックの組み合わせかを付記する:
       - 全トラックペアの最近接点（vtxTpc[i][j], closeDistTpc[i][j]）のうち closeDist <= close_dist_max のもの
         （C++/旧 Python 版の "ntTpc==2 のみ" という制約はここでは外している。vtxTpc は元々
         [it][it_pair] の全ペア行列: DstTPCHelixTracking.cc FillHelixPairKinematics）。
-      - Lambda / K0 の崩壊点（lambda_vtx_*, k0_vtx_*）。
-    戻り値: 描画した Artist のリスト（interactive な表示 ON/OFF 切替用）。
+        トラック番号 i, j が既知なので "vertex (tr{i}-tr{j})" とする。
+      - Lambda / K0 の崩壊点（lambda_vtx_*, k0_vtx_*）。現状の DST 出力にはどのトラックの組か
+        を示すブランチが無い（track_id 系ブランチ非搭載）ため、組み合わせは表示できず、
+        まとめて先頭の 1 点にのみ "vertex" と付記する（凡例の重複を避けるため）。
+    戻り値: 描画した Artist のリスト（インデックスが interactive チェックボックスの vtx{i} に対応）。
     """
     artists: List = []
-    labeled = False
+    generic_labeled = False
 
-    def _scatter(vx: float, vy: float, vz: float) -> None:
-        nonlocal labeled
+    def _scatter(vx: float, vy: float, vz: float, label: Optional[str]) -> None:
+        nonlocal generic_labeled
         if not (math.isfinite(vx) and math.isfinite(vy) and math.isfinite(vz)):
             return
         mx, my, mz = base.tpc_local_to_display(vx, vy, vz)
-        lbl = "vertex" if not labeled else None
-        labeled = True
+        if label is not None:
+            lbl = label
+        elif not generic_labeled:
+            lbl = "vertex"
+            generic_labeled = True
+        else:
+            lbl = None
         sc = ax.scatter([mx], [my], [mz], c="magenta", marker="x", s=140, linewidths=2.2, label=lbl, zorder=9)
         artists.append(sc)
 
@@ -338,12 +346,12 @@ def _draw_vertices(ax, ev, ex: StageExtra, close_dist_max: float) -> List:
                 cd = ev.closeDistTpc[i][j] if (i < len(ev.closeDistTpc) and j < len(ev.closeDistTpc[i])) else float("nan")
                 if math.isfinite(cd) and cd > close_dist_max:
                     continue
-                _scatter(ev.vtxTpc[i][j], ev.vtyTpc[i][j], ev.vtzTpc[i][j])
+                _scatter(ev.vtxTpc[i][j], ev.vtyTpc[i][j], ev.vtzTpc[i][j], label=f"vertex (tr{i}-tr{j})")
 
     for k in range(len(ex.lambda_vtx_x)):
-        _scatter(ex.lambda_vtx_x[k], ex.lambda_vtx_y[k], ex.lambda_vtx_z[k])
+        _scatter(ex.lambda_vtx_x[k], ex.lambda_vtx_y[k], ex.lambda_vtx_z[k], label=None)
     for k in range(len(ex.k0_vtx_x)):
-        _scatter(ex.k0_vtx_x[k], ex.k0_vtx_y[k], ex.k0_vtx_z[k])
+        _scatter(ex.k0_vtx_x[k], ex.k0_vtx_y[k], ex.k0_vtx_z[k], label=None)
 
     return artists
 
