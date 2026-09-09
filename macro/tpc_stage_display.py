@@ -55,6 +55,9 @@ VIEW_AZIM = -90.0
 NEUTRAL_COLOR = "0.35"  # PID 確定前のグレー（未使用、後方互換のため残置）
 # PID 確定前（cluster/helix 段階）のトラック色。カラフルにせず単色（オレンジ）に統一する。
 NEUTRAL_TRACK_COLORS = ["tab:orange"]
+# helix 段階（stage="helix" のみ）でのヘリックス線の色。cluster 点（オレンジのまま）と区別しやすくする。
+# pid/vertex 段階では従来通り PID 色を点・線の両方に使う（ここでは変更しない）。
+HELIX_STAGE_LINE_COLOR = "black"
 VERTEX_CLOSE_DIST_MAX_DEFAULT = 50.0  # mm; これより遠いペアの最近接点は表示しない（見た目のノイズ抑制）
 
 # --- TPC pad geometry: tpc::padParameter（include/TPCPadHelper.hh）の写し ---
@@ -472,9 +475,10 @@ def render_stage(
                 mx, my, mz = base.tpc_local_to_display_vec(xh, yh, zh)
                 fin = np.isfinite(mx) & np.isfinite(my) & np.isfinite(mz)
                 if np.any(fin):
+                    line_color = HELIX_STAGE_LINE_COLOR if stage == "helix" else color
                     (ln,) = ax.plot(
                         mx[fin], my[fin], mz[fin],
-                        color=color, linewidth=2.2, linestyle=":", label=lbl, zorder=6,
+                        color=line_color, linewidth=2.2, linestyle=":", label=lbl, zorder=6,
                         visible=visible,
                     )
                     artists.append(ln)
