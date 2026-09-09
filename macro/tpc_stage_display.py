@@ -162,15 +162,11 @@ class StageExtra:
     lambda_vtx_x: List[float] = field(default_factory=list)
     lambda_vtx_y: List[float] = field(default_factory=list)
     lambda_vtx_z: List[float] = field(default_factory=list)
-    lambda_track_id1: List[int] = field(default_factory=list)
-    lambda_track_id2: List[int] = field(default_factory=list)
     has_k0: bool = False
     k0_mass: List[float] = field(default_factory=list)
     k0_vtx_x: List[float] = field(default_factory=list)
     k0_vtx_y: List[float] = field(default_factory=list)
     k0_vtx_z: List[float] = field(default_factory=list)
-    k0_track_id1: List[int] = field(default_factory=list)
-    k0_track_id2: List[int] = field(default_factory=list)
 
 
 g_extra = StageExtra()
@@ -180,8 +176,8 @@ g_checkbox_ax = None
 g_checkbox = None
 g_track_artists: dict = {}  # itrack -> list[Artist]（interactive 表示切替用）
 g_track_visible: dict = {}  # itrack -> bool（interactive でのチェックボックス状態）
-g_vertex_artists: List = []  # vertex 段階の Artist 一覧（interactive 表示切替用）
-g_vertex_visible: bool = True  # interactive でのチェックボックス状態
+g_vertex_artists: List = []  # vertex 段階の Artist 一覧（インデックス = interactive 表示切替用の vtx{i}）
+g_vertex_visible: dict = {}  # ivtx -> bool（interactive でのチェックボックス状態）
 g_current_render_kwargs: dict = {}  # export_current() が再描画に使う render_stage 引数
 
 
@@ -204,10 +200,9 @@ def _load_extra_uproot(entry: int) -> StageExtra:
     if ex.has_hitpad:
         names += ["hitlayer", "track_cluster_row_center"]
     if ex.has_lambda:
-        names += ["lambda_mass", "lambda_vtx_x", "lambda_vtx_y", "lambda_vtx_z",
-                   "lambda_track_id1", "lambda_track_id2"]
+        names += ["lambda_mass", "lambda_vtx_x", "lambda_vtx_y", "lambda_vtx_z"]
     if ex.has_k0:
-        names += ["k0_mass", "k0_vtx_x", "k0_vtx_y", "k0_vtx_z", "k0_track_id1", "k0_track_id2"]
+        names += ["k0_mass", "k0_vtx_x", "k0_vtx_y", "k0_vtx_z"]
     if not names:
         return ex
 
@@ -225,15 +220,11 @@ def _load_extra_uproot(entry: int) -> StageExtra:
         ex.lambda_vtx_x = base._cell0_vec_float(chunk, "lambda_vtx_x")
         ex.lambda_vtx_y = base._cell0_vec_float(chunk, "lambda_vtx_y")
         ex.lambda_vtx_z = base._cell0_vec_float(chunk, "lambda_vtx_z")
-        ex.lambda_track_id1 = base._cell0_vec_int(chunk, "lambda_track_id1")
-        ex.lambda_track_id2 = base._cell0_vec_int(chunk, "lambda_track_id2")
     if ex.has_k0:
         ex.k0_mass = base._cell0_vec_float(chunk, "k0_mass")
         ex.k0_vtx_x = base._cell0_vec_float(chunk, "k0_vtx_x")
         ex.k0_vtx_y = base._cell0_vec_float(chunk, "k0_vtx_y")
         ex.k0_vtx_z = base._cell0_vec_float(chunk, "k0_vtx_z")
-        ex.k0_track_id1 = base._cell0_vec_int(chunk, "k0_track_id1")
-        ex.k0_track_id2 = base._cell0_vec_int(chunk, "k0_track_id2")
     return ex
 
 
@@ -258,15 +249,11 @@ def _load_extra_pyroot(entry: int) -> StageExtra:
         ex.lambda_vtx_x = base._vec_double_to_list(t.lambda_vtx_x)
         ex.lambda_vtx_y = base._vec_double_to_list(t.lambda_vtx_y)
         ex.lambda_vtx_z = base._vec_double_to_list(t.lambda_vtx_z)
-        ex.lambda_track_id1 = base._vec_int_to_list(t.lambda_track_id1)
-        ex.lambda_track_id2 = base._vec_int_to_list(t.lambda_track_id2)
     if ex.has_k0:
         ex.k0_mass = base._vec_double_to_list(t.k0_mass)
         ex.k0_vtx_x = base._vec_double_to_list(t.k0_vtx_x)
         ex.k0_vtx_y = base._vec_double_to_list(t.k0_vtx_y)
         ex.k0_vtx_z = base._vec_double_to_list(t.k0_vtx_z)
-        ex.k0_track_id1 = base._vec_int_to_list(t.k0_track_id1)
-        ex.k0_track_id2 = base._vec_int_to_list(t.k0_track_id2)
     return ex
 
 
@@ -404,20 +391,22 @@ def render_stage(
     entry_label=None,
     vertex_close_dist_max: float = VERTEX_CLOSE_DIST_MAX_DEFAULT,
     track_visible: Optional[dict] = None,
-    vertex_visible: bool = True,
+    vertex_visible: Optional[dict] = None,
     draw_pads: bool = False,
     for_export: bool = False,
 ):
     """
     指定 stage までの要素を累積描画する（内部で ax.clear() する）。
     track_visible: {itrack: bool} で特定トラックを非表示にできる（省略時は全トラック表示）。
-    vertex_visible: False なら vertex 段階の頂点マーカーを非表示にする（省略時は表示）。
+    vertex_visible: {ivtx: bool} で特定の頂点マーカーを個別に非表示にできる（省略時は全頂点表示）。
+      ivtx は _draw_vertices() が描画する順（トラックペア最近接点 -> Lambda -> K0）のインデックス。
     draw_pads: True で全 TPC パッド（背景・薄灰）とヒットパッド（トラック色）を描画する。
       パッド数が多く（32層・計5768枚）描画が重くなるため既定は False。
     for_export: True なら凡例（トラック名・頂点ラベル等）を描画しない
       （画像保存時に画面を占有する凡例を省くため。show(save=...) から自動的に True になる）。
     戻り値: ({itrack: [Artist, ...]}, [Artist, ...]) のタプル
-      （それぞれ interactive なトラック / vertex 表示切替に使う）。
+      （それぞれ interactive なトラック / 頂点ごとの表示切替に使う。後者のリストの
+      インデックスが vertex_visible のキーおよび interactive チェックボックスの vtx{i} に対応）。
     """
     if stage not in STAGES:
         raise ValueError(f"unknown stage {stage!r}; must be one of {STAGES}")
@@ -426,6 +415,7 @@ def render_stage(
     show_pid = stage_idx >= STAGES.index("pid")
     show_vertex = stage_idx >= STAGES.index("vertex")
     track_visible = track_visible or {}
+    vertex_visible = vertex_visible or {}
 
     ax.clear()
     xmin, xmax, ymin, ymax, zmin, zmax = _collect_bounds_with_clusters(ev, ex)
@@ -491,8 +481,8 @@ def render_stage(
     vertex_artists: List = []
     if show_vertex:
         vertex_artists = _draw_vertices(ax, ev, ex, vertex_close_dist_max)
-        for artist in vertex_artists:
-            artist.set_visible(vertex_visible)
+        for i, artist in enumerate(vertex_artists):
+            artist.set_visible(vertex_visible.get(i, True))
 
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
@@ -569,29 +559,26 @@ def _setup_track_checkboxes(ev, track_artists: dict, vertex_artists: List) -> No
     g_track_artists = track_artists
     g_track_visible = {itrack: True for itrack in range(ev.ntTpc)}
     g_vertex_artists = vertex_artists
-    g_vertex_visible = True
+    g_vertex_visible = {i: True for i in range(len(vertex_artists))}
     if g_checkbox_ax is None:
         return
     g_checkbox_ax.clear()
-    g_checkbox_ax.set_title("tracks\n('e': export PNG)", fontsize=9)
+    g_checkbox_ax.set_title("tracks/vertices\n('e': export PNG)", fontsize=9)
     labels = [f"tr{itrack}" for itrack in range(ev.ntTpc)]
-    states = [True] * len(labels)
-    if vertex_artists:
-        labels.append("vertex")
-        states.append(True)
+    labels += [f"vtx{i}" for i in range(len(vertex_artists))]
     if not labels:
         g_checkbox = None
         return
-    g_checkbox = CheckButtons(g_checkbox_ax, labels, states)
+    g_checkbox = CheckButtons(g_checkbox_ax, labels, [True] * len(labels))
     g_checkbox.on_clicked(_on_checkbox_clicked)
 
 
 def _on_checkbox_clicked(label: str) -> None:
-    global g_vertex_visible
-    if label == "vertex":
-        g_vertex_visible = not g_vertex_visible
-        for artist in g_vertex_artists:
-            artist.set_visible(g_vertex_visible)
+    if label.startswith("vtx"):
+        ivtx = int(label[3:])  # "vtx2" -> 2
+        g_vertex_visible[ivtx] = not g_vertex_visible.get(ivtx, True)
+        if 0 <= ivtx < len(g_vertex_artists):
+            g_vertex_artists[ivtx].set_visible(g_vertex_visible[ivtx])
     else:
         itrack = int(label[2:])  # "tr3" -> 3
         g_track_visible[itrack] = not g_track_visible.get(itrack, True)
@@ -604,7 +591,7 @@ def _on_checkbox_clicked(label: str) -> None:
 def export_current(path: Optional[str] = None, dpi: int = 300) -> Optional[str]:
     """
     直近の show(interactive=True) で表示中のイベントを、その時点でチェックボックスで
-    非表示にしたトラックの状態を保ったまま、タイトル・凡例なし／背景透過のエクスポート用
+    非表示にしたトラック・頂点の状態を保ったまま、タイトル・凡例なし／背景透過のエクスポート用
     画像として別ファイルに保存する（画面のウィンドウ自体はそのまま維持される）。
     path 省略時は "tpc_export_run{run}_ev{event}_{stage}.png" を使う。
     """
@@ -619,7 +606,7 @@ def export_current(path: Optional[str] = None, dpi: int = 300) -> Optional[str]:
     render_stage(
         export_ax, ev, g_extra,
         track_visible=dict(g_track_visible),
-        vertex_visible=g_vertex_visible,
+        vertex_visible=dict(g_vertex_visible),
         for_export=True,
         **g_current_render_kwargs,
     )
