@@ -46,32 +46,6 @@ def make_dictdata(root_file_path, good_ch_range = [-np.inf, np.inf], is_t0_offse
         print("something wrong")
         sys.exit()
 
-    if detector_id == detector_id_list["HTOF"] and "adc_p0_val" in tree.keys():
-        from lib import config
-        # HTOF baseline file: try run directory first, then flat
-        calib_run = 2603
-        calib_name = f"run{calib_run:05d}_HTOF_HDPRM_Pi.root"
-        calib_root_file_path = config.OUTPUT_DIR / "root" / f"run{calib_run:05d}" / calib_name
-        if not calib_root_file_path.exists():
-            calib_root_file_path = config.OUTPUT_DIR / "root" / calib_name
-            
-        if not calib_root_file_path.exists():
-            print(f"Warning: Calib baseline file not found: {calib_name}")
-            factor = [1.0, 1.0, 1.0]
-        else:
-            calib_tree = uproot.open(calib_root_file_path)["tree"].arrays(library="np")
-            factor = [[], [], []]
-            for UorD in range(3):
-                for i in range(len(tree["ch"])):
-                    ch = tree["ch"][i]
-                    if good_ch_range[0] <= ch <= good_ch_range[1]:
-                        mip = tree["adc_p1_val"][i][UorD] - tree["adc_p0_val"][i][UorD]
-                        calib_mip = calib_tree["adc_p1_val"][i][UorD] - calib_tree["adc_p0_val"][i][UorD]
-                        factor[UorD].append(mip/calib_mip)
-
-            factor = [ np.mean(x) if len(x)>0 else 1 for x in factor ]
-        print(f"HTOF factor: {factor}")
-
     data = dict()
     if is_t0_offset:
         detector_id = detector_id_list["BH2"]
@@ -111,23 +85,32 @@ def make_dictdata(root_file_path, good_ch_range = [-np.inf, np.inf], is_t0_offse
                             data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ]
             else:
                 if detector_id == detector_id_list["HTOF"]:
-                    has_adc = "adc_p0_val" in tree.keys()
+                    # HTOF HDPRM (this function/param_type) is TDC-only (All-event input,
+                    # 3 UorD entries: U, D, S). HTOF ADC is handled separately by
+                    # make_htofprm_dictdata() below (param_type "htofprm"), which uses the
+                    # dE/dx-tagged DstTPCHelixHTOF output instead of the Hodo-level tree.
                     for UorD in range(3):
-                        # -- ADC (skip when TDC-only All output) -----
-                        if has_adc:
-                            if good_ch_range[0] <= ch <= good_ch_range[1]:
-                                key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
-                                data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
-                            else:
-                                key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
-                                calib_mip = calib_tree["adc_p1_val"][i][UorD] - calib_tree["adc_p0_val"][i][UorD]
-                                data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p0_val"][i][UorD] + calib_mip*factor[UorD] ]
-
-                        # -- TDC -----
                         if "tdc_p0_val" in tree.keys():
                             key = f"{detector_id}-0-{ch:.0f}-1-{UorD:.0f}"
                             data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ]
 
+    return data
+# ---------------------------------------------------------------------------
+
+# -- prepare HTOF ADC data (param_type "htofprm") -----------------------------
+def make_htofprm_dictdata(root_file_path):
+    """HTOF ADC pedestal/gain from HTOF_ADC output (dE/dx pion-tagged DstTPCHelixHTOF).
+    UorD: 0=U, 1=D, 2=S (see update_hdprm.py detector_n_ud_list / AorT=0 rows)."""
+    detector_id = detector_id_list["HTOF"]
+    file = uproot.open(root_file_path)
+    tree = file["tree"].arrays(library="np")
+
+    data = dict()
+    for i in range(len(tree["ch"])):
+        ch = tree["ch"][i]
+        for UorD in range(3):
+            key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
+            data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
     return data
 # ---------------------------------------------------------------------------
 

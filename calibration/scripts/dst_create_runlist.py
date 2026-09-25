@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Create DST runlist / conf / symlink for TPCHitBcOut, TPCHelix, TPCTracking, KpScattering, PidSample."""
+"""Create DST runlist / conf / symlink for TPCHitBcOut, TPCHelix, TPCTracking, KpScattering, PidSample.
+
+Shares Mode-table + multi-run + scratch-batch philosophy with create_runlist.py.
+"""
 
 import argparse
 import os
@@ -13,6 +16,7 @@ sys.path.append(str(project_root))
 
 from lib import config
 
+# Combined multi-run yml under runmanager/runlist/scratch/ (same name as create_runlist.py)
 SCRATCH_RUNLIST_DIR = "scratch"
 SUB_DIR = config.SUB_DIR
 
@@ -90,7 +94,8 @@ MODES = {
         "option_key": "option",
         "option_val": "",
         "required_inputs": ["TPCHelix", "D5"],
-        "input_hint": "dst_create_runlist.py --tpchelix and create_runlist.py --d5 first",
+        # Needs analysis D5 (create_runlist.py --d5), not BeamMan (--d5g4).
+        "input_hint": "dst_create_runlist.py --tpchelix and create_runlist.py --d5 first (not --d5g4)",
     },
     "pidsample": {
         "cli": "--pidsample",
@@ -106,7 +111,8 @@ MODES = {
         "option_key": "option",
         "option_val": "",
         "required_inputs": ["TPCHelix", "D5"],
-        "input_hint": "dst_create_runlist.py --tpchelix and create_runlist.py --d5 first",
+        # Needs analysis D5 (create_runlist.py --d5), not BeamMan (--d5g4).
+        "input_hint": "dst_create_runlist.py --tpchelix and create_runlist.py --d5 first (not --d5g4)",
     },
 }
 

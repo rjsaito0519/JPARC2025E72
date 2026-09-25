@@ -22,7 +22,7 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument("run_num", type=int, help="Input run number")
 parser.add_argument("suffix", type=str, help="Input suffix (K or Pi)")
-parser.add_argument("param_type", type=str, help="Input parameter type (hdprm, t0, hdphc, dctdc, residual, resolution)")
+parser.add_argument("param_type", type=str, help="Input parameter type (hdprm, htofprm, t0, hdphc, htofphc, dctdc, residual, resolution)")
 group = parser.add_mutually_exclusive_group()
 group.add_argument("--bcout", action="store_true", help="Set detector to BcOut")
 group.add_argument("--bcin", action="store_true", help="Set detector to BcIn")
@@ -105,8 +105,10 @@ def color_ok():
 # Dispatch configurations and Key Lengths
 CATEGORIES = {
     "hdprm":    {"dir": "HDPRM", "tpl": "HodoParam_e72_example",      "prefix": "HodoParam",    "key_len": 5, "start_col": 5},
+    "htofprm":  {"dir": "HDPRM", "tpl": "HodoParam_e72_example",      "prefix": "HodoParam",    "key_len": 5, "start_col": 5},
     "t0":       {"dir": "HDPRM", "tpl": "HodoParam_e72_example",      "prefix": "HodoParam",    "key_len": 5, "start_col": 5},
     "hdphc":    {"dir": "HDPHC", "tpl": "HodoPHCParam_e72_example",   "prefix": "HodoPHCParam", "key_len": 4, "start_col": 4},
+    "htofphc":  {"dir": "HDPHC", "tpl": "HodoPHCParam_e72_example",   "prefix": "HodoPHCParam", "key_len": 4, "start_col": 4},
     "dctdc":    {"dir": "DCTDC", "tpl": "DCTdcParam_e72_example",     "prefix": "DCTdcParam",   "key_len": 3, "start_col": 3},
     "residual": {"dir": "DCGEO", "tpl": "DCGeomParam_e72_example",    "prefix": "DCGeomParam",  "key_len": 1, "start_col": 12},
     # Res column (0-based index 9): Id Name X Y Z TA RA1 RA2 L Res ...
@@ -134,10 +136,10 @@ reso_meta = None
 print(colored(f"\n>>> Collecting results for {args.param_type} <<<", "cyan"))
 
 if args.param_type == "hdprm":
-    detectors = ["BHT", "BH2", "HTOF", "BAC", "KVC", "T1", "CVC", "SAC3", "SFV"]
+    # HTOF is handled separately by "htofprm" (TDC + ADC from HTOF_Calib)
+    detectors = ["BHT", "BH2", "BAC", "KVC", "T1", "CVC", "SAC3", "SFV"]
     for det in detectors:
-        # HTOF HDPRM is always All (TDC-only); others use Pi/K
-        suf = "All" if det == "HTOF" else args.suffix
+        suf = args.suffix
         root_file = get_root_file(args.run_num, det, suf, "HDPRM")
         if not root_file:
             continue
@@ -153,6 +155,29 @@ if args.param_type == "hdprm":
         all_new_data.update(data)
         print(f"  - {det:<6}: {color_ok()} {len(data)} entries found (Range: {good_range}, suffix={suf})")
 
+elif args.param_type == "htofprm":
+    # HTOF TDC + ADC (pedestal/MIP) from HTOF_Calib (run_hodo.py mode "htof").
+    # TDC: run{run}_HTOF_HDPRM_All.root (all-event, suffix-independent).
+    root_file = get_root_file(args.run_num, "HTOF", "All", "HDPRM")
+    if root_file:
+        conf_key = f"{args.run_num:05d}_All_htof"
+        good_range = [-np.inf, np.inf]
+        if hasattr(hdprm_conf, 'limits_dict') and conf_key in hdprm_conf.limits_dict:
+             good_range = hdprm_conf.limits_dict[conf_key]
+        data = update_hdprm.make_dictdata(str(root_file), good_ch_range=good_range)
+        all_new_data.update(data)
+        print(f"  - HTOF TDC: {color_ok()} {len(data)} entries found (Range: {good_range})")
+    else:
+        print(colored(f"  - HTOF TDC: no run{args.run_num:05d}_HTOF_HDPRM_All.root found", "yellow"))
+    # ADC: dE/dx pion-tagged MIP (currently Pi-only; see HTOF_Calib.cpp).
+    root_file = get_root_file(args.run_num, "HTOF", args.suffix, "ADC")
+    if root_file:
+        data = update_hdprm.make_htofprm_dictdata(str(root_file))
+        all_new_data.update(data)
+        print(f"  - HTOF ADC: {color_ok()} {len(data)} entries found")
+    else:
+        print(colored(f"  - HTOF ADC: no run{args.run_num:05d}_HTOF_ADC_{args.suffix}.root found", "yellow"))
+
 elif args.param_type == "t0":
     root_file = get_root_file(args.run_num, "T0_Offset", args.suffix, "")
     if root_file:
@@ -160,8 +185,9 @@ elif args.param_type == "t0":
         all_new_data.update(data)
         print(f"  - T0_Offset : {color_ok()} {len(data)} entries found")
 
-elif args.param_type == "hdphc":
-    detectors = ["BHT", "BH2", "HTOF", "T1", "CVC"]
+elif args.param_type in ("hdphc", "htofphc"):
+    # htofphc: HTOF only (HTOF_Calib, run_hodo.py mode "htof"); hdphc: the other counters
+    detectors = ["HTOF"] if args.param_type == "htofphc" else ["BHT", "BH2", "T1", "CVC"]
     for det in detectors:
         root_file = get_root_file(args.run_num, det, args.suffix, "PHC")
         if not root_file:

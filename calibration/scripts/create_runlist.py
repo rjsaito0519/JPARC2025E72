@@ -1,27 +1,143 @@
 #!/usr/bin/env python3
+"""Create analyzer conf / runlist / symlink (hodo, DC, D5, D5G4, TPCHit).
 
-# ---------------------------------------------------------------------------
+Shares Mode-table + multi-run + scratch-batch philosophy with dst_create_runlist.py.
+"""
+
 import argparse
-import re
-import sys
 import os
+import re
 import shutil
+import sys
 from pathlib import Path
 
-# Add shared library path
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
 
 from lib import config
 
+SCRATCH_RUNLIST_DIR = "scratch"
+BEAM_GEANT4_DIR = Path("/group/had/sks/Users/sryuta/BeamE72Geant4")
+
 TPCHIT_CONF_TEMPLATE = "analyzer_e72_tpchit_example.conf"
 TPCHIT_USER = config.PARAM_DIR / "USER" / "UserParam_e72_tpc_0"
 TPCHIT_HDPRM = config.PARAM_DIR / "HDPRM" / "HodoParam_02293"
-TPCHIT_SCRATCH_RUNLIST_DIR = "scratch"
 
 TpcRunRe = re.compile(r"^tpc_run(\d{5})\.root$")
 RunTpcRe = re.compile(r"^run(\d{5})_TPC\.root$")
 IrregularTpcRe = re.compile(r"^tpc_run(\d{5})_.+\.root$")
+RunLinkRe = re.compile(r"^(run\d{5})_(Hodo|BcOut|BcIn|D5)\.root$")
+MiscRunRe = re.compile(r"^(run\d{5})_.+\.root$")
+
+HODO_SUFFIXES = {"0", "Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"}
+DC_SUFFIXES = {"0", "Pi_tdc", "K_tdc", "Pi_drift", "K_drift", "Pi_resi", "K_resi"}
+D5_SUFFIXES = {"Pi", "K"}
+FINAL_SUFFIXES = {"hdphc", "resi"}
+
+MODES = {
+    "hodo": {
+        "cli": "--hodo",
+        "mode_label": "hodo",
+        "root_prefix": "Hodo",
+        "yml_prefix": "hodo",
+        "bin": "./bin/Hodoscope",
+        "unit": 100000,
+        "option": "",
+        "allowed_suffixes": HODO_SUFFIXES,
+        "suffix_help": "0, Pi/K_hdprm, Pi/K_t0, Pi/K_hdphc",
+        "needs_mom": False,
+        "runs_only": False,
+        "tpl_yml": "myexample.yml",
+        "with_option": True,
+    },
+    "bcin": {
+        "cli": "--bcin",
+        "mode_label": "bcin",
+        "root_prefix": "BcIn",
+        "yml_prefix": "bcin",
+        "bin": "./bin/BcInTracking",
+        "unit": 50000,
+        "option": "-n 2",
+        "allowed_suffixes": DC_SUFFIXES,
+        "suffix_help": "0, Pi/K_tdc, Pi/K_drift, Pi/K_resi",
+        "needs_mom": False,
+        "runs_only": False,
+        "tpl_yml": "myexample.yml",
+        "with_option": True,
+    },
+    "bcout": {
+        "cli": "--bcout",
+        "mode_label": "bcout",
+        "root_prefix": "BcOut",
+        "yml_prefix": "bcout",
+        "bin": "./bin/BcOutTracking",
+        "unit": 50000,
+        "option": "-n 2",
+        "allowed_suffixes": DC_SUFFIXES,
+        "suffix_help": "0, Pi/K_tdc, Pi/K_drift, Pi/K_resi",
+        "needs_mom": False,
+        "runs_only": False,
+        "tpl_yml": "myexample.yml",
+        "with_option": True,
+    },
+    "d5": {
+        "cli": "--d5",
+        "mode_label": "d5",
+        "root_prefix": "D5",
+        "yml_prefix": "d5",
+        "bin": "./bin/D5Tracking",
+        "unit": 20000,
+        "option": "-n 2",
+        "allowed_suffixes": D5_SUFFIXES,
+        "suffix_help": "Pi, K",
+        "needs_mom": True,
+        "runs_only": False,
+        "tpl_yml": "myexample.yml",
+        "with_option": True,
+    },
+    "d5g4": {
+        "cli": "--d5g4",
+        "mode_label": "d5",
+        "root_prefix": "D5G4",
+        "yml_prefix": "d5g4",
+        "bin": "./bin/D5BeamMan",
+        "unit": 20000,
+        "option": "-n 2",
+        "allowed_suffixes": None,
+        "suffix_help": None,
+        "needs_mom": True,
+        "runs_only": True,
+        "param_suffix_head": "K",
+        "tpl_yml": "myexample.yml",
+        "with_option": True,
+    },
+    "tpchit": {
+        "cli": "--tpchit",
+        "mode_label": "tpchit",
+        "root_prefix": "TPC",
+        "yml_prefix": "tpchit",
+        "bin": "./bin/TPCHit",
+        "unit": 500,
+        "option": "",
+        "allowed_suffixes": None,
+        "suffix_help": None,
+        "needs_mom": False,
+        "runs_only": True,
+        "tpl_yml": "tpchit_example.yml",
+        "with_option": False,
+    },
+}
+
+PARAM_DEFS = {
+    "USER:":   {"dir": "USER",   "prefix": "UserParam_run",        "tpl": "UserParam_e72_20251104"},
+    "HDPRM:":  {"dir": "HDPRM",  "prefix": "HodoParam_run",        "tpl": "HodoParam_e72_example"},
+    "HDPHC:":  {"dir": "HDPHC",  "prefix": "HodoPHCParam_run",     "tpl": "HodoPHCParam_e72_example"},
+    "DCTDC:":  {"dir": "DCTDC",  "prefix": "DCTdcParam_run",       "tpl": "DCTdcParam_e72_example"},
+    "DCDRFT:": {"dir": "DCDRFT", "prefix": "DCDriftParam_run",     "tpl": "DCDriftParam_e72_example.root"},
+    "DCGEO:":  {"dir": "DCGEO",  "prefix": "DCGeomParam_run",      "tpl": "DCGeomParam_e72_example"},
+    "D5MTX:":  {"dir": "TM",     "prefix": "D5TransferMatrix_run", "tpl": "D5TransferMatrix_example.param"},
+}
+NOSUFFIX_KEYS = {"USER:", "D5MTX:"}
 
 
 def colored(text, color):
@@ -179,7 +295,7 @@ def migrate_tpchit_root(run_num: int, dry_run: bool = False):
     return True
 
 
-def migrate_all_tpchit_roots(run_nums=None, dry_run: bool=False):
+def migrate_all_tpchit_roots(run_nums=None, dry_run: bool = False):
     data_dir = config.DATA_DIR
     consult = []
 
@@ -214,10 +330,6 @@ def migrate_all_tpchit_roots(run_nums=None, dry_run: bool=False):
 
     print(colored(f"\n[MIGRATE] processed {migrated}/{len(run_nums)} run(s)", "green"))
     return migrated
-
-
-RunLinkRe = re.compile(r"^(run\d{5})_(Hodo|BcOut|BcIn|D5)\.root$")
-MiscRunRe = re.compile(r"^(run\d{5})_.+\.root$")
 
 
 def find_calibration_final(run_tag: str, kind: str):
@@ -353,9 +465,16 @@ def ensure_tpchit_conf(run_num: int) -> str:
     return f"param/conf/{config.SUB_DIR}/{target.name}"
 
 
-def write_tpchit_runlist(path: Path, runs_info: list):
+def batch_runlist_name(yml_prefix: str, run_nums: list) -> str:
+    run_nums = sorted(run_nums)
+    if len(run_nums) == 1:
+        return f"{yml_prefix}_run{run_nums[0]:05d}.yml"
+    return f"{yml_prefix}_{run_nums[0]:05d}-{run_nums[-1]:05d}_{len(run_nums)}runs.yml"
+
+
+def write_runlist(path: Path, mode: dict, runs_info: list):
     runlist_dir = config.ANALYZER_DIR / "runmanager/runlist"
-    tpl_path = runlist_dir / "tpchit_example.yml"
+    tpl_path = runlist_dir / mode["tpl_yml"]
     path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(tpl_path) as f_tpl:
@@ -374,20 +493,13 @@ def write_tpchit_runlist(path: Path, runs_info: list):
             f_out.write(f"    data: {run_info['data']}\n")
             f_out.write(f"    root: {run_info['root']}\n")
             f_out.write(f"    unit: {run_info['unit']}\n")
-
-
-def tpchit_batch_runlist_name(run_nums: list) -> str:
-    run_nums = sorted(run_nums)
-    if len(run_nums) == 1:
-        return f"tpchit_run{run_nums[0]:05d}.yml"
-    first, last = run_nums[0], run_nums[-1]
-    return f"tpchit_{first:05d}-{last:05d}_{len(run_nums)}runs.yml"
+            if mode.get("with_option"):
+                f_out.write(f"    option: {run_info.get('option', '')}\n")
 
 
 def setup_tpchit_run(run_num: int):
+    mode = MODES["tpchit"]
     run_tag = f"run{run_num:05d}"
-    prefix = "TPC"
-    mode_label = "tpchit"
 
     (config.OUTPUT_DIR / "root" / run_tag).mkdir(parents=True, exist_ok=True)
     (config.SCRATCH_DIR / run_tag).mkdir(parents=True, exist_ok=True)
@@ -400,19 +512,20 @@ def setup_tpchit_run(run_num: int):
     ensure_data_symlink(symlink_path, actual_root_abs)
 
     runlist_dir = config.ANALYZER_DIR / "runmanager/runlist"
-    runlist_target_file = runlist_dir / config.SUB_DIR / f"{mode_label}_{run_tag}.yml"
+    runlist_target_file = runlist_dir / config.SUB_DIR / f"{mode['yml_prefix']}_{run_tag}.yml"
     conf_rel = ensure_tpchit_conf(run_num)
 
     run_info = {
+        "run_num": run_num,
         "label": f"{run_tag}_tpchit:",
-        "bin": "./bin/TPCHit",
+        "bin": mode["bin"],
         "conf": conf_rel,
         "data": f"rawdata/{run_tag}.dat",
         "root": str(actual_root_abs),
-        "unit": 500,
+        "unit": mode["unit"],
     }
 
-    write_tpchit_runlist(runlist_target_file, [run_info])
+    write_runlist(runlist_target_file, mode, [run_info])
 
     return runlist_target_file, symlink_path, actual_root_abs, run_info
 
@@ -442,11 +555,40 @@ def find_ref_conf(conf_dir: Path, sub_dir: str, param_run: int, mode_label: str,
     return None, False
 
 
-def run_calibration_mode(args):
+def validate_suffixes(mode: dict, suffixes: list):
+    allowed = mode["allowed_suffixes"]
+    if allowed is None:
+        if suffixes:
+            print(colored(
+                f"Error: {mode['cli']} does not take suffixes; got {suffixes}",
+                "red",
+            ))
+            sys.exit(1)
+        return
+    if "G4" in suffixes:
+        print(colored(
+            "Error: suffix G4 is removed; use --d5g4 instead of --d5 G4",
+            "red",
+        ))
+        sys.exit(1)
+    diff = set(suffixes) - allowed
+    if diff or not suffixes:
+        print(colored(
+            f"Error: Invalid suffixes {diff or '(empty)'}. Use: {mode['suffix_help']}",
+            "red",
+        ))
+        sys.exit(1)
+
+
+def setup_calibration_run(run_num: int, mode: dict, suffixes: list, ref, mom):
+    """Setup one run for hodo/bcin/bcout/d5/d5g4. Returns (yml, link, infos)."""
     SUB_DIR = config.SUB_DIR
-    param_run = args.ref if args.ref is not None else args.run_num
-    use_ref = args.ref is not None
-    run_num = args.run_num
+    param_run = ref if ref is not None else run_num
+    use_ref = ref is not None
+    mode_key = mode["yml_prefix"]
+    mode_label = mode["mode_label"]
+    prefix = mode["root_prefix"]
+    is_d5g4 = mode_key == "d5g4"
 
     (config.OUTPUT_DIR / "root" / f"run{run_num:05d}").mkdir(parents=True, exist_ok=True)
     (config.SCRATCH_DIR / f"run{run_num:05d}").mkdir(parents=True, exist_ok=True)
@@ -455,50 +597,6 @@ def run_calibration_mode(args):
     for param_type in ["conf", "USER", "HDPRM", "HDPHC", "DCTDC", "DCDRFT", "DCGEO", "TM"]:
         (config.PARAM_DIR / param_type / SUB_DIR).mkdir(parents=True, exist_ok=True)
 
-    prefix = "Hodo"
-    mode_label = "hodo"
-    if args.bcout:
-        prefix = "BcOut"
-        mode_label = "bcout"
-    elif args.bcin:
-        prefix = "BcIn"
-        mode_label = "bcin"
-    elif args.d5:
-        prefix = "D5"
-        mode_label = "d5"
-
-    set1 = set(args.suffix)
-    set2 = {"0", "Pi_hdprm", "K_hdprm", "Pi_t0", "K_t0", "Pi_hdphc", "K_hdphc"}
-    set3 = {"0", "Pi_tdc", "K_tdc", "Pi_drift", "K_drift", "Pi_resi", "K_resi"}
-    set_d5 = {"Pi", "K"}
-    FINAL_SUFFIXES = ["hdphc", "resi"]
-
-    if mode_label == "hodo":
-        diff = set1 - set2
-        if diff or not set1:
-            print(f"Error: Invalid suffixes {diff}. Use: 0, Pi/K_hdprm, Pi/K_t0, Pi/K_hdphc")
-            sys.exit(1)
-    elif mode_label == "d5":
-        diff = set1 - set_d5
-        if diff or not set1:
-            print(f"Error: Invalid suffixes {diff}. Use: Pi, K")
-            sys.exit(1)
-    else:
-        diff = set1 - set3
-        if diff or not set1:
-            print(f"Error: Invalid suffixes {diff}. Use: 0, Pi/K_tdc, Pi/K_drift, Pi/K_resi")
-            sys.exit(1)
-
-    PARAM_DEFS = {
-        "USER:":   {"dir": "USER",   "prefix": "UserParam_run",        "tpl": "UserParam_e72_20251104"},
-        "HDPRM:":  {"dir": "HDPRM",  "prefix": "HodoParam_run",        "tpl": "HodoParam_e72_example"},
-        "HDPHC:":  {"dir": "HDPHC",  "prefix": "HodoPHCParam_run",     "tpl": "HodoPHCParam_e72_example"},
-        "DCTDC:":  {"dir": "DCTDC",  "prefix": "DCTdcParam_run",       "tpl": "DCTdcParam_e72_example"},
-        "DCDRFT:": {"dir": "DCDRFT", "prefix": "DCDriftParam_run",     "tpl": "DCDriftParam_e72_example.root"},
-        "DCGEO:":  {"dir": "DCGEO",  "prefix": "DCGeomParam_run",      "tpl": "DCGeomParam_e72_example"},
-        "D5MTX:":  {"dir": "TM",     "prefix": "D5TransferMatrix_run", "tpl": "D5TransferMatrix_example.param"},
-    }
-    NOSUFFIX_KEYS = {"USER:", "D5MTX:"}
     conf_dir = config.PARAM_DIR / "conf"
 
     def resolve_param_rel_path(p_key, suffix_head):
@@ -561,18 +659,32 @@ def run_calibration_mode(args):
                 print(colored(f"Error: TM template not found: {d5_mtx_src}", "red"))
                 sys.exit(1)
             shutil.copy(d5_mtx_src, d5_mtx_dest)
-        if args.mom is not None:
-            set_central_momentum(d5_mtx_dest, args.mom)
+        if mom is not None:
+            set_central_momentum(d5_mtx_dest, mom)
 
+    work_suffixes = ["G4"] if is_d5g4 else list(suffixes)
     all_runs_info = []
     symlink_path = None
+    g4_symlink_path = None
 
-    for suffix in args.suffix:
-        suffix_head = suffix.split("_")[0]
-        suffix_type = suffix.split("_")[1] if "_" in suffix else suffix
+    for suffix in work_suffixes:
+        if is_d5g4:
+            param_suffix_head = mode["param_suffix_head"]
+            suffix_head = param_suffix_head
+            suffix_type = "G4"
+            label_suffix = "G4"
+        else:
+            suffix_head = suffix.split("_")[0]
+            suffix_type = suffix.split("_")[1] if "_" in suffix else suffix
+            param_suffix_head = suffix_head
+            label_suffix = suffix
+
         is_final = suffix_type in FINAL_SUFFIXES or mode_label == "d5"
 
-        conf_target_file = conf_dir / SUB_DIR / f"analyzer_run{run_num:0=5}_{mode_label}_{suffix_head}.conf"
+        conf_target_file = (
+            conf_dir / SUB_DIR
+            / f"analyzer_run{run_num:05d}_{mode_label}_{param_suffix_head}.conf"
+        )
         if not conf_target_file.exists():
             if run_num < 2568:
                 example_base = "analyzer_e72_example1.conf"
@@ -591,17 +703,19 @@ def run_calibration_mode(args):
                     p_key = s_list[0]
                     if p_key == "D5MTX:":
                         has_d5mtx = True
-                    s_list[1] = resolve_param_rel_path(p_key, suffix_head)
+                    s_list[1] = resolve_param_rel_path(p_key, param_suffix_head)
                 buf.append(s_list)
 
         if mode_label == "d5" and not has_d5mtx:
-            buf.append(["D5MTX:", resolve_param_rel_path("D5MTX:", suffix_head)])
+            buf.append(["D5MTX:", resolve_param_rel_path("D5MTX:", param_suffix_head)])
 
-        with open(conf_target_file, mode='w') as f:
+        with open(conf_target_file, mode="w") as f:
             for l in buf:
                 f.write(("\t".join(str(item) for item in l) if l else "") + "\n")
 
-        if suffix_head == suffix_type:
+        if is_d5g4:
+            root_name = f"run{run_num:05d}_D5G4.root"
+        elif suffix_head == suffix_type:
             root_name = f"run{run_num:05d}_{prefix}_{suffix_head}.root"
         else:
             root_name = f"run{run_num:05d}_{prefix}_{suffix_type}_{suffix_head}.root"
@@ -609,73 +723,60 @@ def run_calibration_mode(args):
         out_dir_abs = (config.DECODE_DIR if is_final else config.SCRATCH_DIR) / f"run{run_num:05d}"
         actual_root_abs = out_dir_abs / root_name
 
-        symlink_name = f"run{run_num:05d}_{prefix}.root"
-        symlink_path = config.DATA_DIR / symlink_name
-        if symlink_path.exists() or symlink_path.is_symlink():
-            symlink_path.unlink()
-        try:
-            os.symlink(actual_root_abs.resolve(), symlink_path)
-        except Exception as e:
-            print(f"Warning: Failed to create symlink: {e}")
-
-        option = ""
-        if mode_label == "hodo":
-            binary = "./bin/Hodoscope"
-            unit = 100000
-        elif mode_label == "d5":
-            binary = "./bin/D5Tracking"
-            unit = 20000
-            option = "-n 2"
-        elif args.bcin:
-            binary = "./bin/BcInTracking"
-            unit = 50000
-            option = "-n 2"
+        if is_d5g4:
+            BEAM_GEANT4_DIR.mkdir(parents=True, exist_ok=True)
+            g4_symlink_path = BEAM_GEANT4_DIR / root_name
+            ensure_data_symlink(g4_symlink_path, actual_root_abs)
+            symlink_path = g4_symlink_path
         else:
-            binary = "./bin/BcOutTracking"
-            unit = 50000
-            option = "-n 2"
+            symlink_name = f"run{run_num:05d}_{prefix}.root"
+            symlink_path = config.DATA_DIR / symlink_name
+            ensure_data_symlink(symlink_path, actual_root_abs)
+
         all_runs_info.append({
-            "label": f"run{run_num:05d}_{suffix}_{mode_label}:",
-            "bin": binary,
+            "run_num": run_num,
+            "label": f"run{run_num:05d}_{label_suffix}_{mode_label}:",
+            "bin": mode["bin"],
             "conf": f"param/conf/{SUB_DIR}/{conf_target_file.name}",
             "data": f"rawdata/run{run_num:05d}.dat",
             "root": str(actual_root_abs),
-            "unit": unit,
-            "option": option,
+            "unit": mode["unit"],
+            "option": mode["option"],
         })
 
     runlist_dir = config.ANALYZER_DIR / "runmanager/runlist"
-    runlist_target_file = runlist_dir / SUB_DIR / f"{mode_label}_run{run_num:05d}.yml"
+    runlist_target_file = (
+        runlist_dir / SUB_DIR / f"{mode['yml_prefix']}_run{run_num:05d}.yml"
+    )
+    write_runlist(runlist_target_file, mode, all_runs_info)
 
-    with open(runlist_dir / "myexample.yml") as f_tpl:
-        tpl_lines = f_tpl.readlines()
-
-    with open(runlist_target_file, "w") as f_out:
-        for line in tpl_lines:
-            if line.strip() == "RUN:":
-                break
-            f_out.write(line)
-        f_out.write("RUN:\n")
-        for r in all_runs_info:
-            f_out.write(f"  {r['label']}\n")
-            f_out.write(f"    bin: {r['bin']}\n")
-            f_out.write(f"    conf: {r['conf']}\n")
-            f_out.write(f"    data: {r['data']}\n")
-            f_out.write(f"    root: {r['root']}\n")
-            f_out.write(f"    unit: {r['unit']}\n")
-            f_out.write(f"    option: {r['option']}\n")
-
-    print(colored(f"\n[SUCCESS] Setup for Run {run_num} {args.suffix} ({prefix})", "green"))
+    display_prefix = "D5G4" if is_d5g4 else prefix
+    print(colored(
+        f"\n[SUCCESS] Setup for Run {run_num} "
+        f"{['G4'] if is_d5g4 else suffixes} ({display_prefix})",
+        "green",
+    ))
     print(f"  - Params from: run{param_run:05d}" + (" (--ref)" if use_ref else ""))
+    print(f"  - Binary: {mode['bin']}")
     if d5_mtx_dest is not None:
         print(f"  - D5MTX: {d5_mtx_dest}")
-        if args.mom is not None:
-            print(f"  - CentralMomentum: {args.mom} GeV/c")
-    print(f"  - Stable Link: {symlink_path}")
+        if mom is not None:
+            print(f"  - CentralMomentum: {mom} GeV/c")
+    if g4_symlink_path is not None:
+        print(f"  - G4 Link: {g4_symlink_path}")
+    else:
+        print(f"  - Stable Link: {symlink_path}")
 
     print(colored("\n--- Config File Content ---", "cyan"))
-    sample_suffix_head = args.suffix[0].split("_")[0]
-    conf_file = config.PARAM_DIR / "conf" / SUB_DIR / f"analyzer_run{run_num:0=5}_{mode_label}_{sample_suffix_head}.conf"
+    sample_suffix_head = (
+        mode.get("param_suffix_head")
+        if is_d5g4
+        else suffixes[0].split("_")[0]
+    )
+    conf_file = (
+        config.PARAM_DIR / "conf" / SUB_DIR
+        / f"analyzer_run{run_num:05d}_{mode_label}_{sample_suffix_head}.conf"
+    )
     print(colored(f"File: {conf_file.relative_to(config.ANALYZER_DIR)}", "yellow"))
     with open(conf_file) as f:
         print(f.read())
@@ -686,26 +787,71 @@ def run_calibration_mode(args):
         print(f.read())
     print("-" * 60)
 
+    return runlist_target_file, symlink_path, all_runs_info
+
+
+def resolve_mode(args):
+    if args.tpchit:
+        return MODES["tpchit"]
+    if args.d5g4:
+        return MODES["d5g4"]
+    if args.d5:
+        return MODES["d5"]
+    if args.bcin:
+        return MODES["bcin"]
+    if args.bcout:
+        return MODES["bcout"]
+    if args.hodo:
+        return MODES["hodo"]
+    # default: hodo (same as before when no mode flag)
+    return MODES["hodo"]
+
+
+def parse_runs_and_suffixes(mode: dict, positional: list):
+    """Split positional args into run_nums and suffixes."""
+    run_nums = []
+    suffixes = []
+    for x in positional:
+        if x.isdigit():
+            run_nums.append(int(x))
+        else:
+            suffixes.append(x)
+
+    if mode["runs_only"]:
+        if suffixes:
+            print(colored(
+                f"Error: {mode['cli']} takes run numbers only; got {suffixes}",
+                "red",
+            ))
+            sys.exit(1)
+    else:
+        validate_suffixes(mode, suffixes)
+
+    return sorted(set(run_nums)), suffixes
+
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="make_runlist",
-        description="Tool to create analyzer .conf and .yml runlist files with smart storage management.",
+        prog="create_runlist",
+        description=(
+            "Create analyzer .conf and .yml runlist files "
+            "(Mode-table + multi-run + scratch batch, like dst_create_runlist)."
+        ),
     )
     parser.add_argument(
-        "run_num", type=int, nargs="?",
-        help="Run number (optional with --tpchit --migrate only)",
-    )
-    parser.add_argument(
-        "extra", type=str, nargs="*",
-        help="Suffixes (calibration) or additional run numbers (--tpchit)",
+        "positional",
+        type=str,
+        nargs="*",
+        help="Run number(s) and/or suffixes (digits=runs, others=suffixes)",
     )
 
     group = parser.add_mutually_exclusive_group()
-    group.add_argument('--bcout', action="store_true", help='Set mode to BcOut calibration')
-    group.add_argument('--bcin', action="store_true", help='Set mode to BcIn calibration')
-    group.add_argument('--d5', action="store_true", help='Set mode to D5Tracking')
-    group.add_argument('--tpchit', action="store_true", help='Set mode to TPCHit decode')
+    group.add_argument("--hodo", action="store_true", help="Hodoscope calibration (default)")
+    group.add_argument("--bcout", action="store_true", help="BcOut calibration")
+    group.add_argument("--bcin", action="store_true", help="BcIn calibration")
+    group.add_argument("--d5", action="store_true", help="D5Tracking (suffix Pi/K)")
+    group.add_argument("--d5g4", action="store_true", help="D5BeamMan / Geant4 BeamMan profile")
+    group.add_argument("--tpchit", action="store_true", help="TPCHit decode")
     parser.add_argument("--ref", type=int, default=None, help="Use calibrated params from this run")
     parser.add_argument("--mom", type=float, default=None, help="D5 central momentum in GeV/c")
     parser.add_argument(
@@ -724,39 +870,32 @@ def main():
         organize_storage(dry_run=args.dry_run)
         return
 
-    if args.tpchit:
-        run_nums = []
-        if args.run_num is not None:
-            run_nums.append(args.run_num)
-        for x in args.extra:
-            if x.isdigit():
-                run_nums.append(int(x))
-            else:
-                print(colored(f"Error: unknown argument '{x}' for --tpchit", "red"))
-                sys.exit(1)
-        suffix = []
-        if not run_nums and not args.migrate:
-            print(colored("Error: --tpchit requires at least one run number", "red"))
-            sys.exit(1)
-    else:
-        if args.run_num is None:
-            print(colored("Error: run number is required", "red"))
-            sys.exit(1)
-        run_nums = [args.run_num]
-        suffix = args.extra
+    mode = resolve_mode(args)
 
-    if args.mom is not None and not args.d5:
-        print(colored("Error: --mom is only valid with --d5", "red"))
+    if args.mom is not None and not mode["needs_mom"]:
+        print(colored("Error: --mom is only valid with --d5 or --d5g4", "red"))
         sys.exit(1)
 
-    if args.tpchit:
+    if args.migrate and mode["yml_prefix"] != "tpchit":
+        print(colored("Error: --migrate requires --tpchit", "red"))
+        sys.exit(1)
+
+    run_nums, suffixes = parse_runs_and_suffixes(mode, args.positional)
+
+    if mode["yml_prefix"] == "tpchit":
         check_cobo_consistency()
         if args.migrate:
             migrate_all_tpchit_roots(run_nums or None, dry_run=args.dry_run)
             if args.dry_run:
                 return
+        if not run_nums and not args.migrate:
+            print(colored("Error: --tpchit requires at least one run number", "red"))
+            sys.exit(1)
+        if not run_nums:
+            return
+
         all_run_infos = []
-        for run_num in sorted(set(run_nums)):
+        for run_num in run_nums:
             yml, link, root, run_info = setup_tpchit_run(run_num)
             all_run_infos.append(run_info)
             era = tpchit_era_conf_name(run_num)
@@ -771,38 +910,43 @@ def main():
 
         if len(all_run_infos) > 1:
             runlist_dir = config.ANALYZER_DIR / "runmanager/runlist"
-            batch_name = tpchit_batch_runlist_name(sorted(set(run_nums)))
-            batch_yml = runlist_dir / TPCHIT_SCRATCH_RUNLIST_DIR / batch_name
-            write_tpchit_runlist(batch_yml, all_run_infos)
+            batch_name = batch_runlist_name(mode["yml_prefix"], run_nums)
+            batch_yml = runlist_dir / SCRATCH_RUNLIST_DIR / batch_name
+            write_runlist(batch_yml, mode, all_run_infos)
             print(colored(
                 f"\n[BATCH] Combined runlist for parallel decode ({len(all_run_infos)} runs)",
                 "green",
             ))
-            print(colored(
-                f"  - {batch_yml.relative_to(config.ANALYZER_DIR)}",
-                "cyan",
-            ))
+            print(colored(f"  - {batch_yml.relative_to(config.ANALYZER_DIR)}", "cyan"))
             print(colored("\n--- Batch Runlist File Content ---", "cyan"))
             with open(batch_yml) as f:
                 print(f.read())
         return
 
-    if args.migrate:
-        print(colored("Error: --migrate requires --tpchit", "red"))
+    if not run_nums:
+        print(colored("Error: at least one run number is required", "red"))
         sys.exit(1)
 
-    class CalibArgs:
-        pass
+    all_infos = []
+    for run_num in run_nums:
+        _yml, _link, infos = setup_calibration_run(
+            run_num, mode, suffixes, args.ref, args.mom,
+        )
+        all_infos.extend(infos)
 
-    calib = CalibArgs()
-    calib.run_num = run_nums[0]
-    calib.suffix = suffix
-    calib.bcout = args.bcout
-    calib.bcin = args.bcin
-    calib.d5 = args.d5
-    calib.ref = args.ref
-    calib.mom = args.mom
-    run_calibration_mode(calib)
+    if len(run_nums) > 1:
+        runlist_dir = config.ANALYZER_DIR / "runmanager/runlist"
+        batch_name = batch_runlist_name(mode["yml_prefix"], run_nums)
+        batch_yml = runlist_dir / SCRATCH_RUNLIST_DIR / batch_name
+        write_runlist(batch_yml, mode, all_infos)
+        print(colored(
+            f"\n[BATCH] Combined runlist ({len(run_nums)} runs, {len(all_infos)} entries)",
+            "green",
+        ))
+        print(colored(f"  - {batch_yml.relative_to(config.ANALYZER_DIR)}", "cyan"))
+        print(colored("\n--- Batch Runlist File Content ---", "cyan"))
+        with open(batch_yml) as f:
+            print(f.read())
 
 
 if __name__ == "__main__":

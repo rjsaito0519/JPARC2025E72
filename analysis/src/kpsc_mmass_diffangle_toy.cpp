@@ -109,10 +109,9 @@ public:
   {
     if (page_ <= 0)
       return;
-    if (page_ == 1)
-      c.Print(path_);
-    else
-      c.Print(path_ + ")");
+    // "]" closes the file without drawing an extra (duplicate) page,
+    // unlike ")" which prints the current pad again before closing.
+    c.Print(path_ + "]");
   }
 
   Int_t Pages() const { return page_; }
@@ -263,23 +262,6 @@ ScenarioName(Scenario s)
   return "unknown";
 }
 
-const char*
-ScenarioTitle(Scenario s)
-{
-  switch (s) {
-  case Scenario::POnly: return "toy: proton smear only (large; expect V)";
-  case Scenario::BeamOnly: return "toy: beam smear only (large; expect V-like)";
-  case Scenario::KOnly: return "toy: K smear only (large; expect horizontal)";
-  case Scenario::All: return "toy: beam+proton+K smear (large)";
-  case Scenario::PMomWrong: return "inconsistent: wrong |p_p| (dir fixed)";
-  case Scenario::BeamMomWrong: return "inconsistent: wrong |p_beam| (dir fixed)";
-  case Scenario::KMomWrong: return "inconsistent: wrong |p_K| (dir fixed; angle~unchanged)";
-  case Scenario::SwapPK: return "inconsistent: swap p <-> K momentum vectors";
-  case Scenario::WrongK: return "inconsistent: wrong K direction (true |p_K|)";
-  }
-  return "toy";
-}
-
 struct SmearCfg
 {
   Double_t p_rel = kDefSigPRel;
@@ -292,6 +274,37 @@ struct SmearCfg
   Double_t mom_bias_beam = kDefMomBiasBeam;
   Double_t mom_bias_k = kDefMomBiasK;
 };
+
+TString
+ScenarioTitle(Scenario s, const SmearCfg& cfg)
+{
+  switch (s) {
+  case Scenario::POnly:
+    return TString::Format("toy: proton smear only (large, expect V) - Gaus rel(0,%.2f) ang(0,%.2f)",
+                           cfg.p_rel, cfg.p_ang);
+  case Scenario::BeamOnly:
+    return TString::Format("toy: beam smear only (large, expect V-like) - Gaus rel(0,%.2f) ang(0,%.2f)",
+                           cfg.beam_rel, cfg.beam_ang);
+  case Scenario::KOnly:
+    return TString::Format("toy: K smear only (large, expect horizontal) - Gaus rel(0,%.2f) ang(0,%.2f)",
+                           cfg.k_rel, cfg.k_ang);
+  case Scenario::All:
+    return TString::Format(
+      "toy: beam+proton+K smear (large) - Gaus p(%.2f,%.2f) beam(%.2f,%.2f) K(%.2f,%.2f)",
+      cfg.p_rel, cfg.p_ang, cfg.beam_rel, cfg.beam_ang, cfg.k_rel, cfg.k_ang);
+  case Scenario::PMomWrong:
+    return TString::Format("inconsistent: wrong |p_p| (dir fixed) - Gaus(0,%.2f)", cfg.mom_bias_p);
+  case Scenario::BeamMomWrong:
+    return TString::Format("inconsistent: wrong |p_beam| (dir fixed) - Gaus(0,%.2f)",
+                           cfg.mom_bias_beam);
+  case Scenario::KMomWrong:
+    return TString::Format("inconsistent: wrong |p_K| (dir fixed, angle~unchanged) - Gaus(0,%.2f)",
+                           cfg.mom_bias_k);
+  case Scenario::SwapPK: return "inconsistent: swap p <-> K momentum vectors - fixed swap";
+  case Scenario::WrongK: return "inconsistent: wrong K direction (true |p_K|) - isotropic";
+  }
+  return "toy";
+}
 
 Double_t
 RandomMomScale(TRandom3& rng, Double_t bias_width)
@@ -385,7 +398,7 @@ BeginNotePage(TCanvas& c, Bool_t zPalette)
   plot->SetLeftMargin(0.14);
   plot->SetRightMargin(zPalette ? 0.14 : 0.05);
   plot->SetBottomMargin(0.14);
-  plot->SetTopMargin(0.10);
+  plot->SetTopMargin(0.16);
   plot->Draw();
 
   auto* note = new TPad("toy_note", "", 0.69, 0.04, 0.99, 0.96);
@@ -658,7 +671,7 @@ Draw2DPage(TCanvas& c, PdfWriter& writer, TH2D* h, const char* title,
   auto* tx = new TLatex();
   tx->SetNDC();
   tx->SetTextSize(0.035);
-  tx->DrawLatex(0.16, 0.93, Form("N=%.0f", h->GetEntries()));
+  tx->DrawLatex(0.16, 0.86, Form("N=%.0f", h->GetEntries()));
   DrawNoteLines(pads.note, noteLines);
   c.cd();
   writer.Print(c);
@@ -916,16 +929,17 @@ main(Int_t argc, Char_t** argv)
   for (const Scenario s : scenarios) {
     // Independent RNG stream per scenario from same truths (re-seed by scenario id).
     TRandom3 rngS(seed + 17u * (1u + static_cast<UInt_t>(s)));
+    const TString scenTitle = ScenarioTitle(s, cfg);
     auto* h = Book2D(Form("h_toy_%s", ScenarioName(s)),
                      Form("%s; #angle(p_{miss},p_{K}) [rad]; M_{miss} [GeV]",
-                          ScenarioTitle(s)));
+                          scenTitle.Data()));
     for (const TrueEvt& ev : truths) {
       const KinObs o = ApplyScenario(ev, s, cfg, rngS);
       if (!std::isfinite(o.mmass) || !std::isfinite(o.diff_angle))
         continue;
       h->Fill(o.diff_angle, o.mmass);
     }
-    Draw2DPage(c, writer, h, ScenarioTitle(s), ScenarioNoteLines(s, cfg));
+    Draw2DPage(c, writer, h, scenTitle.Data(), ScenarioNoteLines(s, cfg));
     if (s == Scenario::POnly)
       hPOnly = h;
     if (s == Scenario::All)
