@@ -29,7 +29,7 @@
  * plot (tpc_phase_plot) が読むオブジェクト契約:
  *   必須: TpcPhase_Cobo%d, TpcPhase_Profile*, TpcPhase_CoboFallback
  *   推奨: TpcPhase_Fit_Cobo%d, TpcPhase_FitRaw_Cobo%d
- *   詳細: myanalysis/calibration/docs/tpc_phase_plot_contract.md
+ *   詳細: myanalysis/calibration/docs/tpc/tpc_phase_plot_contract.md
  *
  * Usage:
  *   tpc_phase_from_tpcbcout <tpcbcout.root> <TpcPhase.root> [--smooth N] [--vdrift V] [--fit-step [N]] [--graph-points N]

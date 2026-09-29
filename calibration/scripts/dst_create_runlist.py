@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Create DST runlist / conf / symlink for TPCHitBcOut, TPCHelix, TPCTracking, KpScattering, PidSample.
+"""Create DST runlist / conf / symlink for TPCHitBcOut, TPCHelix, TPCTracking,
+KpScattering, PidSample, TPCHelixHTOF.
 
 Shares Mode-table + multi-run + scratch-batch philosophy with create_runlist.py.
 """
@@ -113,6 +114,22 @@ MODES = {
         "required_inputs": ["TPCHelix", "D5"],
         # Needs analysis D5 (create_runlist.py --d5), not BeamMan (--d5g4).
         "input_hint": "dst_create_runlist.py --tpchelix and create_runlist.py --d5 first (not --d5g4)",
+    },
+    "tpchelixhtof": {
+        "cli": "--tpchelixhtof",
+        "flag": "tpchelixhtof",
+        "bin": "./bin/DstTPCHelixHTOF",
+        "tag": "TPCHelixHTOF",
+        "mode_label": "tpchelixhtof",
+        "yml_prefix": "dst_tpchelixhtof",
+        "tpl_yml": "dst_tpchelixhtof_example.yml",
+        "tpl_conf": "analyzer_e72_dst_tpchelixhtof_example.conf",
+        "dstin": ["TPCHelix", "Hodo"],
+        "unit": 100000,
+        "option_key": "option",
+        "option_val": "",
+        "required_inputs": ["TPCHelix", "Hodo"],
+        "input_hint": "dst_create_runlist.py --tpchelix and create_runlist.py for Hodo first",
     },
 }
 
@@ -560,7 +577,8 @@ def migrate_dst_roots(run_nums=None, dry_run: bool = False):
 def main():
     parser = argparse.ArgumentParser(
         prog="dst_create_runlist",
-        description="Create DST conf/runlist/symlink for TPCHitBcOut / TPCHelix / TPCTracking / KpScattering / PidSample.",
+        description="Create DST conf/runlist/symlink for TPCHitBcOut / TPCHelix / TPCTracking / "
+                    "KpScattering / PidSample / TPCHelixHTOF.",
     )
     parser.add_argument("run_nums", type=int, nargs="*", help="Run number(s)")
     group = parser.add_mutually_exclusive_group()
@@ -569,6 +587,7 @@ def main():
     group.add_argument("--tpctrack", action="store_true", help="DstTPCTracking (tag: TPCTracking)")
     group.add_argument("--kpsc", action="store_true", help="DstKpScattering (tag: KpScattering)")
     group.add_argument("--pidsample", action="store_true", help="DstTpcDedxPidSamples (tag: PidSample)")
+    group.add_argument("--tpchelixhtof", action="store_true", help="DstTPCHelixHTOF (tag: TPCHelixHTOF)")
     parser.add_argument("--ref", type=int, default=None, help="Borrow params from this run")
     parser.add_argument(
         "--migrate", action="store_true",
@@ -588,6 +607,8 @@ def main():
         mode = MODES["kpscattering"]
     elif args.pidsample:
         mode = MODES["pidsample"]
+    elif args.tpchelixhtof:
+        mode = MODES["tpchelixhtof"]
 
     if args.migrate:
         migrate_dst_roots(args.run_nums or None, dry_run=args.dry_run)
@@ -597,8 +618,8 @@ def main():
     if mode is None:
         if not args.migrate:
             print(colored(
-                "Error: choose one of --tpchit-bcout / --tpchelix / --tpctrack / --kpsc / --pidsample "
-                "(or --migrate only)",
+                "Error: choose one of --tpchit-bcout / --tpchelix / --tpctrack / --kpsc / "
+                "--pidsample / --tpchelixhtof (or --migrate only)",
                 "red",
             ))
             sys.exit(1)

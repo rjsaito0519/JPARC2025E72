@@ -95,7 +95,7 @@ def main():
         return path
 
     bin_dir = project_root / "bin"
-    script_dir = Path(__file__).parent
+    script_dir = Path(__file__).resolve().parent
     update_script = script_dir / "update_param.py"
 
     if args.all:

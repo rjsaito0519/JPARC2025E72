@@ -32,7 +32,7 @@ Notes
   other geometry if needed.
 * Try scale=+1 first; if residuals worsen, retry with --scale -1.
 
-See also: docs/dcgeo_tracking_geometry.md (Ofs / TA / RA in tracking).
+See also: analyzer docs/geometry/dcgeo_tracking_geometry.md (Ofs / TA / RA in tracking).
 """
 
 import argparse

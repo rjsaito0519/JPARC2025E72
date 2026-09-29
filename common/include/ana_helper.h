@@ -79,7 +79,15 @@ namespace ana_helper {
     void set_tdc_search_range(TH1D *h);
     FitResult tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin = 1);
-    FitResult htof_adc_fit(TH1D *h, TCanvas *c, Int_t& n_c, TString key, Int_t n_rebin = 1);
+    FitResult htof_adc_fit(TH1D *h_raw, TH1D *h_selected, TCanvas *c, Int_t n_c, Int_t n_rebin = 0,
+                           const std::string& hint_key = ""); // n_rebin <= 0: automatic; hint_key: param::htof_adc_fit_hint
+    FitResult htof_adc_fit_weak(TH1D *h_cond, const FitResult& base, Double_t strong_unit,
+                                TCanvas *c, Int_t n_c, Double_t min_hump_frac = 0.5,
+                                const std::string& hint_key = ""); // beam-window weak side; hint_key: param::htof_adc_fit_weak_hint
+    // ref/fix_mask: parameters of ref whose bit is set in fix_mask (bit i -> p_i) are fixed
+    // dense_ratio: fit-range threshold (band content relative to the densest slice)
+    FitResult htof_phc_fit(TH2D *h, TCanvas *c, Int_t n_c, const FitResult *ref = nullptr, Int_t fix_mask = 0,
+                           Double_t dense_ratio = 0.10);
     FitResult pedestal_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult bht_tot_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult t0_offset_fit(TH1D *h, TCanvas *c, Int_t n_c);

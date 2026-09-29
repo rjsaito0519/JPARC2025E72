@@ -482,6 +482,15 @@ DrawHtofCellFace3D(const HtofCell& c, Double_t L, Color_t col, Width_t width)
   DrawRect3D(x00, y00, z00, x10, y10, z10, x11, y11, z11, x01, y01, z01, col, width);
 }
 
+// Segment number stored as double in the DstTPCHelixHTOF tree (extrap_seg, match_cl_seg);
+// -1 if absent or NaN (track without an HTOF match).
+static Int_t
+SegAt(const std::vector<Double_t>* v, std::size_t it)
+{
+  if (!v || it >= v->size() || TMath::IsNaN((*v)[it])) return -1;
+  return TMath::Nint((*v)[it]);
+}
+
 void
 DrawHtofSegXZ(const std::set<Int_t>& highlight)
 {
@@ -869,8 +878,8 @@ main(int argc, char** argv)
   Int_t hf_nt = 0;
   Double_t hf_time0_seg = TMath::QuietNaN();
   std::vector<Int_t>* hf_match = nullptr;
-  std::vector<Int_t>* hf_htof_seg = nullptr;
-  std::vector<Int_t>* hf_cl_seg = nullptr;
+  std::vector<Double_t>* hf_extrap_seg = nullptr;  // vector<double> in the tree
+  std::vector<Double_t>* hf_cl_seg = nullptr;      // vector<double> in the tree
   std::vector<Double_t>* hf_ex_x = nullptr;
   std::vector<Double_t>* hf_ex_y = nullptr;
   std::vector<Double_t>* hf_ex_z = nullptr;
@@ -886,10 +895,10 @@ main(int argc, char** argv)
   tHtof->SetBranchAddress("ntTpc", &hf_nt);
   if (tHtof->GetBranch("time0_seg"))
     tHtof->SetBranchAddress("time0_seg", &hf_time0_seg);
-  tHtof->SetBranchAddress("match_ok", &hf_match);
-  tHtof->SetBranchAddress("htof_seg", &hf_htof_seg);
-  if (tHtof->GetBranch("htof_cl_seg_matched"))
-    tHtof->SetBranchAddress("htof_cl_seg_matched", &hf_cl_seg);
+  tHtof->SetBranchAddress("seg_match", &hf_match);
+  tHtof->SetBranchAddress("extrap_seg", &hf_extrap_seg);
+  if (tHtof->GetBranch("match_cl_seg"))
+    tHtof->SetBranchAddress("match_cl_seg", &hf_cl_seg);
   tHtof->SetBranchAddress("extrap_x", &hf_ex_x);
   tHtof->SetBranchAddress("extrap_y", &hf_ex_y);
   tHtof->SetBranchAddress("extrap_z", &hf_ex_z);
@@ -949,8 +958,8 @@ main(int argc, char** argv)
     std::set<Int_t> hiSegs;
     for (std::size_t it = 0; it < hf_match->size(); ++it) {
       if ((*hf_match)[it] != 1) continue;
-      if (hf_htof_seg && it < hf_htof_seg->size())
-        hiSegs.insert((*hf_htof_seg)[it]);
+      const Int_t seg = SegAt(hf_extrap_seg, it);
+      if (seg >= 0) hiSegs.insert(seg);
     }
 
     const Int_t nUse = std::min({hf_nt, hx_nt,
@@ -1044,9 +1053,7 @@ main(int argc, char** argv)
         leg->AddEntry(gMeas, lab, "l");
       }
       if (drawEx) {
-        Int_t hs = -1;
-        if (hf_htof_seg && static_cast<Int_t>(hf_htof_seg->size()) > it)
-          hs = (*hf_htof_seg)[it];
+        const Int_t hs = SegAt(hf_extrap_seg, it);
         auto* gEx = new TGraph(2);
         gEx->SetPoint(0, 0., 0.);
         gEx->SetPoint(1, 1., 1.);
@@ -1079,8 +1086,8 @@ main(int argc, char** argv)
         mk->SetMarkerColor(kExtrapColor);
         mk->SetMarkerSize(1.2);
         mk->Draw();
-        if (hf_htof_seg && static_cast<Int_t>(hf_htof_seg->size()) > it) {
-          auto* tx = new TLatex(ez + 8., ex + 8., Form("seg%d", (*hf_htof_seg)[it]));
+        if (SegAt(hf_extrap_seg, it) >= 0) {
+          auto* tx = new TLatex(ez + 8., ex + 8., Form("seg%d", SegAt(hf_extrap_seg, it)));
           tx->SetTextSize(0.025);
           tx->SetTextColor(kExtrapColor);
           tx->Draw();
@@ -1090,8 +1097,8 @@ main(int argc, char** argv)
         Double_t Ls = TMath::QuietNaN();
         if (hf_L_sec && static_cast<Int_t>(hf_L_sec->size()) > it) Ls = (*hf_L_sec)[it];
         Int_t cl = -1, hs = -1, ipl = -1;
-        if (hf_cl_seg && static_cast<Int_t>(hf_cl_seg->size()) > it) cl = TMath::Nint((*hf_cl_seg)[it]);
-        if (hf_htof_seg && static_cast<Int_t>(hf_htof_seg->size()) > it) hs = TMath::Nint((*hf_htof_seg)[it]);
+        cl = SegAt(hf_cl_seg, it);
+        hs = SegAt(hf_extrap_seg, it);
         if (hf_ex_plane && static_cast<Int_t>(hf_ex_plane->size()) > it) ipl = (*hf_ex_plane)[it];
         const Double_t abs_s = PlaneResidualAbsS(ex, ey, ez, ipl);
         info += Form(" | tr%d seg%d/cl%d |s|=%.3f Lsec=%.1f", it, hs, cl, abs_s, Ls);
@@ -1216,9 +1223,7 @@ main(int argc, char** argv)
       lab += " meas";
       leg3->AddEntry(gMeas, lab, "l");
       if (mok) {
-        Int_t hs = -1;
-        if (hf_htof_seg && static_cast<Int_t>(hf_htof_seg->size()) > it)
-          hs = (*hf_htof_seg)[it];
+        const Int_t hs = SegAt(hf_extrap_seg, it);
         auto* gEx = new TGraph(2);
         gEx->SetLineColor(kExtrapColor);
         gEx->SetLineWidth(2);

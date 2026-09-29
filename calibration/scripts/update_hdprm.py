@@ -99,7 +99,8 @@ def make_dictdata(root_file_path, good_ch_range = [-np.inf, np.inf], is_t0_offse
 
 # -- prepare HTOF ADC data (param_type "htofprm") -----------------------------
 def make_htofprm_dictdata(root_file_path):
-    """HTOF ADC pedestal/gain from HTOF_ADC output (dE/dx pion-tagged DstTPCHelixHTOF).
+    """HTOF ADC pedestal / MIP (HDPRM "gain" column) from the HTOF_Calib ADC output
+    (run{run}_HTOF_ADC_Pi.root; MIP from dE/dx pion-tagged DstTPCHelixHTOF tracks).
     UorD: 0=U, 1=D, 2=S (see update_hdprm.py detector_n_ud_list / AorT=0 rows)."""
     detector_id = detector_id_list["HTOF"]
     file = uproot.open(root_file_path)
@@ -112,6 +113,45 @@ def make_htofprm_dictdata(root_file_path):
             key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
             data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
     return data
+# ---------------------------------------------------------------------------
+
+# -- HTOF fit-quality reports (warnings only; all channels are still written) --
+_HTOF_SIDE = "UDS"
+
+def htof_adc_quality_report(root_file_path):
+    """Channels of the HTOF_Calib ADC output whose adc_flag has bits other than 32 set.
+    Returns a list of (seg, side, flag, mip). Flag bits (ana_helper::htof_adc_fit):
+    1 raw seed unusable, 2 low statistics, 4 ndf < 10, 8 at fit-range edge / no fit,
+    16 candidate two-peak structure; htof_adc_fit_weak (beam-window weak side): 32 two-component
+    refit used (informational only, not reported alone), 64 hump not separated (MIP uncertain);
+    128 MIP range / model from params.h htof_adc_fit_hint (informational only, not reported alone)."""
+    tree = uproot.open(root_file_path)["tree"].arrays(library="np")
+    out = []
+    if "adc_flag" not in tree:
+        return out
+    for i in range(len(tree["ch"])):
+        for s in range(3):
+            flag = int(tree["adc_flag"][i][s])
+            if flag & ~(32 | 128):
+                out.append((int(tree["ch"][i]), _HTOF_SIDE[s], flag, float(tree["adc_p1_val"][i][s])))
+    return out
+
+def htof_phc_quality_report(root_file_path, min_offset_n=100):
+    """Channels of the HTOF_Calib PHC output whose p0/p1 sit at the fit limits
+    (p0 at 0.001 or 15, p1 at -5; see ana_helper::htof_phc_fit) and segments whose
+    absolute TOF offset was not applied (tof_offset_n < min_offset_n).
+    Returns (limit_list[(seg, side, p0, p1)], offset_list[(seg, n)])."""
+    tree = uproot.open(root_file_path)["tree"].arrays(library="np")
+    lim, off = [], []
+    for i in range(len(tree["ch"])):
+        ch = int(tree["ch"][i])
+        for s in range(2):
+            p0, p1 = float(tree["p0_val"][i][s]), float(tree["p1_val"][i][s])
+            if p0 < 0.0011 or p0 > 14.99 or p1 < -4.999:
+                lim.append((ch, _HTOF_SIDE[s], p0, p1))
+        if "tof_offset_n" in tree and int(tree["tof_offset_n"][i]) < min_offset_n:
+            off.append((ch, int(tree["tof_offset_n"][i])))
+    return lim, off
 # ---------------------------------------------------------------------------
 
 # -- write HDPRM file  -----------------------------------

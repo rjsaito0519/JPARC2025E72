@@ -9,7 +9,7 @@
  *
  * 運用前提: 1-step（--fit-step 1）。多段は想定しない。
  * phase ファイル契約・修正時チェックリスト:
- *   myanalysis/calibration/docs/tpc_phase_plot_contract.md
+ *   myanalysis/calibration/docs/tpc/tpc_phase_plot_contract.md
  *
  * --phase 時に読む主なオブジェクト:
  *   必須: TpcPhase_Cobo%d (fit 赤実線), TpcPhase_Profile*, TpcPhase_CoboFallback

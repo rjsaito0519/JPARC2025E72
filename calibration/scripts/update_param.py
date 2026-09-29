@@ -169,12 +169,17 @@ elif args.param_type == "htofprm":
         print(f"  - HTOF TDC: {color_ok()} {len(data)} entries found (Range: {good_range})")
     else:
         print(colored(f"  - HTOF TDC: no run{args.run_num:05d}_HTOF_HDPRM_All.root found", "yellow"))
-    # ADC: dE/dx pion-tagged MIP (currently Pi-only; see HTOF_Calib.cpp).
+    # ADC: dE/dx pion-tagged MIP (Pi only; see HTOF_Calib.cpp).
     root_file = get_root_file(args.run_num, "HTOF", args.suffix, "ADC")
     if root_file:
         data = update_hdprm.make_htofprm_dictdata(str(root_file))
         all_new_data.update(data)
         print(f"  - HTOF ADC: {color_ok()} {len(data)} entries found")
+        flagged = update_hdprm.htof_adc_quality_report(str(root_file))
+        if flagged:
+            print(colored(f"  - HTOF ADC: {len(flagged)} channel(s) with a fit-quality flag (written anyway):", "yellow"))
+            for seg, side, flag, mip in flagged:
+                print(colored(f"      seg{seg}{side}: flag {flag}, MIP {mip:.1f}", "yellow"))
     else:
         print(colored(f"  - HTOF ADC: no run{args.run_num:05d}_HTOF_ADC_{args.suffix}.root found", "yellow"))
 
@@ -203,6 +208,12 @@ elif args.param_type in ("hdphc", "htofphc"):
         data = update_phc.make_dictdata(str(root_file), good_ch_range=good_range)
         all_new_data.update(data)
         print(f"  - {det:<6}: {color_ok()} {len(data)} entries found (Range: {good_range})")
+        if det == "HTOF":
+            lim, off = update_hdprm.htof_phc_quality_report(str(root_file))
+            for seg, side, p0, p1 in lim:
+                print(colored(f"      HTOF seg{seg}{side}: PHC at fit limit (p0 {p0:.3f}, p1 {p1:.3f}), written anyway", "yellow"))
+            for seg, n in off:
+                print(colored(f"      HTOF seg{seg}: absolute TOF offset NOT applied (only {n} pion entries); TOF of this segment is off", "red"))
 
 elif args.param_type == "dctdc":
     # C++ (BLC_TDC) outputs: runXXXXX_BLC1_TDC_Pi.root (BcIn) or runXXXXX_BLC2_TDC_Pi.root (BcOut)

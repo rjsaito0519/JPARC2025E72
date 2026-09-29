@@ -808,13 +808,21 @@ def resolve_mode(args):
 
 
 def parse_runs_and_suffixes(mode: dict, positional: list):
-    """Split positional args into run_nums and suffixes."""
+    """Split positional args into run_nums and suffixes.
+
+    Tokens in allowed_suffixes (e.g. "0") are suffixes first.
+    Digits with value >= 1 are run numbers; "0" is never a run.
+    """
     run_nums = []
     suffixes = []
+    allowed = mode.get("allowed_suffixes") or set()
     for x in positional:
-        if x.isdigit():
+        if x in allowed:
+            suffixes.append(x)
+        elif x.isdigit() and int(x) >= 1:
             run_nums.append(int(x))
         else:
+            # non-digits, or "0" when not in allowed (e.g. --d5)
             suffixes.append(x)
 
     if mode["runs_only"]:
@@ -842,7 +850,7 @@ def main():
         "positional",
         type=str,
         nargs="*",
-        help="Run number(s) and/or suffixes (digits=runs, others=suffixes)",
+        help="Run number(s) and/or suffixes (digits>=1=runs; \"0\" is a suffix, not a run)",
     )
 
     group = parser.add_mutually_exclusive_group()

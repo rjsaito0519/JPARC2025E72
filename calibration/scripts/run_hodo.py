@@ -70,18 +70,23 @@ def main():
     if mode == "htof":
         # HTOF_Calib also needs the DstTPCHelixHTOF output (dE/dx-tagged TPC helix x
         # HTOF match) for the pion-selected MIP histogram; Hodo.root alone supplies
-        # the all-event pedestal histograms. Not yet wired into
-        # create_runlist.py/dst_create_runlist.py; produce it manually for now
-        # (bin/DstTPCHelixHTOF <conf> <TPCHelix.root> <Hodo.root> run{run}_HTOF.root).
+        # the all-event pedestal histograms. Produce via:
+        #   dst_create_runlist.py <run...> --tpchelixhtof
+        # (tag: run{run}_TPCHelixHTOF.root).
         for r in run_nums:
-            htof_dst_file = config.DATA_DIR / f"run{r:05d}_HTOF.root"
+            htof_dst_file = config.DATA_DIR / f"run{r:05d}_TPCHelixHTOF.root"
             if not htof_dst_file.exists():
                 print(colored(f"[Error] Symlink/File not found: {htof_dst_file}", "red"))
-                print("Run bin/DstTPCHelixHTOF for this run first (dst_create_runlist.py "
-                      "integration is not yet available).")
+                print("Run dst_create_runlist.py <run> --tpchelixhtof (and submit the job) first.")
                 sys.exit(1)
             htof_dst_files.append(htof_dst_file)
             print(colored(f"[INFO] Using DstTPCHelixHTOF File: {htof_dst_file}", "green"))
+            # The calibration sample (HTOF cluster match, PID tag) depends on the Hodo decode, so
+            # the DST should be regenerated after every Hodo re-decode.
+            hodo_file = config.DATA_DIR / f"run{r:05d}_Hodo.root"
+            if hodo_file.exists() and htof_dst_file.resolve().stat().st_mtime < hodo_file.resolve().stat().st_mtime:
+                print(colored(f"[Warning] {htof_dst_file.name} is older than {hodo_file.name}; "
+                              "regenerate it (dst_create_runlist.py --tpchelixhtof) after the Hodo re-decode.", "yellow"))
 
     for f in hodo_root_files:
         print(colored(f"[INFO] Using Input File: {f}", "green"))
@@ -94,7 +99,7 @@ def main():
         print(colored("[INFO] DEBUG mode: parameter update will be skipped", "yellow"))
 
     bin_dir = project_root / "bin"
-    script_dir = Path(__file__).parent
+    script_dir = Path(__file__).resolve().parent
     update_script = script_dir / "update_param.py"
 
     # --- Mode Dispatch ---
@@ -120,7 +125,7 @@ def main():
         
     elif mode == "htof":
         # Run HTOF_Calib (TDC + ADC pedestal/MIP + PHC in one pass; PHC uses DeltaE
-        # recomputed from raw ADC with the new ADC parameters, so no re-decoding is
+        # recomputed from raw ADC with the ADC parameters of the same pass, so no re-decoding is
         # needed in between) -> update_param.py htofprm (HDPRM: TDC+ADC) and
         # htofphc (HDPHC). One PDF per segment: run{run}_HTOF_Calib_{suffix}.pdf.
         executable = bin_dir / "HTOF_Calib"
