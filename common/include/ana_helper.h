@@ -80,7 +80,7 @@ namespace ana_helper {
     FitResult tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin = 1);
     FitResult htof_adc_fit(TH1D *h_raw, TH1D *h_selected, TCanvas *c, Int_t n_c, Int_t n_rebin = 0,
-                           const std::string& hint_key = ""); // n_rebin <= 0: automatic; hint_key: param::htof_adc_fit_hint
+                           const std::string& hint_key = "", Int_t run_num = -1); // n_rebin <= 0: automatic; hint_key: param::htof_adc_fit_hint; run_num < 0: conf.run_num
     FitResult htof_adc_fit_weak(TH1D *h_cond, const FitResult& base, Double_t strong_unit,
                                 TCanvas *c, Int_t n_c, Double_t min_hump_frac = 0.5,
                                 const std::string& hint_key = ""); // beam-window weak side; hint_key: param::htof_adc_fit_weak_hint

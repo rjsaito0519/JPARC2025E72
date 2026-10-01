@@ -453,7 +453,7 @@ namespace ana_helper {
     //   128 = MIP range / model taken from param::htof_adc_fit_hint[hint_key].
     //   (32, 64: beam-window weak-side refit, see htof_adc_fit_weak.)
     FitResult htof_adc_fit(TH1D *h_raw, TH1D *h_selected, TCanvas *c, Int_t n_c, Int_t n_rebin,
-                           const std::string& hint_key) {
+                           const std::string& hint_key, Int_t run_num) {
         const Double_t display_max = 2048.0; // HTOF ADC peaks never appear above ~2048 counts
         Config& conf = Config::getInstance();
 
@@ -548,9 +548,22 @@ namespace ana_helper {
         // -- final MIP fit: fixed range, gauss vs landau (smaller chi2), or the range / model of
         //    param::htof_adc_fit_hint for this channel -----
         Int_t model = 0; // 0 both, 1 gauss, 2 landau
-        const auto hint = param::htof_adc_fit_hint.find(hint_key);
-        const Bool_t use_hint = (!hint_key.empty() && hint != param::htof_adc_fit_hint.end()
-                                 && hint->second.size() >= 3);
+        // entry for this channel: one whose run range contains the run (run_num, or conf.run_num if
+        // not given), else one without a range
+        const Int_t run_ref = (run_num >= 0) ? run_num : conf.run_num;
+        auto hint = param::htof_adc_fit_hint.end();
+        if (!hint_key.empty()) {
+            const auto range = param::htof_adc_fit_hint.equal_range(hint_key);
+            for (auto e = range.first; e != range.second; ++e) {
+                if (e->second.size() < 3) continue;
+                if (e->second.size() >= 5) {
+                    if (run_ref >= e->second[3] && run_ref <= e->second[4]) { hint = e; break; }
+                } else if (hint == param::htof_adc_fit_hint.end()) {
+                    hint = e;
+                }
+            }
+        }
+        const Bool_t use_hint = (hint != param::htof_adc_fit_hint.end());
         if (use_hint) {
             flag |= 128;
             model = static_cast<Int_t>(hint->second[2]);

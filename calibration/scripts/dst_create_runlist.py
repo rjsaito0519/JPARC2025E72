@@ -136,7 +136,7 @@ MODES = {
 DEFAULTS = {
     "USER:": "param/USER/UserParam_e72_20260403",
     "TPCPRM:": "param/TPCPRM/TPCParam_example",
-    "TPCPOS:": "param/TPCPOS/TPCPositionCorrectionMap_KinFit_th50_1",
+    "TPCPOS:": "param/TPCPOS/TPCPositionCorrectionMap_0",
     "DCGEO:": "param/DCGEO/DCGeomParam_e72_example",
     "FLDMAP:": "param/FLDMAP/ShsFieldMap_20210526_Extrapolated",
 }
@@ -353,8 +353,9 @@ def ensure_dst_conf(run_num: int, mode: dict, ref) -> str:
     sub_conf = conf_dir / SUB_DIR
     sub_conf.mkdir(parents=True, exist_ok=True)
 
-    tpl_path = conf_dir / mode["tpl_conf"]
-    era_path = conf_dir / era_conf_name(run_num)
+    example_dir = conf_dir / "example"
+    tpl_path = example_dir / mode["tpl_conf"]
+    era_path = example_dir / era_conf_name(run_num)
     digit, cmap_era = read_digit_cmap(era_path)
 
     resolved = {k: resolve_key_path(k, run_num, mode, ref) for k in DEFAULTS}

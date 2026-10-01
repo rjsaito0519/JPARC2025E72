@@ -443,8 +443,9 @@ def ensure_tpchit_conf(run_num: int) -> str:
     sub_conf_dir.mkdir(parents=True, exist_ok=True)
 
     target = sub_conf_dir / f"analyzer_run{run_num:05d}_tpchit.conf"
-    tpl_path = conf_dir / TPCHIT_CONF_TEMPLATE
-    era_path = conf_dir / tpchit_era_conf_name(run_num)
+    example_dir = conf_dir / "example"
+    tpl_path = example_dir / TPCHIT_CONF_TEMPLATE
+    era_path = example_dir / tpchit_era_conf_name(run_num)
     digit, cmap = read_digit_cmap(era_path)
 
     out_lines = []
@@ -692,7 +693,7 @@ def setup_calibration_run(run_num: int, mode: dict, suffixes: list, ref, mom):
                 example_base = "analyzer_e72_example2.conf"
             else:
                 example_base = "analyzer_e72_example3.conf"
-            shutil.copy(conf_dir / example_base, conf_target_file)
+            shutil.copy(conf_dir / "example" / example_base, conf_target_file)
 
         buf = []
         has_d5mtx = False

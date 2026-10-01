@@ -12,7 +12,7 @@
 //                            [--seed <n>]
 //
 // Output (default, tentative):
-//   OUTPUT_DIR/img/run00000/kpsc_mmass_diffangle_toy_run00000.pdf
+//   OUTPUT_DIR/img/run00000/kpsc_misc/kpsc_mmass_diffangle_toy_run00000.pdf
 //
 // Definitions match DstKpScattering::ComputeKinematics:
 //   mmass      = (beam + target - proton).M()
@@ -23,6 +23,7 @@
 #include "paths.h"
 
 #include <TCanvas.h>
+#include <TSystem.h>
 #include <TFile.h>
 #include <TH1D.h>
 #include <TH2D.h>
@@ -87,7 +88,7 @@ usage(const char* argv0)
     << "  --sig-beam-rel/ang beam smear\n"
     << "  --mom-bias-p/beam/k  |p| wrong-scale Gaussian width (inconsistent)\n"
     << "  --seed <n>         RNG seed (default 1)\n"
-    << "Default PDF: OUTPUT_DIR/img/run00000/kpsc_mmass_diffangle_toy_run00000.pdf\n"
+    << "Default PDF: OUTPUT_DIR/img/run00000/kpsc_misc/kpsc_mmass_diffangle_toy_run00000.pdf\n"
     << "diff_angle axis: 0 .. " << kAngHi << " rad\n";
 }
 
@@ -899,7 +900,9 @@ main(Int_t argc, Char_t** argv)
     }
   }
 
-  const TString imgDir = ana_helper::get_img_dir(OUTPUT_DIR, run);
+  // default outputs go to the kpsc_misc/ sub-directory of img/runNNNNN
+  const TString imgDir = ana_helper::get_img_dir(OUTPUT_DIR, run) + "/kpsc_misc";
+  gSystem->mkdir(imgDir.Data(), kTRUE);
   if (outPdf.IsNull())
     outPdf = Form("%s/kpsc_mmass_diffangle_toy_run%05d.pdf", imgDir.Data(), run);
 

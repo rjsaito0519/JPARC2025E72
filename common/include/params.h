@@ -71,12 +71,17 @@ namespace param
 
     // HTOF ADC MIP fit, per-channel override of the automatic range / model of
     // ana_helper::htof_adc_fit (for channels whose automatic fit is unstable).
-    // key: htof-<seg>-<u|d|s>   value: { mip_lo, mip_hi, model }
+    // key: htof-<seg>-<u|d|s>   value: { mip_lo, mip_hi, model [, run_first, run_last] }
     //   mip_lo, mip_hi: ADC range of the MIP fit; model: 0 = gauss or landau (smaller chi2),
     //   1 = gauss (MIP = mean), 2 = landau (MIP = maximum). The pedestal fit is not changed.
-    static const std::unordered_map<std::string, std::vector<Double_t>> htof_adc_fit_hint{
+    //   run_first, run_last (optional): the entry applies only when the calibrated run (the first
+    //   run of a merged set) is in [run_first, run_last]; such an entry wins over one without a range.
+    //   A channel may have several entries (one per run range).
+    static const std::unordered_multimap<std::string, std::vector<Double_t>> htof_adc_fit_hint{
         { "htof-3-u",  { 290.0, 433.0, 1.0 } },
         { "htof-31-d", { 205.0, 362.0, 2.0 } },
+        { "htof-22-d", { 300.0, 450.0, 1.0 } },  // a second bump near ADC 550 pulls the automatic fit
+        { "htof-30-d", { 440.0, 900.0, 2.0, 3774, 3781 } },  // broad hump without a clear peak
     };
 
     // HTOF beam-window weak side (ana_helper::htof_adc_fit_weak), per-channel range of the MIP
@@ -85,6 +90,11 @@ namespace param
     static const std::unordered_map<std::string, std::vector<Double_t>> htof_adc_fit_weak_hint{
         { "htof-3-d", { 200.0, 260.0 } },
     };
+
+    // HTOF PHC with HTOF_Calib --exclude-beam (non-pion beam): segments whose hits are dropped
+    // from the PHC samples in events where a beam-like track crossed them. Only these segments
+    // are masked; on the others the beam hits are few and dropping them only costs statistics.
+    static const std::vector<Int_t> htof_phc_exclude_beam_segs{ 20, 21, 22 };
 
     static const std::unordered_map<std::string, std::vector<Double_t>> kvc_opg_fit{
         // key        n_gauss fisrt_peak left right

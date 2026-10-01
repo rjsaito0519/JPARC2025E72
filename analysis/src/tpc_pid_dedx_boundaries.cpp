@@ -23,6 +23,7 @@
 #include "paths.h"
 
 #include <TCanvas.h>
+#include <TSystem.h>
 #include <TDatabasePDG.h>
 #include <TFile.h>
 #include <TGraph.h>
@@ -815,7 +816,9 @@ int main(int argc, char** argv)
   if (has_trial)
     g_trial = BuildOverlay(trial, kTRUE);
 
-  const TString imgDir = ana_helper::get_img_dir(OUTPUT_DIR, runOut);
+  // default outputs go to the tpc_debug/ sub-directory of img/runNNNNN
+  const TString imgDir = ana_helper::get_img_dir(OUTPUT_DIR, runOut) + "/tpc_debug";
+  gSystem->mkdir(imgDir.Data(), kTRUE);
   if (outPdf.IsNull())
     outPdf = Form("%s/PID_dEdx_vs_SignedMom_run%05d.pdf", imgDir.Data(), runOut);
 

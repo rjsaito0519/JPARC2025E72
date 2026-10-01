@@ -33,6 +33,18 @@ def main():
     parser.add_argument('--kaon', action="store_true", help='Use Kaon (K) suffix instead of Pion (Pi)')
     parser.add_argument('--ftof', action="store_true", help='Include FTOF-related detectors (CVC, SFV, SAC3 for hdprm; CVC for hdphc)')
     parser.add_argument(
+        "--htof-exclude-beam",
+        action="store_true",
+        help="htof: drop hits of segments crossed by beam-like tracks from the PHC fit "
+             "(use when the beam is not a pion, e.g. K beam)",
+    )
+    parser.add_argument(
+        "--htof-offset-pion-only",
+        action="store_true",
+        help="htof: absolute TOF offset from pion-bit-only tracks (pid == 1), "
+             "leaving out the pion/kaon-ambiguous ones (use with a kaon beam)",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Skip parameter update; run analysis and produce PDFs only",
@@ -135,7 +147,9 @@ def main():
 
         print(colored(">>> Step 1: Running HTOF_Calib", "cyan"))
         pairs = " ".join(f"{h} {d}" for h, d in zip(hodo_root_files, htof_dst_files))
-        run_command(f"{executable} {pairs} {suffix}")
+        opts = ("--exclude-beam " if args.htof_exclude_beam else "") + \
+               ("--offset-pion-only " if args.htof_offset_pion_only else "")
+        run_command(f"{executable} {opts}{pairs} {suffix}")
 
         if not args.debug:
             print(colored(">>> Step 2: Updating Parameters (HTOF HDPRM: TDC + ADC)", "cyan"))

@@ -7,7 +7,7 @@ Uses existing DstTPCHelixTracking ROOT (tree ``tpc``). Selection is kinematic
 
 Outputs:
   - per-run PDF/summary under RESULTS_IMG/runXXXXX/
-  - one multi-page comparison PDF + summary under RESULTS_IMG/run00000/
+  - one multi-page comparison PDF + summary under RESULTS_IMG/run00000/bt_compare/
     (``charge_bt_compare.pdf``; pages = summary → overlay → mom0 (all)
     → residual-vs-layer → GEM-section residual overlay → GEM-section table, per ± pair)
 
@@ -226,8 +226,9 @@ def select_and_fill(
     max_abs_dz: float = 0.05,
     min_nhit: int = 15,
     max_store: int = 200_000,
+    path: Optional[Path] = None,
 ) -> RunStats:
-    path = helix_path(spec.run)
+    path = path if path is not None else helix_path(spec.run)
     if not path.is_file():
         raise FileNotFoundError(path)
 
@@ -1015,7 +1016,7 @@ def write_compare_summary(path: Path, rows: List[dict]) -> None:
     lines.append("- Selection: |helix_dz|<0.05, nhtrack>=15, |mom0-p_beam|<max(0.12,0.2*p)")
     lines.append("- is_beam / is_accidental are NOT used as selection cuts")
     lines.append("- delta_res_mean = plus - minus; sign-flip of residual mean suggests charge-asymmetric bias")
-    lines.append("- Plots: single multi-page PDF charge_bt_compare.pdf in run00000")
+    lines.append("- Plots: single multi-page PDF charge_bt_compare.pdf in run00000/bt_compare")
     lines.append("- GEM section from hitpos_x/z (tpc::GetSection); see secN_* columns / by_section_* in JSON")
     path.write_text("\n".join(lines) + "\n")
 
@@ -1047,7 +1048,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         compare_rows.extend(rows)
         page_specs.extend(pages)
 
-    out00000 = img_dir(0)
+    out00000 = img_dir(0) / "bt_compare"
+    out00000.mkdir(parents=True, exist_ok=True)
     cleanup_fragmented_compare_pdfs(out00000)
     combined_pdf = out00000 / "charge_bt_compare.pdf"
     write_combined_compare_pdf(combined_pdf, compare_rows, page_specs)
