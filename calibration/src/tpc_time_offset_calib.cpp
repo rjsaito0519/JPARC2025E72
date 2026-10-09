@@ -405,7 +405,8 @@ int main(Int_t argc, char** argv) {
         TF1* f_seed = new TF1(Form("fLayerSeed_%02d", layer), "gaus(0)+pol0(3)", fmin, fmax);
         f_seed->SetParameters(py, px, TMath::Max(0.25, 0.8 * sr), 0.0);
         f_seed->SetParLimits(2, 0.05, 20.0);
-        if (h_layer->Fit(f_seed, "Q") == 0) {
+        // "R": use TF1 range [fmin,fmax]; without it the full hist axis is fit.
+        if (h_layer->Fit(f_seed, "QR") == 0) {
             const Double_t m = f_seed->GetParameter(1);
             const Double_t s = TMath::Abs(f_seed->GetParameter(2));
             if (std::isfinite(m) && std::isfinite(s) && s > 0.0) {
@@ -506,7 +507,9 @@ int main(Int_t argc, char** argv) {
                 fFit->SetParLimits(2, sigma_lo, 20.0);
             }
 
-            if (h->Fit(fFit, "Q") == 0) {
+            // "R": use TF1 range [fit_min,fit_max] so side peaks outside the window
+            // do not pull the mean (acceptance check still uses this window width).
+            if (h->Fit(fFit, "QR") == 0) {
                 Double_t constant = fFit->GetParameter(0);
                 Double_t mean     = fFit->GetParameter(1);
                 Double_t sigma    = fFit->GetParameter(2);
