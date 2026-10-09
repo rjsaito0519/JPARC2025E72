@@ -264,6 +264,9 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
         TTreeReaderValue<std::vector<Int_t>> vertex_source(reader, "vertex_source");
         TTreeReaderValue<std::vector<Double_t>> extrap_seg(reader, "extrap_seg");
         TTreeReaderValue<std::vector<Double_t>> match_cl_seg(reader, "match_cl_seg");
+        // ADC belongs to raw channel; PHC mask/expect TOF must key hit segment (hodo).
+        TTreeReaderValue<std::vector<Double_t>> match_raw_seg(reader, "match_raw_seg");
+        TTreeReaderValue<std::vector<Double_t>> match_hit_seg(reader, "match_hit_seg");
         TTreeReaderValue<std::vector<Double_t>> htof_adc_u(reader, "htof_adc_u");
         TTreeReaderValue<std::vector<Double_t>> htof_adc_d(reader, "htof_adc_d");
         TTreeReaderValue<std::vector<Double_t>> htof_adc_s(reader, "htof_adc_s");
@@ -273,7 +276,8 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
         TTreeReaderValue<std::vector<Double_t>> tof_calc_pi(reader, "tof_calc_pi");
         TTreeReaderValue<std::vector<Double_t>> dt_pi(reader, "dt_pi");
         TTreeReaderValue<std::vector<Double_t>> p_vtx(reader, "p_vtx");
-        if (!all_branches_found(reader, {&event_number, &pid, &seg_match, &vertex_source, &extrap_seg, &match_cl_seg, &htof_adc_u, &htof_adc_d,
+        if (!all_branches_found(reader, {&event_number, &pid, &seg_match, &vertex_source, &extrap_seg, &match_cl_seg,
+                                &match_raw_seg, &match_hit_seg, &htof_adc_u, &htof_adc_d,
                                 &htof_adc_s, &is_beam, &is_accidental, &t_beam, &tof_calc_pi, &dt_pi, &p_vtx},
                                 dst_paths[k])) return kFALSE;
         while (reader.Next()) {
@@ -287,17 +291,31 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
             for (std::size_t it = 0, n_tr = v_pid.size(); it < n_tr; it++) {
                 if (it >= v_seg_match.size() || v_seg_match[it] != 1) continue;       // valid HTOF extrapolation+cluster match
                 if (it >= v_seg.size() || TMath::IsNaN(v_seg[it])) continue;
-                const Int_t seg = static_cast<Int_t>(std::lround(v_seg[it]));
-                if (seg < 0 || seg >= n_seg) continue;
+                const Int_t seg_extrap = static_cast<Int_t>(std::lround(v_seg[it]));
+                if (seg_extrap < 0 || seg_extrap >= n_seg) continue;
+                // Prefer DST match_*_seg (same as DstTPCHelixHTOF); fall back to cluster/extrap.
+                auto round_seg = [&](TTreeReaderValue<std::vector<Double_t>>& br) -> Int_t {
+                    if (it >= br->size() || TMath::IsNaN((*br)[it]))
+                        return -1;
+                    const Int_t s = static_cast<Int_t>(std::lround((*br)[it]));
+                    return (s >= 0 && s < n_seg) ? s : -1;
+                };
+                Int_t seg_cl = round_seg(match_cl_seg);
+                Int_t seg_raw = round_seg(match_raw_seg);
+                Int_t seg_hit = round_seg(match_hit_seg);
+                if (seg_raw < 0)
+                    seg_raw = (seg_cl >= 0) ? seg_cl : seg_extrap;
+                if (seg_hit < 0)
+                    seg_hit = (seg_cl >= 0) ? seg_cl : seg_extrap;
                 n_matched++;
-                // segments a beam-like track went through: its extrapolated and its matched cluster segment
+                // segments a beam-like track went through: extrapolated and matched cluster
                 if (exclude_beam && ((it < is_beam->size() && (*is_beam)[it]) || (it < is_accidental->size() && (*is_accidental)[it]))) {
                     auto& bm = beam_seg_mask[k][*event_number];
-                    bm |= (1ULL << seg) & beam_mask_segs;
-                    if (it < match_cl_seg->size() && !TMath::IsNaN((*match_cl_seg)[it])) {
-                        const Int_t cs = static_cast<Int_t>(std::lround((*match_cl_seg)[it]));
-                        if (cs >= 0 && cs < n_seg) bm |= (1ULL << cs) & beam_mask_segs;
-                    }
+                    bm |= (1ULL << seg_extrap) & beam_mask_segs;
+                    if (seg_cl >= 0)
+                        bm |= (1ULL << seg_cl) & beam_mask_segs;
+                    if (seg_hit >= 0)
+                        bm |= (1ULL << seg_hit) & beam_mask_segs;
                 }
 
                 // HypTPCdEdxPID bitmask: bit0=pi, bit1=K, bit2=proton.
@@ -313,28 +331,34 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
                 // tracks only. With ExtrapAll=0 every matched track has a vertex, so both samples are the same.
                 const Bool_t has_vtx = (it < vertex_source->size() && (*vertex_source)[it] != 0);
                 if (!has_vtx) {
-                    const Bool_t dseg0 = (it < match_cl_seg->size() && !TMath::IsNaN((*match_cl_seg)[it])
-                                          && TMath::Abs(v_seg[it] - (*match_cl_seg)[it]) < 0.5);
+                    const Bool_t dseg0 = (seg_cl >= 0
+                                          && TMath::Abs(v_seg[it] - static_cast<Double_t>(seg_cl)) < 0.5);
                     if (!dseg0) { n_pi_htof_novtx_rej++; continue; }
                     n_pi_htof_novtx++;
                 }
                 const Bool_t beamlike = (it < is_beam->size() && (*is_beam)[it]) || (it < is_accidental->size() && (*is_accidental)[it]);
-                if (has_vtx && !(exclude_beam && beamlike && (beam_mask_segs & (1ULL << seg))))
-                    sel_seg_mask[k][*event_number] |= (1ULL << seg);
+                // PHC looks up by hodo hit_seg: key selection / expected TOF on match_hit_seg.
+                if (has_vtx && !(exclude_beam && beamlike && (beam_mask_segs & (1ULL << seg_hit))))
+                    sel_seg_mask[k][*event_number] |= (1ULL << seg_hit);
                 if (has_vtx && !beamlike && it < dt_pi->size() && !TMath::IsNaN((*dt_pi)[it])
                     && it < p_vtx->size() && (*p_vtx)[it] >= tof_offset_min_p) {
                     auto& m = pi_expect[k][*event_number];
-                    if (!m.count(seg)) { m[seg] = static_cast<Float_t>((*t_beam)[it] + (*tof_calc_pi)[it]); n_pi_tof++; }
+                    if (!m.count(seg_hit)) {
+                        m[seg_hit] = static_cast<Float_t>((*t_beam)[it] + (*tof_calc_pi)[it]);
+                        n_pi_tof++;
+                    }
                     if (offset_pion_only && v_pid[it] == 1) {
                         auto& m1 = pi_expect_p1[k][*event_number];
-                        if (!m1.count(seg)) m1[seg] = static_cast<Float_t>((*t_beam)[it] + (*tof_calc_pi)[it]);
+                        if (!m1.count(seg_hit))
+                            m1[seg_hit] = static_cast<Float_t>((*t_beam)[it] + (*tof_calc_pi)[it]);
                     }
                 }
-                if (it < v_adc_u.size() && !TMath::IsNaN(v_adc_u[it])) h_adc_selected[0][seg]->Fill(v_adc_u[it]);
-                if (it < v_adc_d.size() && !TMath::IsNaN(v_adc_d[it])) h_adc_selected[1][seg]->Fill(v_adc_d[it]);
-                if (it < v_adc_s.size() && !TMath::IsNaN(v_adc_s[it])) h_adc_selected[2][seg]->Fill(v_adc_s[it]);
-                if (seg >= 1 && seg <= 4 && it < v_adc_u.size() && it < v_adc_d.size())
-                    win_adc[seg].emplace_back(v_adc_u[it], v_adc_d[it]);
+                // DST htof_adc_* already come from the matched raw channel; bin by match_raw_seg.
+                if (it < v_adc_u.size() && !TMath::IsNaN(v_adc_u[it])) h_adc_selected[0][seg_raw]->Fill(v_adc_u[it]);
+                if (it < v_adc_d.size() && !TMath::IsNaN(v_adc_d[it])) h_adc_selected[1][seg_raw]->Fill(v_adc_d[it]);
+                if (it < v_adc_s.size() && !TMath::IsNaN(v_adc_s[it])) h_adc_selected[2][seg_raw]->Fill(v_adc_s[it]);
+                if (seg_raw >= 1 && seg_raw <= 4 && it < v_adc_u.size() && it < v_adc_d.size())
+                    win_adc[seg_raw].emplace_back(v_adc_u[it], v_adc_d[it]);
             }
         }
     }
