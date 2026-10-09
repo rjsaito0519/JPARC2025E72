@@ -39,11 +39,9 @@ try:
 except ImportError:  # pragma: no cover
     Discord = None  # type: ignore
 
-# Same webhook as runmanager/myrun.py
-DISCORD_WEBHOOK = (
-    "https://discord.com/api/webhooks/1195721561018220544/"
-    "g8IqwcoYDotpcmXTrEgB3o-Bnc_GXsAU_lZzAm7zBZtWi_pjLi3z0LAAtbXxgoI48Tfa"
-)
+# Optional notify URL from the environment (never hard-code tokens in-tree).
+# Example: export DISCORD_WEBHOOK='https://discord.com/api/webhooks/...'
+DISCORD_WEBHOOK_ENV = "DISCORD_WEBHOOK"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 # myanalysis root (== /home/had/sryuta/JPARC2025E72 via symlink)
@@ -107,8 +105,14 @@ class IterOrchestrator:
         self.log_dir = MYANALYSIS_ROOT / "results" / "tpc_calib_iter"
         self.log_path = self.log_dir / "iter_log.txt"
         self.discord = None
-        if not dry_run and Discord is not None:
-            self.discord = Discord(url=DISCORD_WEBHOOK)
+        webhook = os.environ.get(DISCORD_WEBHOOK_ENV, "").strip()
+        if not dry_run and Discord is not None and webhook:
+            self.discord = Discord(url=webhook)
+        elif not dry_run and not webhook:
+            print(
+                f"[Info] {DISCORD_WEBHOOK_ENV} unset: Discord notify disabled",
+                flush=True,
+            )
 
         self.hit_yml = self.analyzer_dir / HIT_YML_REL
         self.trk_yml = self.analyzer_dir / TRK_YML_REL
@@ -172,7 +176,11 @@ class IterOrchestrator:
         try:
             self.discord.post(content=content[:1900])
         except Exception as exc:  # noqa: BLE001
-            self.log(f"[WARN] Discord post failed: {exc}")
+            # Avoid echoing a full webhook URL if the client embeds it in the error.
+            msg = str(exc)
+            if "discord.com/api/webhooks" in msg:
+                msg = "request failed (webhook URL redacted)"
+            self.log(f"[WARN] Discord post failed: {msg}")
 
     def fail(self, msg: str) -> None:
         self.notify(f"[tpc_iter] STOP: {msg}")
