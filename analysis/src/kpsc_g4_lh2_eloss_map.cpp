@@ -316,11 +316,87 @@ struct EventFingerprintHash
 
 struct HoldoutSample
 {
-  Int_t ip = 0;
-  Int_t il = 0;
+  Double_t p = 0.;    // same p axis as the map (--paxis)
+  Double_t L = 0.;
   Double_t loss = 0.;
   Bool_t exit_cap = kFALSE;
 };
+
+//_____________________________________________________________________________
+Int_t
+FindLowerIndex(
+  const std::vector<Double_t>& edges,
+  Double_t x
+)
+{
+  // Same clamp convention as Lh2ElossMan::FindLowerIndex.
+  if (x <= edges.front())
+    return 0;
+  if (x >= edges.back())
+    return static_cast<Int_t>(edges.size()) - 2;
+  auto it = std::upper_bound(edges.begin(), edges.end(), x);
+  Int_t i = static_cast<Int_t>(std::distance(edges.begin(), it)) - 1;
+  if (i < 0)
+    i = 0;
+  if (i > static_cast<Int_t>(edges.size()) - 2)
+    i = static_cast<Int_t>(edges.size()) - 2;
+  return i;
+}
+
+//_____________________________________________________________________________
+Double_t
+BilinearLoss(
+  const std::vector<Double_t>& p_edges,
+  const std::vector<Double_t>& l_edges,
+  const std::vector<Double_t>& grid,
+  Double_t p_MeV,
+  Double_t L_mm
+)
+{
+  // Mirror of Lh2ElossMan::Loss bilinear clamp (without Cap/main selection).
+  if (p_edges.size() < 2 || l_edges.size() < 2)
+    return 0.;
+  if (!(p_MeV > 0.) || !(L_mm >= 0.) || !std::isfinite(p_MeV) || !std::isfinite(L_mm))
+    return 0.;
+  const Int_t nl = static_cast<Int_t>(l_edges.size());
+  const Int_t ip = FindLowerIndex(p_edges, p_MeV);
+  const Int_t il = FindLowerIndex(l_edges, L_mm);
+  const Double_t p0 = p_edges[static_cast<size_t>(ip)];
+  const Double_t p1 = p_edges[static_cast<size_t>(ip + 1)];
+  const Double_t l0 = l_edges[static_cast<size_t>(il)];
+  const Double_t l1 = l_edges[static_cast<size_t>(il + 1)];
+  auto at = [&](Int_t i, Int_t j) -> Double_t {
+    return grid[static_cast<size_t>(i * nl + j)];
+  };
+  const Double_t f00 = at(ip, il);
+  const Double_t f10 = at(ip + 1, il);
+  const Double_t f01 = at(ip, il + 1);
+  const Double_t f11 = at(ip + 1, il + 1);
+  Double_t tp = 0.;
+  if (std::abs(p1 - p0) > kEps) {
+    tp = (p_MeV - p0) / (p1 - p0);
+    if (tp < 0.)
+      tp = 0.;
+    if (tp > 1.)
+      tp = 1.;
+  }
+  Double_t tl = 0.;
+  if (std::abs(l1 - l0) > kEps) {
+    tl = (L_mm - l0) / (l1 - l0);
+    if (tl < 0.)
+      tl = 0.;
+    if (tl > 1.)
+      tl = 1.;
+  }
+  const Double_t loss
+    = (1. - tp) * (1. - tl) * f00
+    + tp * (1. - tl) * f10
+    + (1. - tp) * tl * f01
+    + tp * tl * f11;
+  if (!(loss > 0.) || !std::isfinite(loss))
+    return 0.;
+  return loss;
+}
 
 //_____________________________________________________________________________
 EventFingerprint
@@ -567,8 +643,8 @@ main(int argc, char** argv)
          static_cast<std::size_t>(holdout_frac * 10000. + 0.5));
       if (is_holdout) {
         HoldoutSample s;
-        s.ip = ip;
-        s.il = il;
+        s.p = paxis_1st ? p1.Mag() : p0;
+        s.L = L;
         s.loss = loss;
         s.exit_cap = exit_cap;
         holdout.push_back(s);
@@ -772,10 +848,10 @@ main(int argc, char** argv)
     Double_t sum = 0.;
     Double_t sum2 = 0.;
     for (const auto& s : holdout) {
-      const size_t idx = static_cast<size_t>(s.ip * nl + s.il);
-      Double_t pred = loss_grid[idx];
-      if (split_exit && s.exit_cap)
-        pred = loss_cap[idx];
+      // Same bilinear + Cap selection as Lh2ElossMan::Loss for this map.
+      const std::vector<Double_t>& grid =
+        (split_exit && s.exit_cap) ? loss_cap : loss_grid;
+      const Double_t pred = BilinearLoss(kPEdges, kLEdges, grid, s.p, s.L);
       const Double_t resid = s.loss - pred;
       sum += std::abs(resid);
       sum2 += resid * resid;
@@ -798,7 +874,7 @@ main(int argc, char** argv)
             << " L0=" << n_skip_L0
             << " bin=" << n_skip_bin << "\n";
   if (n_holdout_eval > 0) {
-    std::cout << "holdout residual (loss-map): "
+    std::cout << "holdout residual vs Lh2ElossMan-style bilinear Loss: "
               << "N=" << n_holdout_eval
               << " mean|d|=" << holdout_mean_abs
               << " rms=" << holdout_rms << " MeV/c\n";
