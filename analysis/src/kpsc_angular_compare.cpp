@@ -270,6 +270,27 @@ NormalizeUnitDensity(TH1D* h)
     h->Scale(1. / integ);
 }
 
+//_____________________________________________________________________________
+Bool_t
+SameCosBinning(
+  const TH1D* a,
+  const TH1D* b
+)
+{
+  if (!a || !b)
+    return kFALSE;
+  if (a->GetNbinsX() != b->GetNbinsX())
+    return kFALSE;
+  const Int_t nb = a->GetNbinsX();
+  constexpr Double_t kEps = 1.e-9;
+  for (Int_t i = 1; i <= nb + 1; ++i) {
+    if (TMath::Abs(a->GetXaxis()->GetBinLowEdge(i) -
+                   b->GetXaxis()->GetBinLowEdge(i)) > kEps)
+      return kFALSE;
+  }
+  return kTRUE;
+}
+
 TH1D*
 MakeCorrected(const TH1D* h_raw, const TH1D* h_acc, const char* name)
 {
@@ -277,6 +298,7 @@ MakeCorrected(const TH1D* h_raw, const TH1D* h_acc, const char* name)
   h->SetDirectory(nullptr);
   h->SetTitle("acceptance-corrected cos#theta_{K}^{CM};cos#theta_{K}^{CM};normalized");
   h->Reset("ICES");
+  // Bin i of raw and acceptance must share the same cos(theta) edges.
   for (Int_t i = 1; i <= h_raw->GetNbinsX(); ++i) {
     const Double_t a = h_acc->GetBinContent(i);
     const Double_t n = h_raw->GetBinContent(i);
@@ -551,12 +573,17 @@ main(int argc, char** argv)
   h_acc = static_cast<TH1D*>(h_acc->Clone("h_acceptance_use"));
   h_acc->SetDirectory(nullptr);
 
-  // Rebin raw cos to match acceptance edges if needed (same 50 on [-1,1]).
-  if (h_acc->GetNbinsX() != h_raw->GetNbinsX()
-      || h_acc->GetXaxis()->GetXmin() != h_raw->GetXaxis()->GetXmin()
-      || h_acc->GetXaxis()->GetXmax() != h_raw->GetXaxis()->GetXmax()) {
-    std::cerr << "Warning: acceptance binning differs from fill hist; "
-                 "using acceptance edges via clone contents best-effort.\n";
+  // MakeCorrected divides by acceptance bin index; require identical edges.
+  if (!SameCosBinning(h_raw, h_acc)) {
+    std::cerr << "Error: acceptance binning differs from fill hist "
+                 "(nbins or edges). Refusing index-wise division.\n"
+              << "  raw: nbins=" << h_raw->GetNbinsX()
+              << " [" << h_raw->GetXaxis()->GetXmin()
+              << ", " << h_raw->GetXaxis()->GetXmax() << "]\n"
+              << "  acc: nbins=" << h_acc->GetNbinsX()
+              << " [" << h_acc->GetXaxis()->GetXmin()
+              << ", " << h_acc->GetXaxis()->GetXmax() << "]\n";
+    return 1;
   }
 
   const TString sparkCsv =
