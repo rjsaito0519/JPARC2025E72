@@ -4,15 +4,19 @@
 // Usage:
 //   kpsc_g4_lh2_eloss_map <g4.root> [g4.root ...] [-o mapfile] [--pdf out.pdf]
 //                         [--paxis prm|1st] [--pgrid coarse|fine] [--min-hits N]
+//                         [--holdout-frac f] [--split-exit]
 // --min-hits: require at least N TPC hits on the primary proton track
 //             (mimics the reconstructed sample; default 0).
 // --split-exit: main grid from protons leaving the cylinder through the side
 //             wall, plus "Cap p L Loss" lines from protons leaving through a
 //             Y end cap (read by Lh2ElossMan as the cap grid).
+// --holdout-frac f: fraction of unique events held out of the map median
+//             (0..1, default 0). Holdout residuals are summarized after the
+//             map is built. Duplicate kinematics never enter either set.
 //
 // Loss = p_PRM - p_TPC1st  [MeV/c] (>=0; negative samples dropped)
 // L    = PathLength in finite LH2 cylinder from vtx along proton dir [mm]
-// Grid: median Loss in (p, L) bins; written as flat text map.
+// Grid: median Loss in (p, L) bins over unique kinematics; written as flat text map.
 // --paxis selects the p used for the grid axis:
 //   prm (default): p_PRM (vertex momentum)
 //   1st          : p_TPC1st (momentum at the first TPC hit, close to what the
@@ -37,10 +41,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace
@@ -76,9 +82,11 @@ usage(const char* a0)
   std::cerr
     << "Usage: " << a0
     << " <g4.root> [g4.root ...] [-o mapfile] [--pdf out.pdf]"
-    << " [--paxis prm|1st] [--pgrid coarse|fine] [--min-hits N] [--split-exit]\n"
+    << " [--paxis prm|1st] [--pgrid coarse|fine] [--min-hits N]"
+    << " [--holdout-frac f] [--split-exit]\n"
     << "  tree: g4hyptpc\n"
     << "  Loss = p_PRM - p_TPC1st [MeV/c], L = cylinder PathLength [mm]\n"
+    << "  Unique kinematics only (rounded fingerprint); optional holdout\n"
     << "  Default map/PDF under OUTPUT_DIR/img/run00000/kpsc_lh2eloss/g4/\n";
 }
 
@@ -248,6 +256,95 @@ BinIndex(const std::vector<Double_t>& edges, Double_t x)
   return best;
 }
 
+//_____________________________________________________________________________
+Int_t
+Quantize(
+  Double_t x,
+  Double_t scale
+)
+{
+  return static_cast<Int_t>(std::llround(x * scale));
+}
+
+// Rounded kinematics key so duplicated G4 blocks (same reaction, many copies)
+// contribute once to the median. Scale keeps mm / MeV/c at ~0.01 resolution.
+struct EventFingerprint
+{
+  Int_t p0_q = 0;
+  Int_t p1_q = 0;
+  Int_t vx_q = 0;
+  Int_t vy_q = 0;
+  Int_t vz_q = 0;
+  Int_t L_q = 0;
+  Int_t loss_q = 0;
+  Int_t cap = 0;
+
+  Bool_t
+  operator==(
+    const EventFingerprint& o
+  ) const
+  {
+    return p0_q == o.p0_q && p1_q == o.p1_q && vx_q == o.vx_q &&
+           vy_q == o.vy_q && vz_q == o.vz_q && L_q == o.L_q &&
+           loss_q == o.loss_q && cap == o.cap;
+  }
+};
+
+struct EventFingerprintHash
+{
+  std::size_t
+  operator()(
+    const EventFingerprint& f
+  ) const
+  {
+    std::size_t h = 1469598103934665603ull;
+    const auto mix = [&](Int_t v) {
+      h ^= static_cast<std::size_t>(static_cast<std::uint32_t>(v));
+      h *= 1099511628211ull;
+    };
+    mix(f.p0_q);
+    mix(f.p1_q);
+    mix(f.vx_q);
+    mix(f.vy_q);
+    mix(f.vz_q);
+    mix(f.L_q);
+    mix(f.loss_q);
+    mix(f.cap);
+    return h;
+  }
+};
+
+struct HoldoutSample
+{
+  Int_t ip = 0;
+  Int_t il = 0;
+  Double_t loss = 0.;
+  Bool_t exit_cap = kFALSE;
+};
+
+//_____________________________________________________________________________
+EventFingerprint
+MakeFingerprint(
+  Double_t p0,
+  Double_t p1,
+  const TVector3& vtx,
+  Double_t L,
+  Double_t loss,
+  Bool_t exit_cap
+)
+{
+  EventFingerprint f;
+  f.p0_q = Quantize(p0, 100.);
+  f.p1_q = Quantize(p1, 100.);
+  f.vx_q = Quantize(vtx.X(), 100.);
+  f.vy_q = Quantize(vtx.Y(), 100.);
+  f.vz_q = Quantize(vtx.Z(), 100.);
+  f.L_q = Quantize(L, 100.);
+  f.loss_q = Quantize(loss, 100.);
+  f.cap = exit_cap ? 1 : 0;
+  return f;
+}
+
 }  // namespace
 
 int
@@ -260,6 +357,7 @@ main(int argc, char** argv)
   Bool_t pgrid_fine = kFALSE;
   Int_t min_hits = 0;
   Bool_t split_exit = kFALSE;
+  Double_t holdout_frac = 0.;
   for (int i = 1; i < argc; ++i) {
     const TString a = argv[i];
     if (a == "-h" || a == "--help") {
@@ -308,6 +406,18 @@ main(int argc, char** argv)
       min_hits = TString(argv[++i]).Atoi();
       continue;
     }
+    if (a == "--holdout-frac") {
+      if (i + 1 >= argc) {
+        usage(argv[0]);
+        return 1;
+      }
+      holdout_frac = TString(argv[++i]).Atof();
+      if (!(holdout_frac >= 0.) || holdout_frac >= 1.) {
+        std::cerr << "Error: --holdout-frac must be in [0, 1)\n";
+        return 1;
+      }
+      continue;
+    }
     if (a == "--pgrid") {
       if (i + 1 >= argc) {
         usage(argv[0]);
@@ -347,10 +457,16 @@ main(int argc, char** argv)
     static_cast<size_t>(np * nl));
   Long64_t n_used_cap = 0;
 
+  Long64_t n_raw = 0;
   Long64_t n_used = 0;
+  Long64_t n_dup_skipped = 0;
+  Long64_t n_holdout = 0;
   Long64_t n_skip_neg = 0;
   Long64_t n_skip_L0 = 0;
   Long64_t n_skip_bin = 0;
+  std::unordered_set<EventFingerprint, EventFingerprintHash> seen;
+  std::vector<HoldoutSample> holdout;
+  const EventFingerprintHash fp_hash;
 
   for (const auto& in_path : in_paths) {
     TFile* fin = TFile::Open(in_path, "READ");
@@ -436,6 +552,27 @@ main(int argc, char** argv)
       const Int_t il = BinIndex(kLEdges, L);
       if (ip < 0 || il < 0) {
         ++n_skip_bin;
+        continue;
+      }
+      ++n_raw;
+      const EventFingerprint fp = MakeFingerprint(
+        p0, p1.Mag(), v_prm, L, loss, exit_cap);
+      if (!seen.insert(fp).second) {
+        ++n_dup_skipped;
+        continue;
+      }
+      const Bool_t is_holdout =
+        (holdout_frac > 0.) &&
+        ((fp_hash(fp) % 10000ull) <
+         static_cast<std::size_t>(holdout_frac * 10000. + 0.5));
+      if (is_holdout) {
+        HoldoutSample s;
+        s.ip = ip;
+        s.il = il;
+        s.loss = loss;
+        s.exit_cap = exit_cap;
+        holdout.push_back(s);
+        ++n_holdout;
         continue;
       }
       if (split_exit && exit_cap) {
@@ -537,7 +674,13 @@ main(int argc, char** argv)
     ofs << "#  Loss = p_start - p_end  [MeV/c]  (>=0)\n";
     ofs << "#  apply: |p|_vtx [MeV/c] = |p|_TPC [MeV/c] + Loss\n";
     ofs << "#  L from vtx+dir vs cylinder (TargetRadius, TargetHalfHeight)\n";
-    ofs << "#  built by kpsc_g4_lh2_eloss_map  N_used=" << n_used << "\n";
+    ofs << "#  built by kpsc_g4_lh2_eloss_map  N_train=" << n_used
+        << "  N_raw=" << n_raw
+        << "  N_unique=" << static_cast<Long64_t>(seen.size())
+        << "  N_dup_skipped=" << n_dup_skipped
+        << "  N_holdout=" << n_holdout << "\n";
+    ofs << "#  dedupe: rounded kinematics fingerprint (cross-file)\n";
+    ofs << "#  holdout_frac=" << holdout_frac << "\n";
     ofs << "#  min TPC hits on proton track: " << min_hits << "\n";
     if (split_exit)
       ofs << "#  split by exit surface: main grid = side exits,"
@@ -609,22 +752,56 @@ main(int argc, char** argv)
   TLatex lat;
   lat.SetNDC();
   lat.SetTextSize(0.03);
-  lat.DrawLatex(0.12, 0.92, Form("N_used=%lld  skip_neg=%lld  L0=%lld  bin=%lld",
-                                 n_used, n_skip_neg, n_skip_L0, n_skip_bin));
+  lat.DrawLatex(
+    0.12, 0.92,
+    Form("N_train=%lld  N_raw=%lld  dup=%lld  holdout=%lld",
+         n_used, n_raw, n_dup_skipped, n_holdout));
   pdf.Print(c);
   c.Clear();
   c.cd();
   gPad->SetRightMargin(0.14);
-  h_n.SetTitle("LH2 map entries per (p,L) cell");
+  h_n.SetTitle("LH2 map unique train entries per (p,L) cell");
   h_n.Draw("colz");
   pdf.Print(c);
   pdf.Close(c);
 
+  Double_t holdout_mean_abs = 0.;
+  Double_t holdout_rms = 0.;
+  Long64_t n_holdout_eval = 0;
+  if (!holdout.empty()) {
+    Double_t sum = 0.;
+    Double_t sum2 = 0.;
+    for (const auto& s : holdout) {
+      const size_t idx = static_cast<size_t>(s.ip * nl + s.il);
+      Double_t pred = loss_grid[idx];
+      if (split_exit && s.exit_cap)
+        pred = loss_cap[idx];
+      const Double_t resid = s.loss - pred;
+      sum += std::abs(resid);
+      sum2 += resid * resid;
+      ++n_holdout_eval;
+    }
+    if (n_holdout_eval > 0) {
+      holdout_mean_abs = sum / static_cast<Double_t>(n_holdout_eval);
+      holdout_rms = std::sqrt(sum2 / static_cast<Double_t>(n_holdout_eval));
+    }
+  }
+
   std::cout << "Wrote map: " << out_map << "\n"
             << "Wrote PDF: " << out_pdf << "\n"
-            << "N_used=" << n_used
+            << "N_raw=" << n_raw
+            << " N_unique=" << seen.size()
+            << " N_train=" << n_used
+            << " N_dup_skipped=" << n_dup_skipped
+            << " N_holdout=" << n_holdout
             << " skip_neg=" << n_skip_neg
             << " L0=" << n_skip_L0
             << " bin=" << n_skip_bin << "\n";
+  if (n_holdout_eval > 0) {
+    std::cout << "holdout residual (loss-map): "
+              << "N=" << n_holdout_eval
+              << " mean|d|=" << holdout_mean_abs
+              << " rms=" << holdout_rms << " MeV/c\n";
+  }
   return 0;
 }
