@@ -437,15 +437,30 @@ def read_digit_cmap(conf_path: Path):
     return digit, cmap
 
 
+def resolve_conf_template(conf_dir: Path, name: str) -> Path:
+    """Prefer conf/example/<name>, then conf/<name> (param snapshot layout)."""
+    candidates = [conf_dir / "example" / name, conf_dir / name]
+    for path in candidates:
+        if path.is_file():
+            return path
+    tried = ", ".join(str(p) for p in candidates)
+    print(colored(f"Error: conf template not found: {name} (tried {tried})", "red"))
+    sys.exit(1)
+
+
 def ensure_tpchit_conf(run_num: int) -> str:
     conf_dir = config.PARAM_DIR / "conf"
     sub_conf_dir = conf_dir / config.SUB_DIR
     sub_conf_dir.mkdir(parents=True, exist_ok=True)
 
     target = sub_conf_dir / f"analyzer_run{run_num:05d}_tpchit.conf"
-    example_dir = conf_dir / "example"
-    tpl_path = example_dir / TPCHIT_CONF_TEMPLATE
-    era_path = example_dir / tpchit_era_conf_name(run_num)
+    rel = f"param/conf/{config.SUB_DIR}/{target.name}"
+    if target.exists():
+        print(colored(f"Keeping existing TPCHit conf: {target}", "cyan"))
+        return rel
+
+    tpl_path = resolve_conf_template(conf_dir, TPCHIT_CONF_TEMPLATE)
+    era_path = resolve_conf_template(conf_dir, tpchit_era_conf_name(run_num))
     digit, cmap = read_digit_cmap(era_path)
 
     out_lines = []
@@ -463,7 +478,7 @@ def ensure_tpchit_conf(run_num: int) -> str:
             out_lines.append(line)
 
     target.write_text("".join(out_lines))
-    return f"param/conf/{config.SUB_DIR}/{target.name}"
+    return rel
 
 
 def batch_runlist_name(yml_prefix: str, run_nums: list) -> str:
@@ -693,7 +708,7 @@ def setup_calibration_run(run_num: int, mode: dict, suffixes: list, ref, mom):
                 example_base = "analyzer_e72_example2.conf"
             else:
                 example_base = "analyzer_e72_example3.conf"
-            shutil.copy(conf_dir / "example" / example_base, conf_target_file)
+            shutil.copy(resolve_conf_template(conf_dir, example_base), conf_target_file)
 
         buf = []
         has_d5mtx = False

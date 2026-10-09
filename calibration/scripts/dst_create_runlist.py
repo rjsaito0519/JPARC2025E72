@@ -348,14 +348,32 @@ def validate_conf(conf_path: Path) -> None:
     validate_dcgeo(cmap["DCGEO:"])
 
 
+def resolve_conf_template(conf_dir: Path, name: str) -> Path:
+    """Prefer conf/example/<name>, then conf/<name> (param snapshot layout)."""
+    candidates = [conf_dir / "example" / name, conf_dir / name]
+    for path in candidates:
+        if path.is_file():
+            return path
+    tried = ", ".join(str(p) for p in candidates)
+    print(colored(f"Error: conf template not found: {name} (tried {tried})", "red"))
+    sys.exit(1)
+
+
 def ensure_dst_conf(run_num: int, mode: dict, ref) -> str:
     conf_dir = config.PARAM_DIR / "conf"
     sub_conf = conf_dir / SUB_DIR
     sub_conf.mkdir(parents=True, exist_ok=True)
 
-    example_dir = conf_dir / "example"
-    tpl_path = example_dir / mode["tpl_conf"]
-    era_path = example_dir / era_conf_name(run_num)
+    target = sub_conf / f"analyzer_run{run_num:05d}_dst_{mode['mode_label']}.conf"
+    rel = f"param/conf/{SUB_DIR}/{target.name}"
+    # Do not overwrite hand-tuned run conf (optional keys / TPCPOS choice).
+    if target.exists():
+        print(colored(f"Keeping existing DST conf: {target}", "cyan"))
+        validate_conf(target)
+        return rel
+
+    tpl_path = resolve_conf_template(conf_dir, mode["tpl_conf"])
+    era_path = resolve_conf_template(conf_dir, era_conf_name(run_num))
     digit, cmap_era = read_digit_cmap(era_path)
 
     resolved = {k: resolve_key_path(k, run_num, mode, ref) for k in DEFAULTS}
@@ -399,10 +417,10 @@ def ensure_dst_conf(run_num: int, mode: dict, ref) -> str:
         if key not in seen_hsfld:
             out_lines.append(f"{key}\t{val}\n")
 
-    target = sub_conf / f"analyzer_run{run_num:05d}_dst_{mode['mode_label']}.conf"
+    # New conf only: DEFAULTS TPCPOS is TPCPositionCorrectionMap_0.
     target.write_text("".join(out_lines))
     validate_conf(target)
-    return f"param/conf/{SUB_DIR}/{target.name}"
+    return rel
 
 
 def write_dst_runlist(path: Path, mode: dict, runs_info: list):
