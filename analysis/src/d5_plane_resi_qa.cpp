@@ -1,21 +1,24 @@
 // Per-plane residual QA for the D5 alignment (BLC1a/b, BLC2a/b), K window versus pi
-// Usage: d5_plane_resi_qa <run> [--kaon | --pion | --all] [--bcin <BcIn.root>]
+// Usage: d5_plane_resi_qa <run> [--pion | --kaon | --all] [--bcin <BcIn.root>]
 //                         [--bcout <BcOut.root>] [--d5 <D5.root>] [-o <out.pdf>]
-// Defaults: BcIn  DECODE_DIR/runXXXXX/runXXXXX_BcIn_resi_K.root
-//           BcOut DECODE_DIR/runXXXXX/runXXXXX_BcOut_resi_K.root
-//           D5    DECODE_DIR/runXXXXX/runXXXXX_D5_K.root
+// Defaults (S = Pi for --pion (default), K for --kaon / --all):
+//           BcIn  DECODE_DIR/runXXXXX/runXXXXX_BcIn_resi_S.root
+//           BcOut DECODE_DIR/runXXXXX/runXXXXX_BcOut_resi_S.root
+//           D5    DECODE_DIR/runXXXXX/runXXXXX_D5_S.root
 //           pdf   OUTPUT_DIR/img/runXXXXX/d5_plane_resi_qa_runXXXXX.pdf
 //
 // Chamber-fit residuals (BcIn: BLC1a+b, BcOut: BLC2a+b) are drawn per plane for the K
 // window (*_K) and pi (*_Pi), pi scaled to the K entries. <|r|> (within +-kRange) gives
 // the half distance of the two peaks when the residual is split by the left/right side.
-// D5 joint-fit pages use the beam selected by --kaon (default) / --pion / --all
-// (D5WireResi_*_K / _Pi / all beams): the D5Fit residual (hit in the fit), the exclusive
-// residual D5Excl (hit left out of the refit) and the exclusive pull D5Pull = D5Excl / Res.
-// Files decoded before these histograms existed fall back to the all-beam D5Fit only.
+// D5 joint-fit pages use the selected beam (D5WireResi_*_Pi / _K / all beams): the D5Fit
+// residual (hit in the fit), the exclusive residual D5Excl (hit left out of the refit), the
+// exclusive pull D5Pull = D5Excl / Res, and the D5Fit residual versus the track position along
+// (s_para) and across (s_perp) the wires. Files decoded before the per-beam-flag histograms
+// existed fall back to the all-beam D5Fit only. Last pages: D5Track_* QA (all beams).
 // The first pages show residual versus plane (2D, linear colour scale, profile mean overlaid).
 
 #include "ana_helper.h"
+#include "d5_helper.h"
 #include "paths.h"
 
 #include <TCanvas.h>
@@ -42,32 +45,14 @@ const std::vector<TString> kDets = { "BLC1a", "BLC1b", "BLC2a", "BLC2b" };
 const std::vector<TString> kPlanes = { "U1", "UP1", "V1", "VP1", "U2", "UP2", "V2", "VP2" };
 constexpr Double_t kRange = 1.2; // [mm] drawn residual range
 
-struct Core
-{
-  Double_t mean = NAN;
-  Double_t sigma = NAN;
-};
+using Core = d5_helper::GaussCore;
 
 // Gauss core in +-1.5 sigma, iterated from the peak
 Core
 fit_core(TH1* h, Double_t sigma0)
 {
-  Core c;
-  if (!h || h->GetEntries() < 100) return c;
-  Double_t m = h->GetBinCenter(h->GetMaximumBin()), s = sigma0;
-  auto* f = new TF1(Form("g_%s", h->GetName()), "gaus", m - 1.5 * s, m + 1.5 * s);
-  f->SetLineColor(kBlack);
-  f->SetLineWidth(1);
-  for (Int_t it = 0; it < 5; ++it) {
-    f->SetRange(m - 1.5 * s, m + 1.5 * s);
-    f->SetParameters(h->GetMaximum(), m, s);
-    h->Fit(f, "QR0");
-    m = f->GetParameter(1);
-    s = std::fabs(f->GetParameter(2));
-  }
-  c.mean = m;
-  c.sigma = s;
-  return c;
+  if (!h) return Core();
+  return d5_helper::fit_core(h, h->GetBinCenter(h->GetMaximumBin()), sigma0, 5);
 }
 
 // <|r|> within +-kRange: half distance of the two peaks of a left/right split residual
@@ -130,7 +115,7 @@ draw_vs_plane(TH2* h2, const TString& title)
 }
 
 // D5WireResi histogram of the selected beam; all-beam fallback for older files
-TString g_d5_suffix = "_K";
+TString g_d5_suffix = "_Pi";
 Bool_t g_d5_fallback = kFALSE;
 
 TObject*
@@ -153,7 +138,7 @@ d5_label()
 void
 usage(const char* argv0)
 {
-  std::cerr << "Usage: " << argv0 << " <run> [--kaon | --pion | --all] [--bcin <file>]"
+  std::cerr << "Usage: " << argv0 << " <run> [--pion | --kaon | --all] [--bcin <file>]"
             << " [--bcout <file>] [--d5 <file>] [-o <out.pdf>]\n";
 }
 
@@ -164,22 +149,27 @@ main(Int_t argc, char** argv)
 {
   if (argc < 2) { usage(argv[0]); return 1; }
   const Int_t run = std::atoi(argv[1]);
-  TString path_bcin = Form("%s/run%05d/run%05d_BcIn_resi_K.root", DECODE_DIR.Data(), run, run);
-  TString path_bcout = Form("%s/run%05d/run%05d_BcOut_resi_K.root", DECODE_DIR.Data(), run, run);
-  TString path_d5 = Form("%s/run%05d/run%05d_D5_K.root", DECODE_DIR.Data(), run, run);
+  d5_helper::BeamSel beam;
+  TString path_bcin, path_bcout, path_d5;
   TString path_pdf = Form("%s/d5_plane_resi_qa_run%05d.pdf",
                           ana_helper::get_img_dir(OUTPUT_DIR, run).Data(), run);
   for (Int_t i = 2; i < argc; ++i) {
     const TString a = argv[i];
-    if (a == "--kaon") g_d5_suffix = "_K";
-    else if (a == "--pion") g_d5_suffix = "_Pi";
-    else if (a == "--all") g_d5_suffix = "";
-    else if (a == "--bcin" && i + 1 < argc) path_bcin = argv[++i];
+    if (d5_helper::parse_beam_option(a, beam)) continue;
+    if (a == "--bcin" && i + 1 < argc) path_bcin = argv[++i];
     else if (a == "--bcout" && i + 1 < argc) path_bcout = argv[++i];
     else if (a == "--d5" && i + 1 < argc) path_d5 = argv[++i];
     else if (a == "-o" && i + 1 < argc) path_pdf = argv[++i];
     else { usage(argv[0]); return 1; }
   }
+  g_d5_suffix = beam.hist_suffix;
+  const char* sfx = beam.param_suffix.Data();
+  if (path_bcin.IsNull())
+    path_bcin = Form("%s/run%05d/run%05d_BcIn_resi_%s.root", DECODE_DIR.Data(), run, run, sfx);
+  if (path_bcout.IsNull())
+    path_bcout = Form("%s/run%05d/run%05d_BcOut_resi_%s.root", DECODE_DIR.Data(), run, run, sfx);
+  if (path_d5.IsNull())
+    path_d5 = Form("%s/run%05d/run%05d_D5_%s.root", DECODE_DIR.Data(), run, run, sfx);
 
   auto* f_bcin = TFile::Open(path_bcin);
   auto* f_bcout = TFile::Open(path_bcout);
@@ -333,6 +323,64 @@ main(Int_t argc, char** argv)
     }
     c->cd();
     c->Print(path_pdf, Form("Title:%s D5 fit", kDets[d].Data()));
+  }
+
+  // D5Fit residual vs track position across (s_perp) / along (s_para) the wires: profile per plane
+  const Int_t kPlaneColor[8] = { kBlue + 1, kAzure + 7, kRed + 1, kOrange + 7,
+                                 kGreen + 2, kTeal + 3, kMagenta + 1, kGray + 2 };
+  for (const TString& st : { TString("sperp"), TString("spara") }) {
+    c->Clear();
+    c->Divide(2, 2, 0.002, 0.002);
+    for (std::size_t d = 0; d < kDets.size(); ++d) {
+      c->cd(d + 1);
+      gPad->SetLeftMargin(0.12);
+      TLegend* leg = nullptr;
+      Bool_t first = kTRUE;
+      for (Int_t p = 0; p < 8; ++p) {
+        auto* h2 = dynamic_cast<TH2*>(get_d5(f_d5, Form("D5WireResi_%s_D5Fit_plane%d_vs_%s", kDets[d].Data(), p, st.Data())));
+        if (!h2 || h2->GetEntries() <= 0) continue;
+        auto* pr = h2->ProfileX(Form("pr_%s_%d_%s", kDets[d].Data(), p, st.Data()));
+        pr->SetDirectory(nullptr);
+        pr->SetTitle(Form("%s D5 fit residual vs %s (%s);%s [mm];<residual> [mm]", kDets[d].Data(),
+                          st == "sperp" ? "s_{perp}" : "s_{para}", d5_label().Data(),
+                          st == "sperp" ? "s_{perp}" : "s_{para}"));
+        pr->SetMinimum(-0.3);
+        pr->SetMaximum(0.3);
+        pr->SetLineColor(kPlaneColor[p]);
+        pr->SetMarkerColor(kPlaneColor[p]);
+        pr->SetMarkerStyle(20);
+        pr->SetMarkerSize(0.4);
+        pr->Draw(first ? "" : "same");
+        first = kFALSE;
+        if (d == 0) {
+          if (!leg) { leg = new TLegend(0.80, 0.55, 0.98, 0.95); leg->SetBorderSize(0); leg->SetFillStyle(0); }
+          leg->AddEntry(pr, kPlanes[p], "lp");
+        }
+      }
+      if (leg) leg->Draw();
+    }
+    c->cd();
+    c->Print(path_pdf, Form("Title:D5 fit residual vs %s", st.Data()));
+  }
+
+  // D5Track QA (UserD5Tracking, rank0 pairs, all beams)
+  {
+    const char* names[9] = { "D5Track_Delta", "D5Track_Momentum", "D5Track_D5Chi2",
+                             "D5Track_D5Chi2NDF", "D5Track_ResidualX", "D5Track_ResidualY",
+                             "D5Track_ResidualXY", "D5Track_FitX0VsBLC1x", "D5Track_FitY0VsBLC1y" };
+    gStyle->SetOptStat(1110);
+    c->Clear();
+    c->Divide(3, 3, 0.002, 0.002);
+    for (Int_t i = 0; i < 9; ++i) {
+      c->cd(i + 1);
+      auto* obj = f_d5->Get(names[i]);
+      if (!obj) continue;
+      if (auto* h2 = dynamic_cast<TH2*>(obj)) h2->Draw("colz");
+      else if (auto* h1 = dynamic_cast<TH1*>(obj)) h1->Draw();
+    }
+    c->cd();
+    c->Print(path_pdf, "Title:D5Track QA (all beams)");
+    gStyle->SetOptStat(0);
   }
 
   // summary of the core means

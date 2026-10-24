@@ -10,8 +10,8 @@ Usage: run_d5.py <run...> {ref,pos} [--kaon] [--debug] [--force]
        multiplied by --factor (the fit is then set by BLC2) and its conf (absolute paths), both
        throw-away files in REF_DIR/runXXXXX/, and the runlists in runmanager/runlist/scratch/d5/,
        and print the myrun commands (D5 normal; D5 BLC2-referenced, written to SCRATCH_DIR).
-  pos  Measure BLC1a/b dy (d5_bc1reso_review, BLC2-referenced fit) and the a/b opposite x shift
-       s (d5_fitfree_review, <delta_x - delta_u>) and print the table.
+  pos  Measure BLC1a/b dy (BLC2-referenced fit) and the a/b opposite x shift s
+       (<delta_x - delta_u>) with d5_pos_review and print the table.
        Not converged: write them into the BLC1a/b Ofs of the DCGEO (backup first).
        Converged: write nothing and make the check PDF (d5_plane_resi_qa).
        --debug: measure and print only.
@@ -212,21 +212,17 @@ def parse_kv(path):
 
 def measure(run):
     res = {"run": run}
-    rc, _ = run_cmd(f"{BIN_DIR}/d5_bc1reso_review {run} {BEAM_FLAG} --d5 {d5_root(run, TAG)} "
-                    f"--dcgeo {dcgeo_path(run)}", capture=True)
-    txt_y = txt_dir(run) / f"d5_bc1reso_review_{run_tag(run)}.txt"
-    if rc == 0 and txt_y.exists():
-        kv = parse_kv(txt_y)
-        res["dy_a"], res["dy_b"] = float(kv["dy_a_mm"]), float(kv["dy_b_mm"])
-        res["dy_err"] = max(float(kv["dy_a_err_mm"]), float(kv["dy_b_err_mm"]))
-    rc2, _ = run_cmd(f"{BIN_DIR}/d5_fitfree_review {run} {BEAM_FLAG} --d5 {d5_root(run)} "
-                     f"--dcgeo {dcgeo_path(run)}", capture=True)
-    txt_x = txt_dir(run) / f"d5_fitfree_review_{run_tag(run)}.txt"
-    if rc2 == 0 and txt_x.exists():
-        kv = parse_kv(txt_x)
-        res["s"] = float(kv["blc1_ab_opposite_shift_s_mm"])
-        res["ddxu"] = float(kv["ddxu_mean_percent"])
-        res["dv"] = float(kv["dv_mean_mrad"])
+    rc, _ = run_cmd(f"{BIN_DIR}/d5_pos_review {run} {BEAM_FLAG} --d5 {d5_root(run)} "
+                    f"--d5ref {d5_root(run, TAG)} --dcgeo {dcgeo_path(run)}", capture=True)
+    txt = txt_dir(run) / f"d5_pos_review_{run_tag(run)}.txt"
+    if rc != 0 or not txt.exists():
+        return res
+    kv = parse_kv(txt)
+    res["dy_a"], res["dy_b"] = float(kv["dy_a_mm"]), float(kv["dy_b_mm"])
+    res["dy_err"] = max(float(kv["dy_a_err_mm"]), float(kv["dy_b_err_mm"]))
+    res["s"] = float(kv["blc1_ab_opposite_shift_s_mm"])
+    res["ddxu"] = float(kv["ddxu_mean_percent"])
+    res["dv"] = float(kv["dv_mean_mrad"])
     return res
 
 
@@ -258,8 +254,7 @@ def write_ofs(rows):
 
 
 def make_check_pdf(run):
-    flag = "--kaon" if SUFFIX == "K" else "--pion"
-    run_cmd(f"{BIN_DIR}/d5_plane_resi_qa {run} {flag} --d5 {d5_root(run)} "
+    run_cmd(f"{BIN_DIR}/d5_plane_resi_qa {run} {BEAM_FLAG} --d5 {d5_root(run)} "
             f"--bcin {chamber_root(run, 'BcIn')} --bcout {chamber_root(run, 'BcOut')}")
 
 
