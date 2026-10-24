@@ -7,8 +7,9 @@ Usage: run_d5.py <run...> {ref,pos} [--kaon] [--debug] [--force]
   (myrun) are run outside.
 
   ref  Make the inputs of the BLC2-referenced D5 fit: a copy of the DCGEO with the BLC1a/b Res
-       multiplied by --factor (the fit is then set by BLC2), its conf and the runlists, and print
-       the myrun commands (D5 normal and D5 BLC2-referenced).
+       multiplied by --factor (the fit is then set by BLC2) and its conf (absolute paths), both
+       throw-away files in REF_DIR/runXXXXX/, and the runlists in runmanager/runlist/scratch/,
+       and print the myrun commands (D5 normal; D5 BLC2-referenced, written to SCRATCH_DIR).
   pos  Measure BLC1a/b dy (d5_bc1reso_review, BLC2-referenced fit) and the a/b opposite x shift
        s (d5_fitfree_review, <delta_x - delta_u>) and print the table.
        Not converged: write them into the BLC1a/b Ofs of the DCGEO (backup first).
@@ -44,6 +45,9 @@ BIN_DIR = project_root / "bin"
 APPLY_SCRIPT = Path(__file__).resolve().parent / "apply_dcgeo_offset.py"
 BACKUP_BASE = Path("/group/had/sks/Users/sryuta/backup")
 SUMMARY_DIR = Path("/group/had/sks/Users/sryuta/tmp/d5_align")  # number files (not in results/img)
+REF_DIR = SUMMARY_DIR / "ref"  # throw-away DCGEO copy and conf of the BLC2-referenced fit
+CONF_FILE_KEYS = ("UNPACK", "DIGIT", "CMAP", "USER", "HDPRM", "HDPHC", "DCGEO", "DCTDC", "DCDRFT",
+                  "TPCPRM", "TPCPOS", "FLDMAP", "D5MTX")
 TAG = "bc1reso"
 
 # set from --kaon in main()
@@ -55,13 +59,23 @@ def run_tag(run):
     return f"run{run:05d}"
 
 
-def dcgeo_path(run, tag=None):
-    return DCGEO_DIR / (f"DCGeomParam_{run_tag(run)}_{SUFFIX}" + (f"_{tag}" if tag else ""))
+def dcgeo_path(run):
+    return DCGEO_DIR / f"DCGeomParam_{run_tag(run)}_{SUFFIX}"
+
+
+def ref_dcgeo_path(run):
+    return REF_DIR / run_tag(run) / f"DCGeomParam_{run_tag(run)}_{SUFFIX}_{TAG}"
+
+
+def ref_conf_path(run):
+    return REF_DIR / run_tag(run) / f"analyzer_{run_tag(run)}_d5_{SUFFIX}_{TAG}.conf"
 
 
 def d5_root(run, tag=None):
-    name = f"{run_tag(run)}_D5_{SUFFIX}" + (f"_{tag}" if tag else "") + ".root"
-    return config.DECODE_DIR / run_tag(run) / name
+    """D5 normal in DECODE_DIR; the BLC2-referenced (throw-away) one in SCRATCH_DIR."""
+    if tag:
+        return config.SCRATCH_DIR / run_tag(run) / f"{run_tag(run)}_D5_{SUFFIX}_{tag}.root"
+    return config.DECODE_DIR / run_tag(run) / f"{run_tag(run)}_D5_{SUFFIX}.root"
 
 
 def chamber_root(run, det):
@@ -102,15 +116,26 @@ def inflate_blc1_res(src, dst, factor):
 
 
 def make_conf(run):
+    """Copy of the D5 conf with DCGEO -> the Res-inflated copy; every file path made absolute."""
     src = CONF_DIR / f"analyzer_{run_tag(run)}_d5_{SUFFIX}.conf"
-    dst = CONF_DIR / f"analyzer_{run_tag(run)}_d5_{SUFFIX}_{TAG}.conf"
     if not src.exists():
         raise RuntimeError(f"{src} not found (make the D5 conf of suffix {SUFFIX} first)")
-    text = src.read_text()
-    geo = f"param/DCGEO/{config.SUB_DIR}/DCGeomParam_{run_tag(run)}_{SUFFIX}"
-    if geo + "\n" not in text:
-        raise RuntimeError(f"DCGEO line {geo} not found in {src}")
-    dst.write_text(text.replace(geo + "\n", f"{geo}_{TAG}\n"))
+    out, found = [], False
+    for line in src.read_text().splitlines():
+        f = line.split()
+        key = f[0].rstrip(":") if f else ""
+        if key in CONF_FILE_KEYS and len(f) >= 2:
+            path = Path(f[1]) if Path(f[1]).is_absolute() else config.ANALYZER_DIR / f[1]
+            if key == "DCGEO":
+                if path.resolve() != dcgeo_path(run).resolve():
+                    raise RuntimeError(f"{src}: DCGEO is {f[1]}, expected {dcgeo_path(run)}")
+                path, found = ref_dcgeo_path(run), True
+            line = f"{key}:\t{path}"
+        out.append(line)
+    if not found:
+        raise RuntimeError(f"no DCGEO line in {src}")
+    dst = ref_conf_path(run)
+    dst.write_text("\n".join(out) + "\n")
     return dst
 
 
@@ -124,9 +149,13 @@ def make_runlists(runs):
             raise RuntimeError(f"{src} has no {SUFFIX} D5 entry")
         head = head or h + "RUN:\n"
         body.append(b)
+        conf_rel = f"param/conf/{config.SUB_DIR}/analyzer_{run_tag(run)}_d5_{SUFFIX}.conf"
+        root_abs = str(d5_root(run))
+        if conf_rel not in b or root_abs not in b:
+            raise RuntimeError(f"{src}: conf {conf_rel} / root {root_abs} not found")
         body_tag.append(b.replace(f"_{SUFFIX}_d5:", f"_{SUFFIX}_d5{TAG}:")
-                         .replace(f"_d5_{SUFFIX}.conf", f"_d5_{SUFFIX}_{TAG}.conf")
-                         .replace(f"_D5_{SUFFIX}.root", f"_D5_{SUFFIX}_{TAG}.root"))
+                         .replace(conf_rel, str(ref_conf_path(run)))
+                         .replace(root_abs, str(d5_root(run, TAG))))
     label = runs_label(runs) + ("" if SUFFIX == "K" else f"_{SUFFIX}")
     p_norm = RUNLIST_DIR / "scratch" / f"d5_{label}.yml"
     p_tag = RUNLIST_DIR / "scratch" / f"d5{TAG}_{label}.yml"
@@ -140,10 +169,12 @@ def do_ref(args):
         if not dcgeo_path(run).exists():
             print(colored(f"[Error] {dcgeo_path(run)} not found", "red"))
             sys.exit(1)
-        inflate_blc1_res(dcgeo_path(run), dcgeo_path(run, TAG), args.factor)
+        ref_dcgeo_path(run).parent.mkdir(parents=True, exist_ok=True)
+        d5_root(run, TAG).parent.mkdir(parents=True, exist_ok=True)
+        inflate_blc1_res(dcgeo_path(run), ref_dcgeo_path(run), args.factor)
         make_conf(run)
-        print(colored(f"[INFO] {run_tag(run)}: {dcgeo_path(run, TAG).name} (BLC1 Res x{args.factor:g}) "
-                      "and conf written", "green"))
+        print(colored(f"[INFO] {run_tag(run)}: {ref_dcgeo_path(run)} (BLC1 Res x{args.factor:g}) "
+                      "and its conf written", "green"))
     p_norm, p_tag = make_runlists(args.runs)
     print(colored("[INFO] decode both (move existing D5 outputs aside first if they should be kept):", "yellow"))
     for p in (p_norm, p_tag):
@@ -164,7 +195,7 @@ def copy_matches(run):
                     f = f[:9] + f[10:]
                 out[f[0]] = f
         return out
-    copy = dcgeo_path(run, TAG)
+    copy = ref_dcgeo_path(run)
     return copy.exists() and rows(copy) == rows(dcgeo_path(run))
 
 
@@ -236,7 +267,7 @@ def do_pos(args):
             print(colored(f"[Error] {dcgeo_path(run)} not found (suffix {SUFFIX}; --kaon for K)", "red"))
             sys.exit(1)
         if not copy_matches(run):
-            print(colored(f"[Error] {dcgeo_path(run, TAG).name} does not match {dcgeo_path(run).name} "
+            print(colored(f"[Error] {ref_dcgeo_path(run)} does not match {dcgeo_path(run).name} "
                           f"(DCGEO changed after ref): run 'run_d5.py {run} ref' and decode again", "red"))
             sys.exit(1)
         for root in (d5_root(run), d5_root(run, TAG)):
