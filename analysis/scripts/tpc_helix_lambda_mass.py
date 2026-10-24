@@ -81,7 +81,9 @@ ax.yaxis.set_major_formatter(mticker.EngFormatter(sep=""))
 ax.set_xlim(1.07, 1.23)
 
 plt.subplots_adjust(top = 0.98, bottom = 0.15, left = 0.15, right = 0.98, wspace=0, hspace=0)
-script_dir = os.path.dirname(os.path.abspath(__file__))
-img_path = os.path.join(script_dir, f"../../results/img/lambda_mass.png")
+# PNG goes to personal tmp (results/img holds PDFs only)
+img_dir = "/group/had/sks/Users/sryuta/tmp/tpc_helix_lambda_mass"
+os.makedirs(img_dir, exist_ok=True)
+img_path = os.path.join(img_dir, "lambda_mass.png")
 plt.savefig(img_path, format='png', bbox_inches='tight', dpi=600, transparent=True)
 plt.show()

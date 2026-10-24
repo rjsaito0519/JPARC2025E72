@@ -816,8 +816,8 @@ int main(int argc, char** argv)
   if (has_trial)
     g_trial = BuildOverlay(trial, kTRUE);
 
-  // default outputs go to the tpc_debug/ sub-directory of img/runNNNNN
-  const TString imgDir = ana_helper::get_img_dir(OUTPUT_DIR, runOut) + "/tpc_debug";
+  // default outputs go to the tpc_pid/ sub-directory of img/runNNNNN
+  const TString imgDir = ana_helper::get_img_dir(OUTPUT_DIR, runOut) + "/tpc_pid";
   gSystem->mkdir(imgDir.Data(), kTRUE);
   if (outPdf.IsNull())
     outPdf = Form("%s/PID_dEdx_vs_SignedMom_run%05d.pdf", imgDir.Data(), runOut);

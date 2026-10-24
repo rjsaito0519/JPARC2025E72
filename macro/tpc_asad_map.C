@@ -6,7 +6,7 @@
 //   root -l
 //   .L macro/tpc_asad_map.C
 //   tpc_asad_map();
-//   tpc_asad_map_save(); // default: results/img/tpc_asad_map.pdf
+//   tpc_asad_map_save(); // default: analyzer docs/tpc/tpc_asad_map.pdf (reference figure)
 //   tpc_asad_map_save("results/img/custom.pdf");
 
 #include <TCanvas.h>
@@ -143,8 +143,7 @@ void FillDeadChannelMap(TH2Poly* h)
 
 TString EnsureDefaultSavePath()
 {
-  const TString dir = "results/img";
-  gSystem->mkdir("results", kTRUE);
+  const TString dir = "/gpfs/home/had/sryuta/analyzer/JPARC2025E72/docs/tpc";
   gSystem->mkdir(dir, kTRUE);
   return dir + "/tpc_asad_map.pdf";
 }

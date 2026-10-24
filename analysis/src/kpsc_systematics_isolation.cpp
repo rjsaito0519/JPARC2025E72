@@ -8,7 +8,8 @@
 // Run number: default from tree branch run_number (minimum = youngest).
 //   Fallback: parse "runNNNNN" from path. Override with -r.
 // Output default:
-//   OUTPUT_DIR/img/runXXXXX/kpsc_systematics_isolation_runXXXXX.{pdf,txt}
+//   OUTPUT_DIR/img/runXXXXX/kpsc_systematics_isolation_runXXXXX.pdf
+//   /group/had/sks/Users/sryuta/tmp/kpsc_systematics/kpsc_systematics_isolation_runXXXXX.txt
 //
 // Tip cut:
 //   mmass>0 && effective_ntTpc==2 && diff_angle<0.1 && close_dist<5
@@ -27,6 +28,7 @@
 #include <TMath.h>
 #include <TROOT.h>
 #include <TStyle.h>
+#include <TSystem.h>
 #include <TTree.h>
 #include <TVector3.h>
 
@@ -832,8 +834,12 @@ main(int argc, char** argv)
   const TString imgDir = ana_helper::get_img_dir(OUTPUT_DIR, runOut);
   if (outPdf.IsNull())
     outPdf = Form("%s/kpsc_systematics_isolation_run%05d.pdf", imgDir.Data(), runOut);
-  if (outTxt.IsNull())
-    outTxt = Form("%s/kpsc_systematics_isolation_run%05d.txt", imgDir.Data(), runOut);
+  if (outTxt.IsNull()) {
+    // the numbers .txt goes to personal tmp (not results/img)
+    const TString txtDir = "/group/had/sks/Users/sryuta/tmp/kpsc_systematics";
+    gSystem->mkdir(txtDir.Data(), kTRUE);
+    outTxt = Form("%s/kpsc_systematics_isolation_run%05d.txt", txtDir.Data(), runOut);
+  }
 
   std::ofstream log(outTxt.Data());
   if (!log) {

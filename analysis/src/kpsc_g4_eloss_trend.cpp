@@ -513,7 +513,10 @@ main(int argc, char** argv)
   gSystem->mkdir(imgDir.Data(), kTRUE);
   if (outPdf.IsNull())
     outPdf = Form("%s/kpsc_g4_eloss_trend_run%05d.pdf", imgDir.Data(), kRunOut);
-  TString outTxt = outPdf;
+  // the numbers .txt goes to personal tmp (not results/img), same basename as the PDF
+  const TString txtDir = "/group/had/sks/Users/sryuta/tmp/kpsc_misc";
+  gSystem->mkdir(txtDir.Data(), kTRUE);
+  TString outTxt = Form("%s/%s", txtDir.Data(), gSystem->BaseName(outPdf.Data()));
   if (outTxt.EndsWith(".pdf") || outTxt.EndsWith(".PDF"))
     outTxt.Replace(outTxt.Length() - 4, 4, ".txt");
   else

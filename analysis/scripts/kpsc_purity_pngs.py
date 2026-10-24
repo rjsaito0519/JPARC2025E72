@@ -6,7 +6,7 @@ myanalysis/analysis/src/kpsc_purity_compare_pdf.cpp, but reads ROOT files
 directly with uproot (no PyROOT) and writes individual high-resolution PNGs
 instead of a multi-page PDF.
 
-Outputs (into --outdir; default results/img/run{NNNNN}/ as in other scripts,
+Outputs (into --outdir; default /group/had/sks/Users/sryuta/tmp/kpsc_purity_pngs/run{NNNNN}/,
 run number read from the tree's own "run_number" branch, not the filename):
   1. pid_dedx_vs_qp_nocut.png   dE/dx vs q*p, all TPC tracks with is_beam and
                                  is_accidental tracks removed (same beam/
@@ -87,17 +87,20 @@ KPSC_BRANCHES = ["run_number", "mmass", "effective_ntTpc", "diff_angle", "close_
 TPCHELIX_BRANCHES = ["run_number", "lambda_mass", "lambda_close_dist", "effective_ntTpc"]
 
 
+PNG_BASE = Path("/group/had/sks/Users/sryuta/tmp/kpsc_purity_pngs")  # results/img holds PDFs only
+
+
 def default_outdir(run_numbers):
-    """results/img/run{NNNNN}/, matching the convention used by the other
-    scripts in analysis/scripts/. Run number comes from the tree's own
+    """PNG_BASE/run{NNNNN}/ (personal tmp; results/img holds PDFs only).
+    Run number comes from the tree's own
     "run_number" branch, not the filename (a filename is not guaranteed to
     encode the run number). When multiple runs are merged, everything is
     written into the directory of the lowest (first-taken) run number rather
     than creating a separate run-range directory per invocation."""
     runs = sorted(run_numbers)
     if not runs:
-        return config.OUTPUT_DIR / "img" / "kpsc_purity_pngs"
-    return config.OUTPUT_DIR / "img" / f"run{runs[0]:05d}"
+        return PNG_BASE
+    return PNG_BASE / f"run{runs[0]:05d}"
 
 
 def load_tree(files, treename, branches, library="ak", desc=None):
@@ -257,8 +260,8 @@ def main():
                         help="DstTPCHelixTracking output ROOT file(s) (tree 'tpc')")
     parser.add_argument("--outdir", type=Path, default=None,
                         help="Output directory for PNGs "
-                             "(default: <OUTPUT_DIR>/img/run{NNNNN}, run number "
-                             "read from the tree; matches the other scripts here)")
+                             "(default: /group/had/sks/Users/sryuta/tmp/kpsc_purity_pngs/run{NNNNN}, "
+                             "run number read from the tree)")
     args = parser.parse_args()
 
     if not args.kpsc and not args.tpchelix:

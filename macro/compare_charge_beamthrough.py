@@ -39,6 +39,7 @@ import uproot
 # ---------------------------------------------------------------------------
 DECODE_DIR = Path("/group/had/sks/Users/sryuta/JPARC2025E72/root")
 RESULTS_IMG = Path("/home/had/sryuta/JPARC2025E72/results/img")
+SIDE_BASE = Path("/group/had/sks/Users/sryuta/tmp/bt_compare")
 TMP_DIR = Path("/group/had/sks/Users/sryuta/tmp")
 
 BRANCHES = [
@@ -158,6 +159,13 @@ PHASE2: List[Tuple[RunSpec, RunSpec]] = [
 
 def helix_path(run: int) -> Path:
     return DECODE_DIR / f"run{run:05d}" / f"run{run:05d}_TPCHelix.root"
+
+
+def side_dir(run: int) -> Path:
+    """txt/json summaries go to personal tmp, not results/img."""
+    d = SIDE_BASE / f"run{run:05d}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def img_dir(run: int) -> Path:
@@ -887,11 +895,11 @@ def process_pair(
             out_dir = img_dir(spec.run)
             plot_run_pdf(spec, st, out_dir / f"run{spec.run:05d}_charge_bt_kin.pdf")
             write_summary_txt(
-                out_dir / f"run{spec.run:05d}_charge_bt_kin_summary.txt",
+                side_dir(spec.run) / f"run{spec.run:05d}_charge_bt_kin_summary.txt",
                 f"run{spec.run:05d} charge beam-through kinematic summary",
                 [d],
             )
-            (out_dir / f"run{spec.run:05d}_charge_bt_kin_summary.json").write_text(
+            (side_dir(spec.run) / f"run{spec.run:05d}_charge_bt_kin_summary.json").write_text(
                 json.dumps(d, indent=2) + "\n"
             )
         else:
@@ -1054,17 +1062,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     combined_pdf = out00000 / "charge_bt_compare.pdf"
     write_combined_compare_pdf(combined_pdf, compare_rows, page_specs)
 
-    write_compare_summary(out00000 / "charge_bt_compare_summary.txt", compare_rows)
-    (out00000 / "charge_bt_compare_summary.json").write_text(
+    side00000 = side_dir(0)
+    write_compare_summary(side00000 / "charge_bt_compare_summary.txt", compare_rows)
+    (side00000 / "charge_bt_compare_summary.json").write_text(
         json.dumps(compare_rows, indent=2) + "\n"
     )
-    (out00000 / "charge_bt_all_runs_summary.json").write_text(
+    (side00000 / "charge_bt_all_runs_summary.json").write_text(
         json.dumps(all_rows, indent=2) + "\n"
     )
 
     n_pages = 1 + 5 * len(page_specs)  # summary + 5 pages per pair
     print(f"[done] combined PDF -> {combined_pdf}")
-    print(f"[done] compare summary -> {out00000 / 'charge_bt_compare_summary.txt'}")
+    print(f"[done] compare summary -> {side00000 / 'charge_bt_compare_summary.txt'}")
     print(f"[done] processed {len(cache)} runs, {len(compare_rows)} pairs, {n_pages} pages")
     return 0
 

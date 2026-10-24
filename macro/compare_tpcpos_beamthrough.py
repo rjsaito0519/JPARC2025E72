@@ -8,7 +8,7 @@ OFF = scratch_root/.../runNNNNN_TPCHelix_tpcpos0.root (Map_0)
 Same kinematic selection as compare_charge_beamthrough.py
 (|dz|<0.05, nhtrack>=15, |mom0-p_beam|<max(0.12,0.2*p); no is_beam cut).
 
-Output under RESULTS_IMG/run00000/bt_compare/:
+Output: PDF under RESULTS_IMG/run00000/bt_compare/, txt/json under /group/had/sks/Users/sryuta/tmp/bt_compare/run00000/:
   tpcpos_bt_compare.pdf / _summary.txt / _summary.json
 """
 
@@ -34,6 +34,7 @@ from compare_charge_beamthrough import (
     RunSpec,
     RunStats,
     img_dir,
+    side_dir,
     mean_sigma,
     mom_window,
     select_and_fill,
@@ -424,13 +425,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             plot_gem_section_overlay_page(pdf, on, off, spec)
             plot_gem_section_table_page(pdf, on, off, spec)
 
-    write_summary(out00000 / "tpcpos_bt_compare_summary.txt", rows)
+    side00000 = side_dir(0)
+    write_summary(side00000 / "tpcpos_bt_compare_summary.txt", rows)
     # JSON: drop nested full stats if huge — keep row dicts as built
-    (out00000 / "tpcpos_bt_compare_summary.json").write_text(json.dumps(rows, indent=2) + "\n")
+    (side00000 / "tpcpos_bt_compare_summary.json").write_text(json.dumps(rows, indent=2) + "\n")
 
     n_pages = 1 + 5 * len(pairs)
     print(f"[done] combined PDF -> {out_pdf}")
-    print(f"[done] compare summary -> {out00000 / 'tpcpos_bt_compare_summary.txt'}")
+    print(f"[done] compare summary -> {side00000 / 'tpcpos_bt_compare_summary.txt'}")
     print(f"[done] processed {len(pairs)} runs, {n_pages} pages")
     return 0
 
