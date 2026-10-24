@@ -12,6 +12,7 @@ project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
 
 from lib import config
+from lib.input_check import check_input
 
 def run_command(cmd, exit_on_error=True):
     print(colored(f"Running: {cmd}", "cyan"))
@@ -43,6 +44,11 @@ def main():
         action="store_true",
         help="htof: absolute TOF offset from pion-bit-only tracks (pid == 1), "
              "leaving out the pion/kaon-ambiguous ones (use with a kaon beam)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run even if the input ROOT is older than its params or is a decode of the other particle",
     )
     parser.add_argument(
         "--debug",
@@ -100,6 +106,8 @@ def main():
                 print(colored(f"[Warning] {htof_dst_file.name} is older than {hodo_file.name}; "
                               "regenerate it (dst_create_runlist.py --tpchelixhtof) after the Hodo re-decode.", "yellow"))
 
+    if not all([check_input(f, suffix, args.force) for f in hodo_root_files]):
+        sys.exit(1)
     for f in hodo_root_files:
         print(colored(f"[INFO] Using Input File: {f}", "green"))
     if len(run_nums) > 1:

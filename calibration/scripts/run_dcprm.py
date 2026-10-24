@@ -12,6 +12,7 @@ project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
 
 from lib import config
+from lib.input_check import check_input
 
 def run_command(cmd, exit_on_error=True):
     print(colored(f"Running: {cmd}", "cyan"))
@@ -56,6 +57,11 @@ def main():
         "--debug",
         action="store_true",
         help="Skip parameter update; run analysis and produce PDFs only",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run even if the input ROOT is older than its params or is a decode of the other particle",
     )
     parser.add_argument(
         "--separate",
@@ -108,6 +114,8 @@ def main():
                 print(f"Ensure create_runlist.py was run for {det_name}.")
                 sys.exit(1)
             input_roots.append((det_name, path))
+        if not all([check_input(path, suffix, args.force) for _, path in input_roots]):
+            sys.exit(1)
         print(colored("[INFO] Mode: reso --all (Suffix: {})".format(suffix), "green"))
         for det_name, path in input_roots:
             print(colored(f"[INFO] Input {det_name}: {path}", "green"))
@@ -122,6 +130,8 @@ def main():
              print(f"Ensure create_runlist.py was run for {detector}.")
              sys.exit(1)
              
+        if not check_input(input_root_file, suffix, args.force):
+            sys.exit(1)
         print(colored(f"[INFO] Using Input File: {input_root_file}", "green"))
         print(colored(f"[INFO] Target Detector: {detector}", "green"))
         print(colored(f"[INFO] Mode: {mode} (Suffix: {suffix})", "green"))

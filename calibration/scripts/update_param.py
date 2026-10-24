@@ -247,7 +247,8 @@ elif args.param_type == "residual":
                     if len(vals) > ofs_idx:
                         old_val = float(vals[ofs_idx])
                         res_val = float(d[k][0])
-                        d[k] = [old_val + res_val]
+                        # [new Ofs, correction, residual sigma]; only the first is written
+                        d[k] = [old_val + res_val] + list(d[k])
                     else:
                         print(colored(f"    [Warning] Key {k}: Data row too short.", "yellow"))
                 except ValueError:
@@ -538,16 +539,19 @@ elif args.param_type == "resolution":
 def report_convergence(data):
     if not data: return
     
-    corrs = [v[0] for v in data.values()]
-    sigs = [v[1] for v in data.values() if len(v) > 1]
+    # entries are [new Ofs, correction, sigma]; judge on the correction, not on the Ofs
+    rows = [v for v in data.values() if len(v) >= 2]
+    if not rows: return
+    corrs = [v[1] for v in rows]
+    sigs = [v[2] for v in rows if len(v) > 2]
     
     rms = np.sqrt(np.mean(np.square(corrs)))
     max_c = np.max(np.abs(corrs))
     avg_sig = np.mean(sigs) if sigs else 0.0
     
     print(colored("\n>>> Convergence Report (Residual) <<<", "white", attrs=["bold"]))
-    print(f"  - Alignment Error (RMS): {rms:.4f} mm")
-    print(f"  - Maximum Correction:    {max_c:.4f} mm")
+    print(f"  - Correction (RMS):     {rms:.4f} mm")
+    print(f"  - Maximum Correction:   {max_c:.4f} mm")
     print(f"  - Average Resolution:   {avg_sig:.4f} mm")
     
     threshold = 0.01 # 10 um
