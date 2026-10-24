@@ -8,7 +8,7 @@ Usage: run_d5.py <run...> {ref,pos} [--kaon] [--debug] [--force]
 
   ref  Make the inputs of the BLC2-referenced D5 fit: a copy of the DCGEO with the BLC1a/b Res
        multiplied by --factor (the fit is then set by BLC2) and its conf (absolute paths), both
-       throw-away files in REF_DIR/runXXXXX/, and the runlists in runmanager/runlist/scratch/,
+       throw-away files in REF_DIR/runXXXXX/, and the runlists in runmanager/runlist/scratch/d5/,
        and print the myrun commands (D5 normal; D5 BLC2-referenced, written to SCRATCH_DIR).
   pos  Measure BLC1a/b dy (d5_bc1reso_review, BLC2-referenced fit) and the a/b opposite x shift
        s (d5_fitfree_review, <delta_x - delta_u>) and print the table.
@@ -157,8 +157,10 @@ def make_runlists(runs):
                          .replace(conf_rel, str(ref_conf_path(run)))
                          .replace(root_abs, str(d5_root(run, TAG))))
     label = runs_label(runs) + ("" if SUFFIX == "K" else f"_{SUFFIX}")
-    p_norm = RUNLIST_DIR / "scratch" / f"d5_{label}.yml"
-    p_tag = RUNLIST_DIR / "scratch" / f"d5{TAG}_{label}.yml"
+    out_dir = RUNLIST_DIR / "scratch" / "d5"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    p_norm = out_dir / f"d5_{label}.yml"
+    p_tag = out_dir / f"d5{TAG}_{label}.yml"
     p_norm.write_text(head + "".join(body))
     p_tag.write_text(head + "".join(body_tag))
     return p_norm, p_tag
@@ -178,7 +180,7 @@ def do_ref(args):
     p_norm, p_tag = make_runlists(args.runs)
     print(colored("[INFO] decode both (move existing D5 outputs aside first if they should be kept):", "yellow"))
     for p in (p_norm, p_tag):
-        print(f"  cd {config.ANALYZER_DIR}/runmanager && ./myrun.py runlist/scratch/{p.name} --local")
+        print(f"  cd {config.ANALYZER_DIR}/runmanager && ./myrun.py {p.relative_to(RUNLIST_DIR.parent)} --local")
     print(colored(f"[INFO] then: run_d5.py {' '.join(map(str, args.runs))} pos"
                   + (" --kaon" if SUFFIX == "K" else ""), "yellow"))
 
