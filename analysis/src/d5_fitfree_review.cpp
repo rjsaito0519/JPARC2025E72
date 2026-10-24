@@ -6,7 +6,7 @@
 //           mtx  ANALYZER_DIR/param/TM/e72/D5TransferMatrix_runXXXXX
 //           geo  ANALYZER_DIR/param/DCGEO/e72/DCGeomParam_runXXXXX_K
 //           pdf  OUTPUT_DIR/img/runXXXXX/d5_fitfree_review_runXXXXX.pdf
-//           txt  kTxtDir/runXXXXX/d5_fitfree_review_runXXXXX.txt  (numbers for run_d5align.py; not in img)
+//           txt  kTxtDir/runXXXXX/d5_fitfree_review_runXXXXX.txt  (numbers for run_d5.py; not in img)
 //           beam flag: --kaon (beam_flag == 2)
 //
 // Horizontal: for each rank0 pair, solve delta so that the matrix reproduces

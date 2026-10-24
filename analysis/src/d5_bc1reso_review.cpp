@@ -4,7 +4,7 @@
 // Defaults: D5   DECODE_DIR/runXXXXX/runXXXXX_D5_K_bc1reso.root  (BLC1 Res inflated)
 //           geo  ANALYZER_DIR/param/DCGEO/e72/DCGeomParam_runXXXXX_K  (BLC1a/b z)
 //           pdf  OUTPUT_DIR/img/runXXXXX/d5_bc1reso_review_runXXXXX.pdf
-//           txt  kTxtDir/runXXXXX/d5_bc1reso_review_runXXXXX.txt  (numbers for run_d5align.py; not in img)
+//           txt  kTxtDir/runXXXXX/d5_bc1reso_review_runXXXXX.txt  (numbers for run_d5.py; not in img)
 //           beam flag: --kaon (beam_flag == 2)
 //
 // With the BLC1 Res inflated the D5 fit line at BLC1 (d5_fit_*0) is set by BLC2 alone.
