@@ -1,6 +1,6 @@
 // Per-plane residual QA for the D5 alignment (BLC1a/b, BLC2a/b), K window versus pi
-// Usage: d5_plane_resi_qa <run> [--bcin <BcIn.root>] [--bcout <BcOut.root>] [--d5 <D5.root>]
-//                         [-o <out.pdf>]
+// Usage: d5_plane_resi_qa <run> [--kaon | --pion | --all] [--bcin <BcIn.root>]
+//                         [--bcout <BcOut.root>] [--d5 <D5.root>] [-o <out.pdf>]
 // Defaults: BcIn  DECODE_DIR/runXXXXX/runXXXXX_BcIn_resi_K.root
 //           BcOut DECODE_DIR/runXXXXX/runXXXXX_BcOut_resi_K.root
 //           D5    DECODE_DIR/runXXXXX/runXXXXX_D5_K.root
@@ -8,10 +8,12 @@
 //
 // Chamber-fit residuals (BcIn: BLC1a+b, BcOut: BLC2a+b) are drawn per plane for the K
 // window (*_K) and pi (*_Pi), pi scaled to the K entries. <|r|> (within +-kRange) gives
-// the half distance of the two peaks when the residual is split by the left/right side. The D5 joint-fit residuals
-// (D5WireResi_*_D5Fit_plane*) are filled for every beam flag in UserD5Tracking and are
-// drawn as they are (all beam) for comparison. The first pages show residual versus plane
-// (2D, linear colour scale, profile mean overlaid) for K, pi and the D5 fit.
+// the half distance of the two peaks when the residual is split by the left/right side.
+// D5 joint-fit pages use the beam selected by --kaon (default) / --pion / --all
+// (D5WireResi_*_K / _Pi / all beams): the D5Fit residual (hit in the fit), the exclusive
+// residual D5Excl (hit left out of the refit) and the exclusive pull D5Pull = D5Excl / Res.
+// Files decoded before these histograms existed fall back to the all-beam D5Fit only.
+// The first pages show residual versus plane (2D, linear colour scale, profile mean overlaid).
 
 #include "ana_helper.h"
 #include "paths.h"
@@ -127,11 +129,32 @@ draw_vs_plane(TH2* h2, const TString& title)
   pr->Draw("same");
 }
 
+// D5WireResi histogram of the selected beam; all-beam fallback for older files
+TString g_d5_suffix = "_K";
+Bool_t g_d5_fallback = kFALSE;
+
+TObject*
+get_d5(TFile* f, const TString& name)
+{
+  if (!g_d5_suffix.IsNull()) {
+    if (auto* obj = f->Get(name + g_d5_suffix)) return obj;
+    g_d5_fallback = kTRUE;
+  }
+  return f->Get(name);
+}
+
+TString
+d5_label()
+{
+  if (g_d5_suffix.IsNull() || g_d5_fallback) return "all beam";
+  return g_d5_suffix == "_K" ? "K window" : "#pi";
+}
+
 void
 usage(const char* argv0)
 {
-  std::cerr << "Usage: " << argv0 << " <run> [--bcin <file>] [--bcout <file>] [--d5 <file>]"
-            << " [-o <out.pdf>]\n";
+  std::cerr << "Usage: " << argv0 << " <run> [--kaon | --pion | --all] [--bcin <file>]"
+            << " [--bcout <file>] [--d5 <file>] [-o <out.pdf>]\n";
 }
 
 } // namespace
@@ -148,7 +171,10 @@ main(Int_t argc, char** argv)
                           ana_helper::get_img_dir(OUTPUT_DIR, run).Data(), run);
   for (Int_t i = 2; i < argc; ++i) {
     const TString a = argv[i];
-    if (a == "--bcin" && i + 1 < argc) path_bcin = argv[++i];
+    if (a == "--kaon") g_d5_suffix = "_K";
+    else if (a == "--pion") g_d5_suffix = "_Pi";
+    else if (a == "--all") g_d5_suffix = "";
+    else if (a == "--bcin" && i + 1 < argc) path_bcin = argv[++i];
     else if (a == "--bcout" && i + 1 < argc) path_bcout = argv[++i];
     else if (a == "--d5" && i + 1 < argc) path_d5 = argv[++i];
     else if (a == "-o" && i + 1 < argc) path_pdf = argv[++i];
@@ -169,8 +195,8 @@ main(Int_t argc, char** argv)
   gStyle->SetTitleFontSize(0.07);
   gStyle->SetPaperSize(29.0, 20.5);
 
-  // core[det][plane]: K, pi, D5Fit(all)
-  Core c_k[4][8], c_d5[4][8];
+  // core[det][plane]: K chamber fit, D5Fit, D5Excl, D5Pull (selected beam)
+  Core c_k[4][8], c_d5[4][8], c_ex[4][8], c_pu[4][8];
   Double_t abs_k[4][8], abs_pi[4][8];
   for (auto& a : abs_k) for (auto& v : a) v = NAN;
   for (auto& a : abs_pi) for (auto& v : a) v = NAN;
@@ -178,8 +204,8 @@ main(Int_t argc, char** argv)
   auto* c = new TCanvas("c", "c", 1600, 1130);
   c->Print(path_pdf + "[");
 
-  // residual vs plane (2D): K window, pi (chamber fit) and D5 fit (all beam)
-  for (const TString& kind : { TString("_K"), TString("_Pi"), TString("D5Fit") }) {
+  // residual vs plane (2D): K window, pi (chamber fit), D5 fit and exclusive pull (selected beam)
+  for (const TString& kind : { TString("_K"), TString("_Pi"), TString("D5Fit"), TString("D5Pull") }) {
     c->Clear();
     c->Divide(2, 2, 0.002, 0.002);
     for (std::size_t d = 0; d < kDets.size(); ++d) {
@@ -187,19 +213,24 @@ main(Int_t argc, char** argv)
       gPad->SetRightMargin(0.12);
       TH2* h2 = nullptr;
       TString title;
-      if (kind == "D5Fit") {
-        auto* src = dynamic_cast<TH2*>(f_d5->Get(Form("D5WireResi_%s_D5Fit_vs_plane", kDets[d].Data())));
-        if (!src) continue;
-        h2 = dynamic_cast<TH2*>(src->Clone(Form("h2_%s_d5", kDets[d].Data())));
+      if (kind.BeginsWith("D5")) {
+        auto* src = dynamic_cast<TH2*>(get_d5(f_d5, Form("D5WireResi_%s_%s_vs_plane", kDets[d].Data(), kind.Data())));
+        if (!src || src->GetEntries() <= 0) continue;
+        h2 = dynamic_cast<TH2*>(src->Clone(Form("h2_%s_%s", kDets[d].Data(), kind.Data())));
         h2->SetDirectory(nullptr);
-        h2->GetYaxis()->SetRangeUser(-1.5, 1.5);
+        if (kind == "D5Fit") h2->GetYaxis()->SetRangeUser(-1.5, 1.5);
+        else h2->GetYaxis()->SetRangeUser(-10.0, 10.0);
         for (Int_t p = 0; p < 8; ++p) h2->GetXaxis()->SetBinLabel(p + 1, kPlanes[p]);
-        title = Form("%s D5 fit (all beam)", kDets[d].Data());
+        title = Form("%s %s (%s)", kDets[d].Data(), kind == "D5Fit" ? "D5 fit" : "D5 exclusive pull",
+                     d5_label().Data());
       } else {
         h2 = stack_planes((d < 2) ? f_bcin : f_bcout, kDets[d], kind, 0.8);
         title = Form("%s chamber fit, %s", kDets[d].Data(), kind == "_K" ? "K window" : "#pi");
       }
-      if (h2) draw_vs_plane(h2, title);
+      if (h2) {
+        draw_vs_plane(h2, title);
+        if (kind == "D5Pull") h2->GetYaxis()->SetTitle("residual / Res");
+      }
     }
     c->cd();
     c->Print(path_pdf, Form("Title:residual vs plane %s", kind.Data()));
@@ -257,18 +288,48 @@ main(Int_t argc, char** argv)
       c->cd(p + 1);
       gPad->SetLeftMargin(0.12);
       gPad->SetRightMargin(0.03);
-      auto* hd = get_clone(f_d5, Form("D5WireResi_%s_D5Fit_plane%d", kDets[d].Data(), p));
-      if (!hd) continue;
+      auto* src = dynamic_cast<TH1*>(get_d5(f_d5, Form("D5WireResi_%s_D5Fit_plane%d", kDets[d].Data(), p)));
+      if (!src) continue;
+      auto* hd = dynamic_cast<TH1*>(src->Clone(Form("%s_qa", src->GetName())));
+      hd->SetDirectory(nullptr);
       c_d5[d][p] = fit_core(hd, 0.3);
-      hd->SetTitle(Form("%s-%s (D5 fit, all beam);residual [mm];count", kDets[d].Data(), kPlanes[p].Data()));
+      hd->SetTitle(Form("%s-%s (D5 fit, %s);residual [mm];count", kDets[d].Data(), kPlanes[p].Data(),
+                        d5_label().Data()));
       hd->GetXaxis()->SetRangeUser(-2.0, 2.0);
       hd->SetLineColor(kBlue + 1);
       hd->SetFillColorAlpha(kAzure - 9, 0.5);
+      TH1* he = nullptr;
+      if (!g_d5_fallback) {
+        if (auto* e = dynamic_cast<TH1*>(get_d5(f_d5, Form("D5WireResi_%s_D5Excl_plane%d", kDets[d].Data(), p)))) {
+          he = dynamic_cast<TH1*>(e->Clone(Form("%s_qa", e->GetName())));
+          he->SetDirectory(nullptr);
+          c_ex[d][p] = fit_core(he, 0.3);
+          he->SetLineColor(kRed + 1);
+          he->SetLineWidth(2);
+          hd->SetMaximum(1.15 * std::max(hd->GetMaximum(), he->GetMaximum()));
+        }
+        if (auto* u = dynamic_cast<TH1*>(get_d5(f_d5, Form("D5WireResi_%s_D5Pull_plane%d", kDets[d].Data(), p))))
+          c_pu[d][p] = fit_core(u, 2.0);
+      }
       hd->Draw("hist");
+      if (he) he->Draw("hist same");
       TLatex t;
       t.SetNDC();
       t.SetTextSize(0.05);
-      t.DrawLatex(0.15, 0.84, Form("core %+.3f / #sigma %.3f", c_d5[d][p].mean, c_d5[d][p].sigma));
+      t.DrawLatex(0.15, 0.84, Form("fit %+.3f / #sigma %.3f", c_d5[d][p].mean, c_d5[d][p].sigma));
+      if (he) {
+        t.SetTextColor(kRed + 1);
+        t.DrawLatex(0.15, 0.78, Form("excl %+.3f / #sigma %.3f", c_ex[d][p].mean, c_ex[d][p].sigma));
+        t.DrawLatex(0.15, 0.72, Form("pull %+.2f / #sigma %.2f", c_pu[d][p].mean, c_pu[d][p].sigma));
+      }
+      if (p == 0) {
+        auto* leg = new TLegend(0.62, 0.74, 0.97, 0.88);
+        leg->SetBorderSize(0);
+        leg->SetFillStyle(0);
+        leg->AddEntry(hd, "D5 fit", "f");
+        if (he) leg->AddEntry(he, "exclusive", "l");
+        leg->Draw();
+      }
     }
     c->cd();
     c->Print(path_pdf, Form("Title:%s D5 fit", kDets[d].Data()));
@@ -286,15 +347,16 @@ main(Int_t argc, char** argv)
   y -= 0.03;
   t.DrawLatex(0.03, y, Form("chamber fit: %s, %s", gSystem->BaseName(path_bcin), gSystem->BaseName(path_bcout)));
   y -= 0.025;
-  t.DrawLatex(0.03, y, Form("D5 fit (all beam): %s", gSystem->BaseName(path_d5)));
+  t.DrawLatex(0.03, y, Form("D5 fit (%s): %s", d5_label().Data(), gSystem->BaseName(path_d5)));
   y -= 0.035;
-  t.DrawLatex(0.03, y, "plane          K mean  K sig   K <|r|> pi <|r|> D5fit mean D5fit sig");
+  t.DrawLatex(0.03, y, "plane          K mean  K sig   K <|r|> pi <|r|>  D5fit mean/sig   excl mean/sig    pull mean/sig");
   y -= 0.022;
   for (std::size_t d = 0; d < kDets.size(); ++d) {
     for (Int_t p = 0; p < 8; ++p) {
-      t.DrawLatex(0.03, y, Form("%-5s-%-4s    %+.3f  %.3f   %.3f   %.3f    %+.3f     %.3f",
+      t.DrawLatex(0.03, y, Form("%-5s-%-4s    %+.3f  %.3f   %.3f   %.3f    %+.3f %.3f    %+.3f %.3f    %+.2f %.2f",
                                 kDets[d].Data(), kPlanes[p].Data(), c_k[d][p].mean, c_k[d][p].sigma,
-                                abs_k[d][p], abs_pi[d][p], c_d5[d][p].mean, c_d5[d][p].sigma));
+                                abs_k[d][p], abs_pi[d][p], c_d5[d][p].mean, c_d5[d][p].sigma,
+                                c_ex[d][p].mean, c_ex[d][p].sigma, c_pu[d][p].mean, c_pu[d][p].sigma));
       y -= 0.0255;
     }
   }

@@ -1,5 +1,7 @@
 // D5 wire residual review (UserD5Tracking histograms) -> multi-page PDF
-// Usage: d5_wire_resi_review [-o <out.pdf>] [--dcgeo <DCGEO>] <decode.root>
+// Usage: d5_wire_resi_review [-o <out.pdf>] [--dcgeo <DCGEO>] [--kaon | --pion] <decode.root>
+// --kaon / --pion read the D5WireResi_*_K / _Pi histograms (default: all beams); files decoded
+// before the per-beam-flag histograms existed fall back to the all-beam ones.
 // Default PDF: OUTPUT_DIR/img/runXXXXX/runXXXXX_D5_wire_resi_review.pdf
 // Default DCGEO: ANALYZER_DIR/param/DCGEO/DCGeomParam_e72_example
 //
@@ -128,7 +130,7 @@ void
 usage(const char* argv0)
 {
   std::cerr << "Usage: " << argv0
-            << " [-o <out.pdf>] [--dcgeo <DCGEO>] <decode.root>\n"
+            << " [-o <out.pdf>] [--dcgeo <DCGEO>] [--kaon | --pion] <decode.root>\n"
             << "  Reads D5WireResi_* histograms from D5 Tracking decode ROOT.\n"
             << "  Also estimates rigid (dx,dy) from D5Fit plane residuals.\n"
             << "  TA from DCGEO (default: " << default_dcgeo_path() << ").\n"
@@ -136,10 +138,22 @@ usage(const char* argv0)
             << "runXXXXX_D5_wire_resi_review.pdf\n";
 }
 
+TString g_beam_suffix;        // "", "_K" or "_Pi" for the D5WireResi_* histograms
+Bool_t g_beam_fallback = kFALSE;  // the file has no per-beam-flag histograms
+
 TObject*
 get_object(TFile* f, const char* name)
 {
   if (!f || !name) return nullptr;
+  const TString n(name);
+  if (!g_beam_suffix.IsNull() && n.BeginsWith("D5WireResi_")) {
+    if (auto* obj = f->Get(n + g_beam_suffix)) return obj;
+    if (!g_beam_fallback) {
+      std::cerr << "Warning: no " << g_beam_suffix << " D5WireResi histograms in "
+                << f->GetName() << "; using all beams" << std::endl;
+      g_beam_fallback = kTRUE;
+    }
+  }
   return f->Get(name);
 }
 
@@ -426,7 +440,9 @@ draw_title_page(TCanvas* c, const TString& pdf_path, TFile* f, Int_t run_num)
   tex->SetNDC();
   tex->SetTextAlign(22);
   tex->SetTextSize(0.05);
-  tex->DrawLatex(0.5, 0.84, "D5 wire residual review (rank0 D5 pairs)");
+  tex->DrawLatex(0.5, 0.84, Form("D5 wire residual review (rank0 D5 pairs, %s)",
+                                 g_beam_suffix.IsNull() || g_beam_fallback ? "all beams"
+                                 : g_beam_suffix == "_K" ? "K window" : "pi"));
   tex->SetTextSize(0.04);
   tex->DrawLatex(0.5, 0.74, f->GetName());
   tex->DrawLatex(0.5, 0.68, Form("run_number = %d", run_num));
@@ -1024,6 +1040,14 @@ main(Int_t argc, char** argv)
         return 1;
       }
       dcgeo_path = argv[++i];
+      continue;
+    }
+    if (strcmp(arg, "--kaon") == 0) {
+      g_beam_suffix = "_K";
+      continue;
+    }
+    if (strcmp(arg, "--pion") == 0) {
+      g_beam_suffix = "_Pi";
       continue;
     }
     if (arg[0] == '-') {
