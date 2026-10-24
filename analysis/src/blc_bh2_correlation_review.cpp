@@ -53,7 +53,7 @@ constexpr Int_t kD5XYBins = 200;
 constexpr Double_t kD5XYLo = -200.0;
 constexpr Double_t kD5XYHi = 200.0;
 
-constexpr const char* kD5ParamRel = "param/D5TransferMatrix.param";
+constexpr const char* kD5ParamRel = "param/TM/D5TransferMatrix.param";
 
 struct D5MatrixData
 {
