@@ -36,6 +36,12 @@ parser.add_argument(
     action="store_true",
     help="resolution only: write common Res per a/b (or 4 groups with --all) instead of a+b",
 )
+parser.add_argument(
+    "--ftof",
+    action="store_true",
+    help="hdprm/hdphc only: collect FTOF detector set "
+         "(hdprm: BHT,BH2,BAC,CVC,SFV,SAC3; hdphc: BHT,BH2,CVC)",
+)
 args = parser.parse_args()
 
 detector = "BcOut"
@@ -48,6 +54,14 @@ elif args.bcout:
 if args.suffix not in ["K", "Pi"]:
     print("suffix should be K or Pi")
     sys.exit()
+
+if args.ftof and args.param_type not in ("hdprm", "hdphc", "t0"):
+    print(colored(
+        f"Error: --ftof is only valid with hdprm/hdphc (or ignored for t0); "
+        f"got param_type={args.param_type}",
+        "red",
+    ))
+    sys.exit(1)
 
 if args.all and args.param_type != "resolution":
     print(colored("[Error] --all is only supported for param_type=resolution", "red"))
@@ -136,8 +150,13 @@ reso_meta = None
 print(colored(f"\n>>> Collecting results for {args.param_type} <<<", "cyan"))
 
 if args.param_type == "hdprm":
-    # HTOF is handled separately by "htofprm" (TDC + ADC from HTOF_Calib)
-    detectors = ["BHT", "BH2", "BAC", "KVC", "T1", "CVC", "SAC3", "SFV"]
+    # HTOF is handled separately by "htofprm" (TDC + ADC from HTOF_Calib).
+    # Default: all beam-Hodo + optional FTOF ROOTs if present.
+    # --ftof: FTOF set only (no KVC/T1).
+    if args.ftof:
+        detectors = ["BHT", "BH2", "BAC", "CVC", "SFV", "SAC3"]
+    else:
+        detectors = ["BHT", "BH2", "BAC", "KVC", "T1", "CVC", "SAC3", "SFV"]
     for det in detectors:
         suf = args.suffix
         root_file = get_root_file(args.run_num, det, suf, "HDPRM")
@@ -192,7 +211,12 @@ elif args.param_type == "t0":
 
 elif args.param_type in ("hdphc", "htofphc"):
     # htofphc: HTOF only (HTOF_Calib, run_hodo.py mode "htof"); hdphc: the other counters
-    detectors = ["HTOF"] if args.param_type == "htofphc" else ["BHT", "BH2", "T1", "CVC"]
+    if args.param_type == "htofphc":
+        detectors = ["HTOF"]
+    elif args.ftof:
+        detectors = ["BHT", "BH2", "CVC"]
+    else:
+        detectors = ["BHT", "BH2", "T1", "CVC"]
     for det in detectors:
         root_file = get_root_file(args.run_num, det, args.suffix, "PHC")
         if not root_file:

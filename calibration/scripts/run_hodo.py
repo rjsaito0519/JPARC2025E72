@@ -32,7 +32,14 @@ def main():
                              "results/params are labeled with the first run")
     parser.add_argument("mode", type=str, choices=["hdprm", "htof", "t0", "hdphc"], help="Calibration Mode")
     parser.add_argument('--kaon', action="store_true", help='Use Kaon (K) suffix instead of Pion (Pi)')
-    parser.add_argument('--ftof', action="store_true", help='Include FTOF-related detectors (CVC, SFV, SAC3 for hdprm; CVC for hdphc)')
+    parser.add_argument(
+        '--ftof',
+        action="store_true",
+        help="FTOF-only detector set for hdprm/hdphc "
+             "(hdprm: BHT,BH2,BAC,CVC,SFV,SAC3; hdphc: BHT,BH2,CVC). "
+             "Not an add-on to the default beam-Hodo list. "
+             "t0 is unchanged (T0_Offset). HTOF uses mode 'htof', not this flag.",
+    )
     parser.add_argument(
         "--htof-exclude-beam",
         action="store_true",
@@ -114,35 +121,43 @@ def main():
         print(colored(f"[INFO] Merging {len(run_nums)} runs; results/params labeled with run {run_num:05d}", "green"))
     print(colored(f"[INFO] Mode: {mode} (Suffix: {suffix})", "green"))
     if args.ftof:
-        print(colored("[INFO] FTOF detectors included", "green"))
+        if mode == "htof":
+            print(colored("[Warning] --ftof does not apply to mode htof "
+                          "(use mode htof for HTOF; ignore --ftof here).", "yellow"))
+        else:
+            print(colored("[INFO] FTOF detector set (--ftof)", "green"))
     if args.debug:
         print(colored("[INFO] DEBUG mode: parameter update will be skipped", "yellow"))
 
     bin_dir = project_root / "bin"
     script_dir = Path(__file__).resolve().parent
     update_script = script_dir / "update_param.py"
+    ftof_opt = " --ftof" if args.ftof else ""
 
     # --- Mode Dispatch ---
-    
+
     if mode == "hdprm":
-        # Run BHT_HDPRM, BH2_HDPRM, BAC_HDPRM, KVC_HDPRM, T1_HDPRM, ...
+        # Default: beam Hodo. --ftof: FTOF set only (no KVC/T1).
         # HTOF is handled by mode "htof" (HTOF_Calib).
-        detectors = ["BHT", "BH2", "BAC", "KVC", "T1"] + (["CVC", "SFV", "SAC3"] if args.ftof else [])
-        
-        print(colored(f">>> Step 1: Running HDPRM analysis for {len(detectors)} detectors", "cyan"))
+        if args.ftof:
+            detectors = ["BHT", "BH2", "BAC", "CVC", "SFV", "SAC3"]
+        else:
+            detectors = ["BHT", "BH2", "BAC", "KVC", "T1"]
+
+        print(colored(f">>> Step 1: Running HDPRM for {detectors}", "cyan"))
         for det in detectors:
             binary = bin_dir / f"{det}_HDPRM"
             if binary.exists():
                 run_command(f"{binary} {input_root_file} {suffix}")
             else:
                 print(colored(f"[Warning] Binary {binary.name} not found. Skipping.", "yellow"))
-        
+
         if not args.debug:
             print(colored(">>> Step 2: Updating Parameters (HDPRM)", "cyan"))
-            run_command(f"python3 {update_script} {run_num} {suffix} hdprm")
+            run_command(f"python3 {update_script} {run_num} {suffix} hdprm{ftof_opt}")
         else:
             print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
-        
+
     elif mode == "htof":
         # Run HTOF_Calib (TDC + ADC pedestal/MIP + PHC in one pass; PHC uses DeltaE
         # recomputed from raw ADC with the ADC parameters of the same pass, so no re-decoding is
@@ -168,37 +183,40 @@ def main():
             print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
 
     elif mode == "t0":
-        # Run T0_Offset -> update_param.py t0
+        # Run T0_Offset -> update_param.py t0 (same with or without --ftof).
         executable = bin_dir / "T0_Offset"
         if not executable.exists():
             print(colored(f"[Error] T0_Offset not found. Please compile.", "red"))
             sys.exit(1)
-            
+
         print(colored(">>> Step 1: Running T0_Offset", "cyan"))
         run_command(f"{executable} {input_root_file} {suffix}")
-        
+
         if not args.debug:
             print(colored(">>> Step 2: Updating Parameters (T0)", "cyan"))
             run_command(f"python3 {update_script} {run_num} {suffix} t0")
         else:
             print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
-        
+
     elif mode == "hdphc":
-        # Run BHT_PHC, BH2_PHC, T1_PHC, CVC_PHC (HTOF PHC is handled by mode "htof")
-        # Note: update_param.py supports BHT, BH2, T1, CVC for 'hdphc'
-        detectors = ["BHT", "BH2", "T1"] + (["CVC"] if args.ftof else [])
-        
-        print(colored(f">>> Step 1: Running PHC analysis for {len(detectors)} detectors", "cyan"))
+        # Default: BHT, BH2, T1. --ftof: BHT, BH2, CVC (PHC binaries that exist).
+        # HTOF PHC is handled by mode "htof".
+        if args.ftof:
+            detectors = ["BHT", "BH2", "CVC"]
+        else:
+            detectors = ["BHT", "BH2", "T1"]
+
+        print(colored(f">>> Step 1: Running PHC for {detectors}", "cyan"))
         for det in detectors:
             binary = bin_dir / f"{det}_PHC"
             if binary.exists():
                 run_command(f"{binary} {input_root_file} {suffix}")
             else:
                 print(colored(f"[Warning] Binary {binary.name} not found. Skipping.", "yellow"))
-        
+
         if not args.debug:
             print(colored(">>> Step 2: Updating Parameters (HDPHC)", "cyan"))
-            run_command(f"python3 {update_script} {run_num} {suffix} hdphc")
+            run_command(f"python3 {update_script} {run_num} {suffix} hdphc{ftof_opt}")
         else:
             print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
 
