@@ -59,7 +59,7 @@ MODES = {
         "tpl_yml": "dst_tpchelix_example.yml",
         "tpl_conf": "analyzer_e72_dst_tpchelix_example.conf",
         "dstin": ["TPC"],
-        "unit": 3000,
+        "unit": 2000,
         "option_key": "moption",
         "option_val": "-n 4",
         "required_inputs": ["TPC"],
@@ -136,15 +136,15 @@ MODES = {
 DEFAULTS = {
     "USER:": "param/USER/UserParam_e72_20260403",
     "TPCPRM:": "param/TPCPRM/TPCParam_example",
-    "TPCPOS:": "param/TPCPOS/TPCPositionCorrectionMap_0",
+    "TPCPOS:": "param/TPCPOS/e72/TPCPositionCorrectionMap",
     "DCGEO:": "param/DCGEO/DCGeomParam_e72_example",
     "FLDMAP:": "param/FLDMAP/ShsFieldMap_20210526_Extrapolated",
 }
 
 HSFLD_DEFAULTS = {
-    "HSFLDCALIB:": "0.94838",
-    "HSFLDCALC:": "0.90607",
-    "HSFLDHALL:": "0.90",
+    "HSFLDCALIB:": "1.059",
+    "HSFLDCALC:": "1.0",
+    "HSFLDHALL:": "1.0",
 }
 
 FILE_KEYS = ("USER:", "TPCPRM:", "TPCPOS:", "DCGEO:", "FLDMAP:")
@@ -417,7 +417,7 @@ def ensure_dst_conf(run_num: int, mode: dict, ref) -> str:
         if key not in seen_hsfld:
             out_lines.append(f"{key}\t{val}\n")
 
-    # New conf only: DEFAULTS TPCPOS is TPCPositionCorrectionMap_0.
+    # New conf only: DEFAULTS TPCPOS is param/TPCPOS/e72/TPCPositionCorrectionMap.
     target.write_text("".join(out_lines))
     validate_conf(target)
     return rel
