@@ -12,8 +12,8 @@
 // D5 joint-fit pages (D5WireResi_*): the D5Fit
 // residual (hit in the fit), the exclusive residual D5Excl (hit left out of the refit), the
 // exclusive pull D5Pull = D5Excl / Res, and the D5Fit residual versus the track position along
-// (s_para) and across (s_perp) the wires. Files decoded before the per-beam-flag histograms
-// existed fall back to the all-beam D5Fit only. Last pages: D5Track QA of the rank0 pairs from the
+// the wire (s_perp) and across it (s_para, the measured coordinate). Files decoded before the
+// per-beam-flag histograms existed fall back to the all-beam D5Fit only. Last pages: D5Track QA of the rank0 pairs from the
 // d5 tree with the same beam selection (delta, momentum, chi2, fit vs BLC1, BLC2 - matrix output
 // residual in linear and log scale); all-beam D5Track_* histograms for files without the tree.
 // The first pages show residual versus plane (2D, linear colour scale, profile mean overlaid).
@@ -299,7 +299,7 @@ main(Int_t argc, char** argv)
     c->Print(path_pdf, Form("Title:%s D5 fit", kDets[d].Data()));
   }
 
-  // D5Fit residual vs track position across (s_perp) / along (s_para) the wires: profile per plane
+  // D5Fit residual vs track position along the wire (s_perp) / across it (s_para): profile per plane
   const Int_t kPlaneColor[8] = { kBlue + 1, kAzure + 7, kRed + 1, kOrange + 7,
                                  kGreen + 2, kTeal + 3, kMagenta + 1, kGray + 2 };
   for (const TString& st : { TString("sperp"), TString("spara") }) {
@@ -317,7 +317,7 @@ main(Int_t argc, char** argv)
         pr->SetDirectory(nullptr);
         pr->SetTitle(Form("%s D5 fit residual vs %s (%s);%s [mm];<residual> [mm]", kDets[d].Data(),
                           st == "sperp" ? "s_{perp}" : "s_{para}", d5_label().Data(),
-                          st == "sperp" ? "s_{perp}" : "s_{para}"));
+                          st == "sperp" ? "s_{perp} (along the wire)" : "s_{para} (across the wire)"));
         pr->SetMinimum(-0.3);
         pr->SetMaximum(0.3);
         pr->SetLineColor(kPlaneColor[p]);
