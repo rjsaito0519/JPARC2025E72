@@ -13,7 +13,9 @@
 // residual (hit in the fit), the exclusive residual D5Excl (hit left out of the refit), the
 // exclusive pull D5Pull = D5Excl / Res, and the D5Fit residual versus the track position along
 // (s_para) and across (s_perp) the wires. Files decoded before the per-beam-flag histograms
-// existed fall back to the all-beam D5Fit only. Last pages: D5Track_* QA (all beams).
+// existed fall back to the all-beam D5Fit only. Last pages: D5Track QA of the rank0 pairs from the
+// d5 tree with the same beam selection (delta, momentum, chi2, fit vs BLC1, BLC2 - matrix output
+// residual in linear and log scale); all-beam D5Track_* histograms for files without the tree.
 // The first pages show residual versus plane (2D, linear colour scale, profile mean overlaid).
 
 #include "ana_helper.h"
@@ -32,6 +34,7 @@
 #include <TString.h>
 #include <TStyle.h>
 #include <TSystem.h>
+#include <TTree.h>
 
 #include <cmath>
 #include <iostream>
@@ -334,8 +337,69 @@ main(Int_t argc, char** argv)
     c->Print(path_pdf, Form("Title:D5 fit residual vs %s", st.Data()));
   }
 
-  // D5Track QA (UserD5Tracking, rank0 pairs, all beams)
-  {
+  // D5Track QA of the rank0 pairs: from the d5 tree with the beam selection; the all-beam
+  // D5Track_* histograms for files without the tree
+  if (auto* tree = dynamic_cast<TTree*>(f_d5->Get("d5"))) {
+    TString cut = "d5_pair_rank==0";
+    if (beam.flag >= 0) cut += Form("&&beam_flag==%d", beam.flag);
+    const TString lab = sel_label();
+    struct Plot { const char* name; const char* expr; const char* title; Int_t nx; Double_t xlo, xhi;
+                  Int_t ny; Double_t ylo, yhi; Bool_t logy; };
+    const std::vector<Plot> page1 = {
+      { "qa_delta", "d5_delta", "#delta;#delta [%];count", 200, -10, 10, 0, 0, 0, kFALSE },
+      { "qa_mom", "d5_momentum", "momentum;p [GeV/c];count", 200, 0.5, 1.5, 0, 0, 0, kFALSE },
+      { "qa_chi2", "d5_fit_chi2", "D5 fit #chi^{2};#chi^{2};count", 150, 0, 300, 0, 0, 0, kFALSE },
+      { "qa_chi2ndf", "d5_fit_chi2_ndf", "D5 fit #chi^{2}/NDF;#chi^{2}/NDF;count", 150, 0, 30, 0, 0, 0, kFALSE },
+      { "qa_chi2ndf_log", "d5_fit_chi2_ndf", "D5 fit #chi^{2}/NDF (log);#chi^{2}/NDF;count", 200, 0, 100, 0, 0, 0, kTRUE },
+      { "qa_fitx0", "d5_fit_x0:blc1_x[d5_blc1_trk]", "fit x_{0} vs BLC1 x_{0};BLC1 x_{0} [mm];fit x_{0} [mm]", 100, -100, 100, 100, -100, 100, kFALSE },
+      { "qa_fity0", "d5_fit_y0:blc1_y[d5_blc1_trk]", "fit y_{0} vs BLC1 y_{0};BLC1 y_{0} [mm];fit y_{0} [mm]", 100, -50, 50, 100, -50, 50, kFALSE },
+      { "qa_fitdx", "d5_fit_x0-blc1_x[d5_blc1_trk]", "fit x_{0} - BLC1 x_{0};#Deltax_{0} [mm];count", 200, -2, 2, 0, 0, 0, kTRUE },
+      { "qa_fitdy", "d5_fit_y0-blc1_y[d5_blc1_trk]", "fit y_{0} - BLC1 y_{0};#Deltay_{0} [mm];count", 200, -2, 2, 0, 0, 0, kTRUE },
+    };
+    // residual = BLC2 track - matrix output of the fit at D5ZOut
+    const std::vector<Plot> page2 = {
+      { "qa_resx", "d5_residual_x", "residual X (BLC2 - mtx out);residual X [mm];count", 200, -1, 1, 0, 0, 0, kFALSE },
+      { "qa_resy", "d5_residual_y", "residual Y (BLC2 - mtx out);residual Y [mm];count", 200, -1, 1, 0, 0, 0, kFALSE },
+      { "qa_resxy", "d5_residual_y:d5_residual_x", "residual Y vs X;residual X [mm];residual Y [mm]", 100, -1, 1, 100, -1, 1, kFALSE },
+      { "qa_resx_log", "d5_residual_x", "residual X (log);residual X [mm];count", 200, -50, 50, 0, 0, 0, kTRUE },
+      { "qa_resy_log", "d5_residual_y", "residual Y (log);residual Y [mm];count", 200, -150, 50, 0, 0, 0, kTRUE },
+      { "qa_resxy_log", "d5_residual_y:d5_residual_x", "residual Y vs X (log z);residual X [mm];residual Y [mm]", 100, -50, 50, 100, -150, 50, kTRUE },
+    };
+    auto draw_page = [&](const std::vector<Plot>& plots, Int_t nx, Int_t ny, const TString& page) {
+      gStyle->SetOptStat(1110);
+      c->Clear();
+      c->Divide(nx, ny, 0.002, 0.002);
+      for (std::size_t i = 0; i < plots.size(); ++i) {
+        const Plot& pl = plots[i];
+        c->cd(i + 1);
+        gPad->SetLeftMargin(0.13);
+        gPad->SetRightMargin(pl.ny > 0 ? 0.13 : 0.04);
+        TH1* h = (pl.ny > 0)
+          ? static_cast<TH1*>(new TH2D(pl.name, "", pl.nx, pl.xlo, pl.xhi, pl.ny, pl.ylo, pl.yhi))
+          : static_cast<TH1*>(new TH1D(pl.name, "", pl.nx, pl.xlo, pl.xhi));
+        h->SetDirectory(gDirectory);
+        tree->Draw(Form("%s>>%s", pl.expr, pl.name), cut, "goff");
+        h->SetDirectory(nullptr);
+        TString title = pl.title;
+        title.Insert(title.Index(";"), " (" + lab + ")");
+        h->SetTitle(title);
+        h->SetLineColor(kBlue + 1);
+        if (pl.ny > 0) {
+          if (pl.logy) gPad->SetLogz();
+          h->Draw("colz");
+        } else {
+          if (pl.logy) gPad->SetLogy();
+          h->Draw("hist");
+        }
+      }
+      c->cd();
+      c->Print(path_pdf, "Title:" + page);
+      gStyle->SetOptStat(0);
+    };
+    f_d5->cd();
+    draw_page(page1, 3, 3, "D5Track QA");
+    draw_page(page2, 3, 2, "D5Track residual");
+  } else {
     const char* names[9] = { "D5Track_Delta", "D5Track_Momentum", "D5Track_D5Chi2",
                              "D5Track_D5Chi2NDF", "D5Track_ResidualX", "D5Track_ResidualY",
                              "D5Track_ResidualXY", "D5Track_FitX0VsBLC1x", "D5Track_FitY0VsBLC1y" };
