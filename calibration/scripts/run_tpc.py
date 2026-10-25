@@ -10,11 +10,13 @@ run_tpc: TPC 周りの便利フロントエンド
   ./run_tpc.py <root_file> offset [--run N] [--mode hit|trk] [...]
   ./run_tpc.py <root_file> gain [--run N] [--target-mpv 200] [...]
   ./run_tpc.py <root_file> drift [--run N] [--mode hit|trk] [--vdrift V] [--debug]
+  ./run_tpc.py <helix_root> pos [--model tan|xz] [--threshold N] [--debug] [--ave] [--parent MAP] [--overwrite]
 
   入力 ROOT の命名（dst_create_runlist / create_runlist と揃える）:
   - phase : run{NNNNN}_TPCHitBcOut.root（DATA_DIR symlink 可。旧 dst_tpchit_bcout_tracking_* も可）
   - offset / gain / drift : run{NNNNN}_TPCTracking.root または hadd 済み tracking ROOT
             （hit 側 hadd は TPCHitBcOut 由来。旧 tpc_runXXXXX / dst_tpctracking_* も可）
+  - pos : run{NNNNN}_TPCHelix.root（inclusive helix DST）または hadd
 
   - phase : tpc_phase_from_tpcbcout + tpc_phase_plot
             → --fit-step 1 なら kCobo(3) 行を TTree から更新（TPCPRM へのコメント追記はしない）
@@ -24,6 +26,7 @@ run_tpc: TPC 周りの便利フロントエンド
             → TPCCl_dE_* の Landau fit から MPV を求めて ATY=0 の gain を更新
   - drift : tpc_drift_calib（layer ごとの ResY vs Y 傾き → δv を aty=2 の p1 に加算）
             → --mode は hit/trk ヒストの優先順（無い方へフォールバック）
+  - pos   : tpc_pos_calib（pad 粒度 TPCPOS。仕様は docs/tpc/TPCPOS_ITER_PREP.ja.md）
 """
 
 import argparse
@@ -212,7 +215,7 @@ def get_run_number_from_root(root_path: Path) -> int:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="TPC helper frontend. Usage: run_tpc.py <root> phase|offset|gain|drift [options]"
+        description="TPC helper frontend. Usage: run_tpc.py <root> phase|offset|gain|drift|pos [options]"
     )
     parser.add_argument(
         "root_file",
@@ -220,13 +223,14 @@ def main():
         help=(
             "Input ROOT: phase=runNNNNN_TPCHitBcOut.root; "
             "offset/gain/drift=runNNNNN_TPCTracking.root or hadd ROOT "
-            "(legacy dst_tpchit_bcout_tracking_* / tpc_run* also OK)."
+            "(legacy dst_tpchit_bcout_tracking_* / tpc_run* also OK); "
+            "pos=runNNNNN_TPCHelix.root."
         ),
     )
     parser.add_argument(
         "cmd",
-        choices=["phase", "offset", "gain", "drift"],
-        help="Subcommand: phase, offset, gain, or drift (tpc_drift_calib).",
+        choices=["phase", "offset", "gain", "drift", "pos"],
+        help="Subcommand: phase, offset, gain, drift, or pos (TPCPOS).",
     )
     # phase 用オプション
     parser.add_argument(
@@ -352,7 +356,7 @@ def main():
         type=int,
         default=None,
         help="[offset] Min entries in ±stat-range; [drift] min layer 2D hist entries "
-        "(drift default 10000 if omitted).",
+        "(drift default 10000 if omitted); [pos] min hits per pad (C++ default 100).",
     )
     parser.add_argument(
         "--sigma",
@@ -439,7 +443,29 @@ def main():
         action="store_true",
         help="[offset] layer+ASAD mean fill; [gain] fill missing pads with mean of same-layer row±1 "
         "trusted updated pads (both neighbors required; outlier/extreme gains excluded; "
-        "center-frame excluded).",
+        "center-frame excluded); [pos] fill unfitted pads (layer+ASAD mean; "
+        "center-frame forced to (vx,vz)=(0,0); without --ave only fitted pads update).",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        metavar="M",
+        help="[pos] Update model: tan (default) or xz. Aliases: tangent/rt, cartesian/cart.",
+    )
+    parser.add_argument(
+        "--parent",
+        type=Path,
+        default=None,
+        metavar="MAP",
+        help="[pos] TPCPOS map used to reconstruct the helix input; the update is added onto it "
+        "(default: param/TPCPOS/e72/TPCPositionCorrectionMap).",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="[pos] Replace touched pads by -<r> instead of adding to the parent map "
+        "(only for a helix reconstructed with a zero map).",
     )
     parser.add_argument(
         "--asad-avg",
@@ -514,8 +540,9 @@ def main():
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="[phase/offset/gain/drift] Run the same analysis/QA but do not write TPCPRM "
-        "(status check; gain uses C++ --debug).",
+        help="[phase/offset/gain/drift/pos] Run the same analysis/QA but do not write params "
+        "(TPCPRM for phase/offset/gain/drift; TPCPOS map for pos). "
+        "status check; gain uses C++ --debug.",
     )
     parser.add_argument(
         "--replace",
@@ -876,6 +903,45 @@ def main():
 
         cmd = " ".join(opts)
         print(colored(f">>> TPC drift calib (tpc_drift_calib), run={run_num}", "cyan"))
+        run_command(cmd)
+
+    elif args.cmd == "pos":
+        # Spec: docs/tpc/TPCPOS_ITER_PREP.ja.md
+        input_root = args.root_file.resolve()
+        if not input_root.exists():
+            print(colored(f"[Error] File not found: {input_root}", "red"))
+            sys.exit(1)
+
+        exe_pos = bin_dir / "tpc_pos_calib"
+        if not exe_pos.exists():
+            print(
+                colored(
+                    f"[Error] Binary not found: {exe_pos}. Build myanalysis (./build.sh).",
+                    "red",
+                )
+            )
+            sys.exit(1)
+
+        opts = [str(exe_pos), str(input_root)]
+        if args.model is not None:
+            opts += ["--model", str(args.model)]
+        if args.threshold is not None:
+            opts += ["--threshold", str(args.threshold)]
+        if args.ave:
+            opts += ["--ave"]
+        if args.debug:
+            opts += ["--debug"]
+        if args.parent is not None:
+            parent_map = args.parent.resolve()
+            if not parent_map.exists():
+                print(colored(f"[Error] parent map not found: {parent_map}", "red"))
+                sys.exit(1)
+            opts += ["--parent", str(parent_map)]
+        if args.overwrite:
+            opts += ["--overwrite"]
+
+        cmd = " ".join(opts)
+        print(colored(">>> TPC pos calib (tpc_pos_calib)", "cyan"))
         run_command(cmd)
 
 
