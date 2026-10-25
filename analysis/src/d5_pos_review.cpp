@@ -245,6 +245,7 @@ main(Int_t argc, char** argv)
 
   gROOT->SetBatch(kTRUE);
   gStyle->SetOptStat(1110);
+  gStyle->SetPaperSize(29.0, 20.5);
 
   // --- dy from the BLC2-referenced fit ---
   auto* h_ya = new TH1D("h_ya", "BLC1a: r_{y} = y_{fit} - y_{BLC1} (BLC2-referenced); r_{y} [mm]; count", 600, -30, 30);
@@ -357,7 +358,7 @@ main(Int_t argc, char** argv)
   ofs.close();
 
   // --- PDF ---
-  auto* c = new TCanvas("c", "c", 1200, 900);
+  auto* c = new TCanvas("c", "c", 1600, 1130);
   c->Print(path_pdf + "[");
   c->cd();
   auto* tex = new TLatex();
