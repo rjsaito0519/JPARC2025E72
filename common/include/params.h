@@ -801,11 +801,11 @@ namespace param
     // key  : run number
     // value: { p_delta0 [GeV/c] (true momentum at D5 delta = 0), k (true delta per D5 delta) }
     static const std::unordered_map<Int_t, std::vector<Double_t>> d5_ftof_momentum_corr{
-        { 2592, { 0.6327, 0.829 } },
-        { 2589, { 0.7096, 0.786 } },
-        { 2580, { 0.7286, 0.802 } },
-        { 2587, { 0.7496, 0.802 } },
-        { 2585, { 0.9303, 0.804 } },
+        { 2592, { 0.6328, 0.822 } },
+        { 2589, { 0.7096, 0.787 } },
+        { 2580, { 0.7285, 0.806 } },
+        { 2587, { 0.7496, 0.805 } },
+        { 2585, { 0.9302, 0.807 } },
     };
 }
 
