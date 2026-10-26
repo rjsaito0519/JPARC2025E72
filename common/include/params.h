@@ -795,6 +795,18 @@ namespace param
         { "03851-6", {21.2, 5.0 } },
         { "03851-7", {21.2, 5.0 } },
     };
+
+    // D5 momentum correction from the pbar BH2->CVC time of flight compared with Geant4.
+    // p = p_delta0 * (1 + k * delta / 100), delta = D5 delta [%] (d5_delta).
+    // key  : run number
+    // value: { p_delta0 [GeV/c] (true momentum at D5 delta = 0), k (true delta per D5 delta) }
+    static const std::unordered_map<Int_t, std::vector<Double_t>> d5_ftof_momentum_corr{
+        { 2592, { 0.6327, 0.829 } },
+        { 2589, { 0.7096, 0.786 } },
+        { 2580, { 0.7286, 0.802 } },
+        { 2587, { 0.7496, 0.802 } },
+        { 2585, { 0.9303, 0.804 } },
+    };
 }
 
 #endif // PARAMS_H
