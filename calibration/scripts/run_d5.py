@@ -214,7 +214,7 @@ def measure(run):
     res = {"run": run}
     rc, _ = run_cmd(f"{BIN_DIR}/d5_pos_review {run} {BEAM_FLAG} --d5 {d5_root(run)} "
                     f"--d5ref {d5_root(run, TAG)} --dcgeo {dcgeo_path(run)}", capture=True)
-    txt = txt_dir(run) / f"d5_pos_review_{run_tag(run)}.txt"
+    txt = txt_dir(run) / f"d5_pos_review_{run_tag(run)}_{SUFFIX}.txt"
     if rc != 0 or not txt.exists():
         return res
     kv = parse_kv(txt)

@@ -5,7 +5,7 @@
 //           BcIn  DECODE_DIR/runXXXXX/runXXXXX_BcIn_resi_S.root
 //           BcOut DECODE_DIR/runXXXXX/runXXXXX_BcOut_resi_S.root
 //           D5    DECODE_DIR/runXXXXX/runXXXXX_D5_S.root
-//           pdf   OUTPUT_DIR/img/runXXXXX/d5_plane_resi_qa_runXXXXX.pdf
+//           pdf   OUTPUT_DIR/img/runXXXXX/d5_plane_resi_qa_runXXXXX_<Pi|K|All>.pdf
 //
 // All residual pages use the selected beam (histogram suffix _Pi / _K, none for --all).
 // Chamber-fit residuals (BcIn: BLC1a+b, BcOut: BLC2a+b) are drawn per plane.
@@ -102,9 +102,8 @@ draw_vs_plane(TH2* h2, const TString& title)
   pr->Draw("same");
 }
 
-// D5WireResi histogram of the selected beam; all-beam fallback for older files
+// D5WireResi histogram of the selected beam
 TString g_d5_suffix = "_Pi";
-Bool_t g_d5_fallback = kFALSE;
 
 // label of the selected beam
 TString
@@ -117,17 +116,7 @@ sel_label()
 TObject*
 get_d5(TFile* f, const TString& name)
 {
-  if (!g_d5_suffix.IsNull()) {
-    if (auto* obj = f->Get(name + g_d5_suffix)) return obj;
-    g_d5_fallback = kTRUE;
-  }
-  return f->Get(name);
-}
-
-TString
-d5_label()
-{
-  return g_d5_fallback ? TString("all beam") : sel_label();
+  return f->Get(name + g_d5_suffix);
 }
 
 void
@@ -145,9 +134,7 @@ main(Int_t argc, char** argv)
   if (argc < 2) { usage(argv[0]); return 1; }
   const Int_t run = std::atoi(argv[1]);
   d5_helper::BeamSel beam;
-  TString path_bcin, path_bcout, path_d5;
-  TString path_pdf = Form("%s/d5_plane_resi_qa_run%05d.pdf",
-                          ana_helper::get_img_dir(OUTPUT_DIR, run).Data(), run);
+  TString path_bcin, path_bcout, path_d5, path_pdf;
   for (Int_t i = 2; i < argc; ++i) {
     const TString a = argv[i];
     if (d5_helper::parse_beam_option(a, beam)) continue;
@@ -159,6 +146,9 @@ main(Int_t argc, char** argv)
   }
   g_d5_suffix = beam.hist_suffix;
   const char* sfx = beam.param_suffix.Data();
+  if (path_pdf.IsNull())
+    path_pdf = Form("%s/d5_plane_resi_qa_run%05d_%s.pdf",
+                    ana_helper::get_img_dir(OUTPUT_DIR, run).Data(), run, beam.out_tag.Data());
   if (path_bcin.IsNull())
     path_bcin = Form("%s/run%05d/run%05d_BcIn_resi_%s.root", DECODE_DIR.Data(), run, run, sfx);
   if (path_bcout.IsNull())
@@ -169,7 +159,7 @@ main(Int_t argc, char** argv)
   auto* f_bcin = TFile::Open(path_bcin);
   auto* f_bcout = TFile::Open(path_bcout);
   auto* f_d5 = TFile::Open(path_d5);
-  if (!f_bcin || !f_bcout || !f_d5) {
+  if (!f_bcin || !f_bcout || !f_d5 || f_bcin->IsZombie() || f_bcout->IsZombie() || f_d5->IsZombie()) {
     std::cerr << "cannot open input files" << std::endl;
     return 1;
   }
@@ -204,7 +194,7 @@ main(Int_t argc, char** argv)
         else h2->GetYaxis()->SetRangeUser(-10.0, 10.0);
         for (Int_t p = 0; p < 8; ++p) h2->GetXaxis()->SetBinLabel(p + 1, kPlanes[p]);
         title = Form("%s %s (%s)", kDets[d].Data(), kind == "D5Fit" ? "D5 fit" : "D5 exclusive pull",
-                     d5_label().Data());
+                     sel_label().Data());
       } else {
         h2 = stack_planes((d < 2) ? f_bcin : f_bcout, kDets[d], g_d5_suffix, 0.8);
         title = Form("%s chamber fit (%s)", kDets[d].Data(), sel_label().Data());
@@ -258,23 +248,21 @@ main(Int_t argc, char** argv)
       hd->SetDirectory(nullptr);
       c_d5[d][p] = fit_core(hd, 0.3);
       hd->SetTitle(Form("%s-%s (D5 fit, %s);residual [mm];count", kDets[d].Data(), kPlanes[p].Data(),
-                        d5_label().Data()));
+                        sel_label().Data()));
       hd->GetXaxis()->SetRangeUser(-2.0, 2.0);
       hd->SetLineColor(kBlue + 1);
       hd->SetFillColorAlpha(kAzure - 9, 0.5);
       TH1* he = nullptr;
-      if (!g_d5_fallback) {
-        if (auto* e = dynamic_cast<TH1*>(get_d5(f_d5, Form("D5WireResi_%s_D5Excl_plane%d", kDets[d].Data(), p)))) {
-          he = dynamic_cast<TH1*>(e->Clone(Form("%s_qa", e->GetName())));
-          he->SetDirectory(nullptr);
-          c_ex[d][p] = fit_core(he, 0.3);
-          he->SetLineColor(kRed + 1);
-          he->SetLineWidth(2);
-          hd->SetMaximum(1.15 * std::max(hd->GetMaximum(), he->GetMaximum()));
-        }
-        if (auto* u = dynamic_cast<TH1*>(get_d5(f_d5, Form("D5WireResi_%s_D5Pull_plane%d", kDets[d].Data(), p))))
-          c_pu[d][p] = fit_core(u, 2.0);
+      if (auto* e = dynamic_cast<TH1*>(get_d5(f_d5, Form("D5WireResi_%s_D5Excl_plane%d", kDets[d].Data(), p)))) {
+        he = dynamic_cast<TH1*>(e->Clone(Form("%s_qa", e->GetName())));
+        he->SetDirectory(nullptr);
+        c_ex[d][p] = fit_core(he, 0.3);
+        he->SetLineColor(kRed + 1);
+        he->SetLineWidth(2);
+        hd->SetMaximum(1.15 * std::max(hd->GetMaximum(), he->GetMaximum()));
       }
+      if (auto* u = dynamic_cast<TH1*>(get_d5(f_d5, Form("D5WireResi_%s_D5Pull_plane%d", kDets[d].Data(), p))))
+        c_pu[d][p] = fit_core(u, 2.0);
       hd->Draw("hist");
       if (he) he->Draw("hist same");
       TLatex t;
@@ -316,7 +304,7 @@ main(Int_t argc, char** argv)
         auto* pr = h2->ProfileX(Form("pr_%s_%d_%s", kDets[d].Data(), p, st.Data()));
         pr->SetDirectory(nullptr);
         pr->SetTitle(Form("%s D5 fit residual vs %s (%s);%s [mm];<residual> [mm]", kDets[d].Data(),
-                          st == "sperp" ? "s_{perp}" : "s_{para}", d5_label().Data(),
+                          st == "sperp" ? "s_{perp}" : "s_{para}", sel_label().Data(),
                           st == "sperp" ? "s_{perp} (along the wire)" : "s_{para} (across the wire)"));
         pr->SetMinimum(-0.3);
         pr->SetMaximum(0.3);
@@ -431,7 +419,7 @@ main(Int_t argc, char** argv)
   t.DrawLatex(0.03, y, Form("chamber fit (%s): %s, %s", sel_label().Data(), gSystem->BaseName(path_bcin),
                             gSystem->BaseName(path_bcout)));
   y -= 0.025;
-  t.DrawLatex(0.03, y, Form("D5 fit (%s): %s", d5_label().Data(), gSystem->BaseName(path_d5)));
+  t.DrawLatex(0.03, y, Form("D5 fit (%s): %s", sel_label().Data(), gSystem->BaseName(path_d5)));
   y -= 0.035;
   t.DrawLatex(0.03, y, "plane          chamber mean/sig   D5fit mean/sig   excl mean/sig    pull mean/sig");
   y -= 0.022;

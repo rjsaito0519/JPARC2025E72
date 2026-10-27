@@ -6,8 +6,8 @@
 //           D5ref  SCRATCH_DIR/runXXXXX/runXXXXX_D5_S_bc1reso.root   (BLC1 Res inflated)
 //           mtx    ANALYZER_DIR/param/TM/e72/D5TransferMatrix_runXXXXX
 //           geo    ANALYZER_DIR/param/DCGEO/e72/DCGeomParam_runXXXXX_S
-//           pdf    OUTPUT_DIR/img/runXXXXX/d5_pos_review_runXXXXX.pdf
-//           txt    kTxtDir/runXXXXX/d5_pos_review_runXXXXX.txt  (numbers for run_d5.py; not in img)
+//           pdf    OUTPUT_DIR/img/runXXXXX/d5_pos_review_runXXXXX_<Pi|K|All>.pdf
+//           txt    kTxtDir/runXXXXX/d5_pos_review_runXXXXX_<Pi|K|All>.txt  (numbers for run_d5.py; not in img)
 //           beam flag: --pion (beam_flag == 1)
 //
 // dy (BLC2-referenced fit, D5ref): with the BLC1 Res inflated the D5 fit line at BLC1 (d5_fit_*0)
@@ -95,8 +95,8 @@ void
 transport(const D5Matrix& m, Double_t x, Double_t u, Double_t y, Double_t v,
           Double_t delta, Double_t* out)
 {
-  const Double_t p[6] = { (x + u * m.z_in) / 10.0, u * 1000.0,
-                          (y + v * m.z_in) / 10.0, v * 1000.0, 0.0, delta };
+  const Double_t p[6] = { (x + u * m.z_in) / 10.0, std::atan(u) * 1000.0,
+                          (y + v * m.z_in) / 10.0, std::atan(v) * 1000.0, 0.0, delta };
   for (Int_t i = 0; i < 4; ++i) {
     Double_t s = 0.0;
     for (Int_t j = 0; j < 6; ++j) s += m.r[i][j] * p[j];
@@ -195,10 +195,8 @@ main(Int_t argc, char** argv)
   if (argc < 2) { usage(argv[0]); return 1; }
   const Int_t run = std::atoi(argv[1]);
   d5_helper::BeamSel beam;
-  TString path_d5, path_ref, path_geo, path_txt;
+  TString path_d5, path_ref, path_geo, path_txt, path_pdf;
   TString path_mtx = Form("%s/param/TM/e72/D5TransferMatrix_run%05d", ANALYZER_DIR.Data(), run);
-  TString path_pdf = Form("%s/d5_pos_review_run%05d.pdf",
-                          ana_helper::get_img_dir(OUTPUT_DIR, run).Data(), run);
   for (Int_t i = 2; i < argc; ++i) {
     const TString a = argv[i];
     if (d5_helper::parse_beam_option(a, beam)) continue;
@@ -211,6 +209,9 @@ main(Int_t argc, char** argv)
     else { usage(argv[0]); return 1; }
   }
   const TString& sfx = beam.param_suffix;
+  if (path_pdf.IsNull())
+    path_pdf = Form("%s/d5_pos_review_run%05d_%s.pdf",
+                    ana_helper::get_img_dir(OUTPUT_DIR, run).Data(), run, beam.out_tag.Data());
   if (path_d5.IsNull())
     path_d5 = Form("%s/run%05d/run%05d_D5_%s.root", DECODE_DIR.Data(), run, run, sfx.Data());
   if (path_ref.IsNull())

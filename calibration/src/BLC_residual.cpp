@@ -9,6 +9,7 @@
 
 // ROOT
 #include <TFile.h>
+#include <TSystem.h>
 #include <TTree.h>
 #include <TTreeReader.h>
 #include <TTreeReaderValue.h>
@@ -97,6 +98,15 @@ void analyze(TString path, TString particle){
         h_blcb_residual[i] = (TH1D*)f->Get(Form("BLC%sb_Track_Residual_plane%d_%s", in_or_out.Data(), i, particle.Data()));
         h_blca_XT[i] = (TH2D*)f->Get(Form("BLC%sa_Track_Residual_vs_DriftLength_plane%d_%s", in_or_out.Data(), i, particle.Data()));
         h_blcb_XT[i] = (TH2D*)f->Get(Form("BLC%sb_Track_Residual_vs_DriftLength_plane%d_%s", in_or_out.Data(), i, particle.Data()));
+    }
+    for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++ ) {
+        if (!h_blca_residual[i] || !h_blcb_residual[i] || !h_blca_XT[i] || !h_blcb_XT[i]) {
+            std::cerr << "Error: BLC" << in_or_out << " Track_Residual histograms (plane " << i
+                      << ", " << particle << ") not found in " << f->GetName() << std::endl;
+            fout->Close();
+            gSystem->Unlink(output_path);
+            return;
+        }
     }
  
     // +--------------+

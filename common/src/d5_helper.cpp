@@ -18,11 +18,13 @@ namespace d5_helper {
             sel.flag = kBeamFlagKaon;
             sel.param_suffix = "K";
             sel.hist_suffix = "_K";
+            sel.out_tag = "K";
             sel.label = "K window (beam_flag=2)";
         } else if (arg == "--all") {
             sel.flag = kBeamFlagAll;
             sel.param_suffix = "K";
             sel.hist_suffix = "";
+            sel.out_tag = "All";
             sel.label = "all beam_flag";
         } else {
             return kFALSE;

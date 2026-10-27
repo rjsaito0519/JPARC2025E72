@@ -22,6 +22,7 @@ namespace d5_helper {
         Int_t flag = kBeamFlagPion;   // d5 tree beam_flag to select (kBeamFlagAll: no selection)
         TString param_suffix = "Pi";  // suffix of the params / decode files (Pi or K; K for --all)
         TString hist_suffix = "_Pi";  // suffix of the per-beam-flag histograms ("" for --all)
+        TString out_tag = "Pi";       // tag in the output file names (Pi, K, All)
         TString label = "pi (beam_flag=1)";
     };
 
