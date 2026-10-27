@@ -9,20 +9,20 @@
  * (TF1 でフィット後、細かく Eval して TGraph に変換して保存)
  *
  * さらに TTree "TpcPhase_CoboFallback" を保存する:
- *   --fit-step 1 のとき各 CoBo の 1 段ステップ振幅・位置・幅を (p0,p1,p2) として記録し、
+ *   各 CoBo の 1 段ステップ振幅・位置・幅を (p0,p1,p2) として記録し、
  *   TPCPRM の kCobo 行（aty=3）フォールバック式 PhaseShift と一致させるのに使う。
- *   nstep_fit: 0=flat 初期, 1=1 段フィット成功（p0,p1,p2 有効）, >1=多段（p は無効）, -1=フィット失敗
+ *   nstep_fit: 1=1 段フィット成功（p0,p1,p2 有効）, -1=フィット失敗
  *
- * 運用前提: --fit-step 1（1-step）が正準。多段 N>1 は CLI 互換のみ（非推奨）。
+ * フィットは常に 1-step。
  * Fit の MINUIT status≠0（非収束）でも、最終パラメータを採用して TGraph / Fallback を書く
- * （従来の --base / StepSum 互換。Warning は出す）。
+ * （Warning は出す）。
  *
- * ステップ幅: fit は --step-width（既定 0.1 ns）で安定化。保存時は A,t(,c0) を取り、
+ * ステップ幅: fit は固定幅 kPhaseFitStepWidthNs (0.1 ns) で安定化。保存時は A,t(,c0) を取り、
  * w=kPhaseStoreWidthNs (0.001 ns) の新しい TF1 で TGraph / Fit を Eval・Write する
  * （FixParameter 済み TF1 への SetParameter は使わない。ステップ近傍は密サンプリング）。
  *
- * デフォルト（baseline ON, 1-step）は 2 段階:
- *   1) pre-fit（--base 相当）で t,w を決める
+ * フィットは 2 段階:
+ *   1) pre-fit（定数項なし）で t,w を決める
  *   2) baseline 本 fit で t,w 固定・c0/A を当てる（採用は 2)。失敗時のみ 1) にフォールバック）
  * TPCPRM aty=3 は常に (A,t,w) の 3 パラメータ。c0 は TGraph / --ofs-update のみ。
  *
@@ -32,31 +32,26 @@
  *   詳細: analyzer docs/tpc/tpc_phase_plot_contract.md
  *
  * Usage:
- *   tpc_phase_from_tpcbcout <tpcbcout.root> <TpcPhase.root> [--smooth N] [--vdrift V] [--fit-step [N]] [--graph-points N]
+ *   tpc_phase_from_tpcbcout <tpcbcout.root> <TpcPhase.root> [--mode hit|trk] [--rebin N] [--ofs-update] [--run N]
  *
  * 動作:
  *   - 生ヒスト (TPC_ResidualY_BcOut_vs_ClockTime_CoBo%d_RawClock) から Profile を取り、フィットして TpcPhase.root を出力
  *   - TF1 でフィット後、細かく評価して TGraph に変換
  *
  * オプション:
- *   --smooth N        : 移動平均の半窓幅（デフォルト 0 = スムージングなし）
- *   --vdrift V        : drift velocity [mm/ns]（明示時は全 CoBo 共通。省略時は TPCPRM の CoBo 平均 p1、無ければ 0.055）
- *   --fit-step [N]     : ステップ数（運用は N=1。N=0 で全ゼロ初期、N>1 は非推奨）
- *   --min-entries N   : Profile で使う最小エントリ数（デフォルト 5、統計が少ないビンをスキップ）
- *   --rebin N         : 2D ヒストの clock 軸（X）を N ビンまとめてから各 X ビンで gaus+pol0 profile
- *                       （N=1: 従来 ProfileX + コア点のみ再 fit、N>1: X rebin + 全ビン Gaussian）
- *   --graph-points N  : TGraph の点数（デフォルト 10000）
  *   --mode hit|trk    : 入力 2D ヒストの優先順（trk: TPCTrk_ResY_vs_ClockTime_... を先に、デフォルト hit）
+ *   --rebin N         : 2D ヒストの clock 軸（X）を N ビンまとめてから各 X ビンで gaus+pol0 profile
+ *                       （N=1: ProfileX + コア点のみ再 fit、N>1: X rebin + 全ビン Gaussian）
  *   --ofs-update      : baseline fit の c0 [ns] を CoBo 一律で time offset (aty=2 p0) に加算（δp0=-c0）
  *   --run N           : TPCPRM 更新用 run 番号（省略時は tpc/run_number またはファイル名から）
- *   --base            : legacy のみ（定数項なし）。省略時は pre-fit(--base 相当)で t,w を決め、
- *                       続けて baseline 本 fit で t,w 固定・c0/A を当てる。TPCPRM aty=3 は従来どおり (A,t,w)
+ *
+ * 固定設定:
+ *   drift velocity : TPCPRM の CoBo 平均 p1（無ければ 0.055 mm/ns）
+ *   profile        : 1 ビンあたり最小エントリ数 5、移動平均スムージングなし
+ *   TGraph         : 10000 点
  *
  * 例:
- *   # 初期ファイル（全ゼロ、tpcbcout 不要）
- *   tpc_phase_from_tpcbcout param/TPCPHASE/TpcPhase_02601.root --fit-step 0
- *   # フィット（正準: 1-step）
- *   tpc_phase_from_tpcbcout tpcbcout_run02601.root param/TPCPHASE/TpcPhase_02601.root --fit-step 1
+ *   tpc_phase_from_tpcbcout tpcbcout_run02601.root param/TPCPHASE/TpcPhase_02601.root --rebin 2
  *
  * Ref: HistTools.cc TPC_ResidualY_BcOut_vs_ClockTime_CoBo%d_RawClock,
  *      DstTPCBcOutTracking.cc, TPCParamMan.cc TpcPhase_Cobo%d
@@ -116,7 +111,8 @@ static const Double_t kPhaseGraphHalfRangeNs = 60.0;
 static const Double_t kPhaseAmpMaxNs = 400.0;
 // 各 clock ビンの Y 射影に対する Gauss 窓の半幅の下限（±40 ns を ResY に換算）[mm]
 static const Double_t kPhaseSliceGaussHalfWidthNsEquiv = 40.0;
-// fit 用ステップ幅のデフォルトは CLI (--step-width, 既定 0.1)。
+// fit 用ステップ幅（固定）[ns]
+static const Double_t kPhaseFitStepWidthNs = 0.1;
 // 保存・補正・描画用 TGraph / Fallback p2 / Fit TF1 にはこれ（2 桁細い急段差）を書く。
 static const Double_t kPhaseStoreWidthNs = 0.001;
 
@@ -142,11 +138,11 @@ static const std::vector<std::string> HIST_FMTS_TRK = {
 // ResY [mm] -> Δclock [ns] の変換で使う drift velocity [mm/ns]
 static const Double_t DEFAULT_VDRIFT = 0.055;
 
-// デフォルトのスムージング半窓幅（0 = スムージングなし）
-static const Int_t DEFAULT_SMOOTH = 0;
-
 // TGraph の点数（TF1 を細かく Eval する）
 static const Int_t DEFAULT_GRAPH_POINTS = 10000;
+
+// Profile で使う 1 ビンあたりの最小エントリ数
+static const Int_t kPhaseProfileMinEntries = 5;
 
 // PhaseShift / TPCPRM kCobo 用: 常に (A,t,w) を取り出す。
 // - 3par legacy: (A,t,w)
@@ -1318,117 +1314,65 @@ int main(int argc, char* argv[])
   // Fit / Projection 時の一時キャンバス生成を抑止（結果は変えない）
   gROOT->SetBatch(kTRUE);
 
-  if (argc < 2) {
+  auto print_usage = [&]() {
     std::cerr << "Usage: " << argv[0]
-              << " <TpcPhase.root> [tpcbcout.root] [--fit-step N] [--smooth N] [--vdrift V] ...\n"
+              << " <tpcbcout.root> <TpcPhase.root> [--mode hit|trk] [--rebin N] [--ofs-update] [--run N]\n"
               << "\n"
-              << "  --fit-step 0         : create initial flat-zero file (tpcbcout.root not needed)\n"
-              << "  --fit-step 1         : canonical 1-step (default when flag given without N)\n"
-              << "  --fit-step N (N>1)   : legacy multi-step (non-canonical)\n"
-              << "  1 arg:  TpcPhase.root only (for --fit-step 0)\n"
-              << "  2 args: tpcbcout.root TpcPhase.root (for --fit-step N>0)\n"
-              << "\n"
-              << "  --smooth N       : moving average half-window (default: 0 = no smoothing)\n"
-              << "  --vdrift V      : drift [mm/ns]; if omitted, use CoBo-mean p1 from TPCPRM (else 0.055)\n"
-              << "  --step-width W  : fixed step width [ns] (smaller => steeper, default: 0.005)\n"
-              << "  --free          : free step width in fit (default: fixed)\n"
-              << "  --base          : legacy-only fit (no baseline); default: pre-fit then baseline with t,w fixed\n"
-              << "  --min-entries N : min entries per bin for profile (default: 5)\n"
-              << "  --rebin N       : rebin 2D hist X (clock) by N; N>1 uses gaus profile per bin\n"
-              << "  --graph-points N: number of points in output TGraph (default: 10000)\n"
               << "  --mode hit|trk  : input 2D hist priority (trk: TPCTrk_ResY_vs_ClockTime_... first)\n"
+              << "  --rebin N       : rebin 2D hist X (clock) by N; N>1 uses gaus profile per bin\n"
               << "  --ofs-update    : apply baseline c0 to CoBo-uniform time offset (δp0=-c0; skip center-frame X)\n"
               << "  --run N         : run number for TPCPRM path (default: from tpc/run_number or filename)\n";
-    return 1;
-  }
+  };
 
   std::string tpcbcout_path;
   std::string phase_path;
-  Double_t vdrift = DEFAULT_VDRIFT;
-  Bool_t vdrift_cli_set = kFALSE;
-  Int_t smooth_half_window = DEFAULT_SMOOTH;
-  Int_t fit_nstep = 0;
-  Int_t min_entries = 5;
-  Int_t graph_points = DEFAULT_GRAPH_POINTS;
-  Double_t step_width_ns = 0.1;
-  Bool_t free_step_width = kFALSE;
-  Bool_t use_baseline_term = kTRUE;
+  const Int_t min_entries = kPhaseProfileMinEntries;
+  const Int_t graph_points = DEFAULT_GRAPH_POINTS;
+  const Double_t step_width_ns = kPhaseFitStepWidthNs;
   Bool_t ofs_update = kFALSE;
   Int_t run_number = -1;
   Int_t rebin_x = 1;
   std::string mode = "hit";
 
-  // 非オプション引数を収集。1個=phaseのみ(--fit-step 0用)、2個=tpcbcout,phase(従来互換)
   std::vector<std::string> positionals;
   for (Int_t i = 1; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "--mode" && i + 1 < argc) {
       mode = argv[++i];
-    } else if (a == "--vdrift" && i + 1 < argc) {
-      vdrift = std::atof(argv[++i]);
-      if (vdrift <= 0.0) vdrift = DEFAULT_VDRIFT;
-      vdrift_cli_set = kTRUE;
-    } else if (a == "--smooth" && i + 1 < argc) {
-      smooth_half_window = std::atoi(argv[++i]);
-      if (smooth_half_window < 0) smooth_half_window = 0;
-    } else if (a == "--step-width" && i + 1 < argc) {
-      step_width_ns = std::atof(argv[++i]);
-      if (!(step_width_ns > 0.0)) step_width_ns = 0.005;
-    } else if (a == "--free") {
-      free_step_width = kTRUE;
-    } else if (a == "--base") {
-      use_baseline_term = kFALSE;
     } else if (a == "--ofs-update") {
       ofs_update = kTRUE;
     } else if (a == "--run" && i + 1 < argc) {
       run_number = std::atoi(argv[++i]);
-    } else if (a == "--fit-step") {
-      fit_nstep = 1;  // デフォルト1個
-      if (i + 1 < argc) {
-        char* end = nullptr;
-        long n = std::strtol(argv[i + 1], &end, 10);
-        if (end != argv[i + 1] && n >= 0) {
-          fit_nstep = (Int_t)n;
-          ++i;
-        }
-      }
-    } else if (a == "--min-entries" && i + 1 < argc) {
-      min_entries = std::atoi(argv[++i]);
-      if (min_entries < 1) min_entries = 1;
-    } else if (a == "--graph-points" && i + 1 < argc) {
-      graph_points = std::atoi(argv[++i]);
-      if (graph_points < 100) graph_points = DEFAULT_GRAPH_POINTS;
     } else if (a == "--rebin" && i + 1 < argc) {
       rebin_x = std::atoi(argv[++i]);
       if (rebin_x < 1) rebin_x = 1;
     } else if (a.find("-") != 0) {
       positionals.push_back(a);
+    } else {
+      std::cerr << "Error: unknown or incomplete option: " << a << "\n";
+      print_usage();
+      return 1;
     }
   }
-  if (positionals.size() >= 1) phase_path = positionals.back();  // 最後が常に phase
-  if (positionals.size() >= 2) tpcbcout_path = positionals[0];   // 2個なら 1番目が tpcbcout
-
-  if (phase_path.empty()) {
-    std::cerr << "Error: need <TpcPhase.root>\n";
+  if (positionals.size() != 2) {
+    std::cerr << "Error: need <tpcbcout.root> <TpcPhase.root>\n";
+    print_usage();
     return 1;
   }
+  tpcbcout_path = positionals[0];
+  phase_path = positionals[1];
 
   const std::vector<std::string>& hist_fmts =
       (mode == "trk" || mode == "track" || mode == "TPCTrk") ? HIST_FMTS_TRK : HIST_FMTS_HIT;
 
-  if (tpcbcout_path.empty() && fit_nstep != 0) {
-    std::cerr << "Error: need <tpcbcout.root> for fitting (--fit-step N)\n";
-    return 1;
-  }
-
   // 入力ファイルを絶対パスに
   namespace fs = std::filesystem;
-  if (!tpcbcout_path.empty()) tpcbcout_path = fs::absolute(tpcbcout_path).string();
+  tpcbcout_path = fs::absolute(tpcbcout_path).string();
   phase_path = fs::absolute(phase_path).string();
 
   // run 番号（連続した数字列）を tpcbcout ファイル名から抽出
   std::string run_id;
-  if (!tpcbcout_path.empty()) {
+  {
     const std::string fname = fs::path(tpcbcout_path).filename().string();
     for (size_t i = 0; i < fname.size(); ++i) {
       if (std::isdigit(static_cast<unsigned char>(fname[i]))) {
@@ -1456,7 +1400,7 @@ int main(int argc, char* argv[])
       std::cerr << "This will OVERWRITE the existing file!" << std::endl;
       std::cerr << "Did you swap input/output arguments?" << std::endl;
       std::cerr << "\nCorrect usage:" << std::endl;
-      std::cerr << "  " << argv[0] << " <input_tpcbcout.root> <output_TpcPhase.root> --fit-step N" << std::endl;
+      std::cerr << "  " << argv[0] << " <input_tpcbcout.root> <output_TpcPhase.root>" << std::endl;
       std::cerr << "\nType 'yes' to continue anyway, or anything else to abort: " << std::flush;
       
       std::string response;
@@ -1468,55 +1412,33 @@ int main(int argc, char* argv[])
     }
   }
 
-  // --fit-step 0: 全ゼロの初期ファイル作成（tpcbcout 不要）
-  Bool_t flat_zero_mode = (fit_nstep == 0);
-
   // パラメータ表示
   std::cout << "========================================" << std::endl;
   std::cout << "TPC Phase Correction File Generator" << std::endl;
   std::cout << "========================================" << std::endl;
   std::cout << "Output file      : " << phase_path << std::endl;
-  if (!tpcbcout_path.empty()) {
-    std::cout << "Input file       : " << tpcbcout_path << std::endl;
-  }
-  std::cout << "Mode             : " << (flat_zero_mode ? "Flat Zero (no fitting)" : "Fitting") << std::endl;
+  std::cout << "Input file       : " << tpcbcout_path << std::endl;
   std::cout << "Histogram mode   : " << mode << std::endl;
-  if (!flat_zero_mode) {
-    std::cout << "Fit steps        : " << fit_nstep << std::endl;
-    std::cout << "Baseline term    : "
-              << (use_baseline_term
-                      ? (fit_nstep == 1
-                             ? "ON (pre-fit --base style, then baseline with t,w fixed)"
-                             : "ON")
-                      : "OFF (--base, legacy only)")
-              << std::endl;
-    std::cout << "Ofs update       : " << (ofs_update ? "ON (δp0=-c0, skip center-frame X)" : "OFF") << std::endl;
-    std::cout << "Step width [ns]  : " << step_width_ns
-              << (free_step_width ? " (fit initial, free)" : " (fit fixed)")
-              << "; store/draw w=" << kPhaseStoreWidthNs << " ns" << std::endl;
-    std::cout << "Free width fit   : " << (free_step_width ? "ON" : "OFF") << std::endl;
-    std::cout << "Smooth window    : " << smooth_half_window << " (half-width)" << std::endl;
-    if (vdrift_cli_set)
-      std::cout << "Drift velocity   : " << vdrift << " mm/ns (--vdrift, all CoBos)\n";
-    else
-      std::cout << "Drift velocity   : CoBo-mean p1 from TPCPRM (fallback "
-                << DEFAULT_VDRIFT << " mm/ns)\n";
-    std::cout << "Min entries/bin  : " << min_entries << std::endl;
-    std::cout << "X rebin factor   : " << rebin_x
-              << (rebin_x > 1 ? " (gauss profile per bin)" : " (ProfileX + core gauss)") << std::endl;
-  }
+  std::cout << "Fit              : 1-step (pre-fit without baseline, then baseline with t,w fixed)" << std::endl;
+  std::cout << "Ofs update       : " << (ofs_update ? "ON (δp0=-c0, skip center-frame X)" : "OFF") << std::endl;
+  std::cout << "Step width [ns]  : " << step_width_ns << " (fit fixed)"
+            << "; store/draw w=" << kPhaseStoreWidthNs << " ns" << std::endl;
+  std::cout << "Drift velocity   : CoBo-mean p1 from TPCPRM (fallback "
+            << DEFAULT_VDRIFT << " mm/ns)\n";
+  std::cout << "Min entries/bin  : " << min_entries << std::endl;
+  std::cout << "X rebin factor   : " << rebin_x
+            << (rebin_x > 1 ? " (gauss profile per bin)" : " (ProfileX + core gauss)") << std::endl;
   std::cout << "Graph points     : " << graph_points << std::endl;
   std::cout << "========================================" << std::endl;
 
-  TFile* fin = nullptr;
-  if (!flat_zero_mode && !tpcbcout_path.empty()) {
-    fin = TFile::Open(tpcbcout_path.c_str());
-    if (!fin || fin->IsZombie()) {
-      std::cerr << "Error: cannot open " << tpcbcout_path << std::endl;
-      return 1;
-    }
+  TFile* fin = TFile::Open(tpcbcout_path.c_str());
+  if (!fin || fin->IsZombie()) {
+    std::cerr << "Error: cannot open " << tpcbcout_path << std::endl;
+    return 1;
+  }
+  {
     // params.h の tpc_phase_step_init は "runNNNNN-cobo" キー。複合ファイルではファイル名が不正確なことがあるので、
-    // tpc ツリーの先頭イベントの run_number を優先する（無ければ従来どおりファイル名由来の run_id）。
+    // tpc ツリーの先頭イベントの run_number を優先する（無ければファイル名由来の run_id）。
     TTree* tr = (TTree*)fin->Get("tpc");
     if (tr && tr->GetBranch("run_number")) {
       try {
@@ -1540,8 +1462,8 @@ int main(int argc, char* argv[])
   }
 
   // CoBo ごとの ResY→Δclock 換算用 vdrift
-  std::vector<Double_t> cobo_vdrift(NumOfSegCOBO, vdrift);
-  if (!flat_zero_mode && !vdrift_cli_set) {
+  std::vector<Double_t> cobo_vdrift(NumOfSegCOBO, DEFAULT_VDRIFT);
+  {
     std::map<Int_t, Double_t> mean_v;
     if (run_number >= 0 && LoadCoboMeanVdrift(run_number, mean_v)) {
       for (Int_t c = 0; c < NumOfSegCOBO; ++c) {
@@ -1595,7 +1517,7 @@ int main(int argc, char* argv[])
   std::vector<bool> has_guess(NumOfSegCOBO, false);
   std::vector<bool> has_manual_param(NumOfSegCOBO, false);  // params.h で手入力されたかどうか
 
-  if (!flat_zero_mode && fin) {
+  {
     for (Int_t cobo = 0; cobo < NumOfSegCOBO; ++cobo) {
       const Double_t v_c = cobo_vdrift[cobo];
       TH2D* raw = nullptr;
@@ -1655,33 +1577,6 @@ int main(int argc, char* argv[])
 
   std::cout << "\nProcessing CoBo:" << std::endl;
   for (Int_t cobo = 0; cobo < NumOfSegCOBO; ++cobo) {
-    // --fit-step 0: 全ゼロのフラットな TGraph を保存
-    if (flat_zero_mode) {
-      fout->cd();
-      TGraph* g_flat = new TGraph(graph_points);
-      g_flat->SetName(Form(PHASE_NAME_FMT, cobo));
-      g_flat->SetTitle(Form("TPC Phase CoBo %d (flat zero);Clock Time [ns];#Delta clock [ns]", cobo));
-      Double_t dx = (2.0 * kPhaseGraphHalfRangeNs) / (graph_points - 1);
-      for (Int_t i = 0; i < graph_points; ++i) {
-        Double_t x = -kPhaseGraphHalfRangeNs + i * dx;
-        g_flat->SetPoint(i, x, 0.0);
-      }
-      g_flat->Write();
-      delete g_flat;
-      fb_cobo = cobo;
-      fb_nstep_fit = 0;
-      fb_p0 = 0.0;
-      fb_p1 = 0.0;
-      fb_p2 = 1.0;
-      fb_c0 = 0.0;
-      fb_t0_init = 0.0;
-      fb_amp_init = 0.0;
-      t_cobo_fb->Fill();
-      std::cout << "  CoBo " << cobo << ": Flat zero created" << std::endl;
-      ++n_created;
-      continue;
-    }
-
     std::cout << "----------------------------------------" << std::endl;
     std::cout << "  CoBo " << cobo << std::endl;
     std::cout << "----------------------------------------" << std::endl;
@@ -1737,10 +1632,8 @@ int main(int argc, char* argv[])
       delta_clock[i] = ResYToDeltaClock(mean_y[i], v_c);
       err_delta[i] = (v_c > 0) ? err_y[i] / v_c : 1e-6;
     }
-    SmoothMovingAverage(delta_clock, smooth_half_window, &err_delta);
-
     // --- Save profile points for later visualization ---
-    // Profile points after smoothing: (clk=x_center) vs (dclk=delta_clock)
+    // Profile points: (clk=x_center) vs (dclk=delta_clock)
     fout->cd();
     if (!x_center.empty() && delta_clock.size() == x_center.size()) {
       TGraphErrors* g_profile = new TGraphErrors((Int_t)x_center.size());
@@ -1894,19 +1787,19 @@ int main(int argc, char* argv[])
     Double_t fit_c0 = 0.0;
     TF1* fit_func = nullptr;
 
-    // 正準 (baseline ON, nstep==1):
-    //   1) --base 相当の pre-fit で t,w を決める（status≠0 でも最終パラ採用）
+    // 1-step fit:
+    //   1) 定数項なしの pre-fit で t,w を決める（status≠0 でも最終パラ採用）
     //   2) baseline 本 fit で t,w 固定・c0/A（同様に非収束でも採用）
     //   baseline が例外的に null のときだけ pre-fit にフォールバック
-    // --base 指定時 / nstep!=1 は 1 回だけ（nstep!=1 は非推奨）
-    if (use_baseline_term && fit_nstep == 1) {
-      std::cout << "    Pre-fit (--base style) for step timing...\n";
+    {
+      std::cout << "    Pre-fit (no baseline) for step timing...\n";
       std::vector<Double_t> dclk_pre = dclk_fit;
       TF1* pre_raw = nullptr;
       Double_t pre_c0 = 0.0;
-      TF1* pre_func = FitStepSum(fit_nstep, x_fit, dclk_pre,
+      TF1* pre_func = FitStepSum(/*nstep=*/1, x_fit, dclk_pre,
                                  xmin, xmax, &err_fit, &guess,
-                                 run_amp_ref_ns, amp_override_ns, step_width_ns, free_step_width,
+                                 run_amp_ref_ns, amp_override_ns, step_width_ns,
+                                 /*free_step_width=*/kFALSE,
                                  /*use_baseline_term=*/kFALSE,
                                  &pre_raw, nullptr, &pre_c0);
       if (pre_raw) {
@@ -1928,7 +1821,7 @@ int main(int argc, char* argv[])
         g_base.t0 = t_pre;
         g_base.fix_t0 = kTRUE;
 
-        fit_func = FitStepSum(fit_nstep, x_fit, dclk_fit,
+        fit_func = FitStepSum(/*nstep=*/1, x_fit, dclk_fit,
                                xmin, xmax, &err_fit, &g_base,
                                run_amp_ref_ns, amp_override_ns,
                                w_pre, /*free_step_width=*/kFALSE,
@@ -1944,14 +1837,6 @@ int main(int argc, char* argv[])
           pre_func = nullptr;
         }
       }
-    } else {
-      if (fit_nstep != 1 && fit_nstep != 0)
-        std::cout << "    Note: --fit-step " << fit_nstep
-                  << " is legacy/non-canonical (ops use 1-step)\n";
-      fit_func = FitStepSum(fit_nstep, x_fit, dclk_fit,
-                             xmin, xmax, &err_fit, &guess,
-                             run_amp_ref_ns, amp_override_ns, step_width_ns, free_step_width,
-                             use_baseline_term, &fit_raw_func, nullptr, &fit_c0);
     }
 
     fout->cd();
@@ -1967,8 +1852,7 @@ int main(int argc, char* argv[])
       // fit で得た A,t はそのまま。保存用は w=kPhaseStoreWidthNs の **新しい TF1** で Eval
       // （FixParameter 済み TF1 への SetParameter は Eval に反映されないことがある）
       Double_t A = 0.0, t = 0.0, w_fit = 1.0;
-      const Bool_t have_atw =
-          (fit_nstep == 1) && ExtractPhaseShiftAtw(fit_func, A, t, w_fit);
+      const Bool_t have_atw = ExtractPhaseShiftAtw(fit_func, A, t, w_fit);
       const Double_t w_store = kPhaseStoreWidthNs;
       const Double_t x_graph_lo = -kPhaseGraphHalfRangeNs;
       const Double_t x_graph_hi = +kPhaseGraphHalfRangeNs;
@@ -2041,16 +1925,12 @@ int main(int argc, char* argv[])
         std::cout << "    CoboFallback: A=" << A << " t=" << t << " w=" << w_store
                   << " (fit w was " << w_fit << ") c0=" << c0_store
                   << " graphN=" << xs.size() << "\n";
-      } else if (fit_nstep == 1) {
+      } else {
         fb_nstep_fit = -1;
         fb_p0 = fb_p1 = 0.0;
         fb_p2 = 1.0;
         fb_c0 = 0.0;
         std::cerr << "    Warning: failed to extract (A,t,w) for CoboFallback\n";
-      } else {
-        fb_nstep_fit = fit_nstep;
-        fb_p0 = fb_p1 = 0.0;
-        fb_p2 = 1.0;
       }
       t_cobo_fb->Fill();
 
@@ -2065,7 +1945,8 @@ int main(int argc, char* argv[])
     ++n_created;
   }
 
-  if (fin) { fin->Close(); delete fin; }
+  fin->Close();
+  delete fin;
   fout->cd();
   t_cobo_fb->Write();
   delete t_cobo_fb;
@@ -2089,7 +1970,7 @@ int main(int argc, char* argv[])
       return 1;
     }
     if (c0_by_cobo.empty()) {
-      std::cout << "[ofs-update] No finite c0 (e.g. --base); skip TPCPRM p0 update\n";
+      std::cout << "[ofs-update] No finite c0; skip TPCPRM p0 update\n";
     } else if (!ApplyCoboOfsUpdate(run_number, c0_by_cobo)) {
       return 1;
     }

@@ -581,14 +581,7 @@ class IterOrchestrator:
 
     def offset_opts(self, kind: str) -> list[str]:
         th = "100" if kind == "hit" else "50"
-        # --max-chi2-ndf 0: χ²/ndf cut off (C++ default 25 would reject many pads)
-        return [
-            "--threshold",
-            th,
-            "--max-chi2-ndf",
-            "0",
-            "--ave",
-        ]
+        return ["--threshold", th, "--ave"]
 
     def phase_opts(self, *, ofs_update: bool = False, debug: bool = False) -> list[str]:
         opts = ["--rebin", "2"]

@@ -24,6 +24,7 @@
 #include "paths.h"
 #include "ana_helper.h"
 #include "TPCPadHelper.hh"
+#include "tpc_pad_fill.h"
 
 #include <TCanvas.h>
 #include <TH2Poly.h>
@@ -112,12 +113,14 @@ static Int_t DominantLocalMaximumBin(const TH1D* h, Int_t sep) {
 // ----------------------------------------------------------------------------
 // Main
 // ----------------------------------------------------------------------------
+static void PrintUsage(const char* prog) {
+    std::cerr << "Usage: " << prog << " <input.root> [run_number] [--mode hit|trk] [--threshold N] [--ave] [--debug]"
+              << std::endl;
+}
+
 int main(Int_t argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0]
-                  << " <input.root> [run_number] [--threshold N] [--sigma N] [--nsigma N] [--stat-range N] [--min-peak-ratio R]"
-                  << " [--min-sigma MM] [--min-sigma-rel-rms F] [--sigma-init-rel R] [--max-chi2-ndf X] [--min-fit-ndf N]"
-                  << " [--min-fit-prob P] [--local-peak-mm W] [--local-peak-sep B] [--hist-fmt fmt] [--ave] [--debug]" << std::endl;
+        PrintUsage(argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -125,27 +128,24 @@ int main(Int_t argc, char** argv) {
     Int_t run_number = -1;
     // threshold=0 で足切り無効（低統計でも peak がちゃんと立っていれば採用）
     Int_t threshold = 10;
-    Double_t sigma_threshold = 10.0;
-    Double_t nsigma = 2.0;
-    Double_t stat_range = 20.0;
-    Double_t min_peak_ratio = 1.07;  // skip fit if peak_y < mean_content * min_peak_ratio (flat histogram)
+    const Double_t sigma_threshold = 10.0;
+    const Double_t nsigma = 2.0;
+    const Double_t stat_range = 20.0;
+    const Double_t min_peak_ratio = 1.07;  // skip fit if peak_y < mean_content * min_peak_ratio (flat histogram)
     // 極細ガウス（ヒスト全体に比べ σ が針状）を弾く: max(絶対下限 mm, 相対下限 × ヒスト RMS)
-    Double_t min_sigma_mm = 0.35;
-    Double_t min_sigma_rel_rms = 0.04;
-    // 初期ガウス σ: max(h_rms, h_rms_raw) に対する係数（やや大きめにすると針状局所解を避けやすい）
-    Double_t sigma_init_rel = 0.72;
-    // フィット品質（χ²）: max_chi2_ndf<=0 で上限チェック無効、min_fit_prob<=0 で確率チェック無効
-    Double_t max_chi2_ndf = 25.0;
-    Int_t min_fit_ndf = 1;
-    Double_t min_fit_prob = 0.0;
-    // 主ピーク優先: 最も高い局所峰の周辺 RMS でフィット窓を決める（0 で無効→従来のヒスト全体 RMS）
-    Double_t local_peak_half_mm = 4.5;
-    Int_t local_peak_sep_bins = 2;
+    const Double_t min_sigma_mm = 0.35;
+    const Double_t min_sigma_rel_rms = 0.04;
+    // 初期ガウス σ: seed σ に対する係数（やや大きめにすると針状局所解を避けやすい）
+    const Double_t sigma_init_rel = 0.72;
+    // フィット品質: NDF の下限のみ（χ²/NDF 上限・確率下限は適用しない）
+    const Int_t min_fit_ndf = 1;
+    // 主ピーク優先: 最も高い局所峰の周辺 RMS でフィット窓を決める
+    const Double_t local_peak_half_mm = 4.5;
+    const Int_t local_peak_sep_bins = 2;
     // mode: "hit" → TPCHit_ResY_..., "trk" → TPCTrk_ResY_...
     TString mode = "hit";
-    TString hist_fmt = "TPCHit_ResY_Layer%02d_Row%03d";
     Bool_t debug_mode = kFALSE;
-    Bool_t use_asad_mean_fill = kFALSE;
+    Bool_t use_fill = kFALSE;
 
     Int_t arg_idx = 2;
     if (arg_idx < argc && TString(argv[arg_idx]).IsDigit()) {
@@ -156,49 +156,22 @@ int main(Int_t argc, char** argv) {
         TString arg = argv[i];
         if (arg == "--threshold" && i + 1 < argc) {
             threshold = std::atoi(argv[++i]);
-        } else if (arg == "--sigma" && i + 1 < argc) {
-            sigma_threshold = std::atof(argv[++i]);
-        } else if (arg == "--nsigma" && i + 1 < argc) {
-            nsigma = std::atof(argv[++i]);
-        } else if (arg == "--stat-range" && i + 1 < argc) {
-            stat_range = std::atof(argv[++i]);
-        } else if (arg == "--min-peak-ratio" && i + 1 < argc) {
-            min_peak_ratio = std::atof(argv[++i]);
         } else if (arg == "--mode" && i + 1 < argc) {
             mode = argv[++i];  // "hit" or "trk"
-        } else if (arg == "--min-sigma" && i + 1 < argc) {
-            min_sigma_mm = std::atof(argv[++i]);
-        } else if (arg == "--min-sigma-rel-rms" && i + 1 < argc) {
-            min_sigma_rel_rms = std::atof(argv[++i]);
-        } else if (arg == "--sigma-init-rel" && i + 1 < argc) {
-            sigma_init_rel = std::atof(argv[++i]);
-        } else if (arg == "--max-chi2-ndf" && i + 1 < argc) {
-            max_chi2_ndf = std::atof(argv[++i]);
-        } else if (arg == "--min-fit-ndf" && i + 1 < argc) {
-            min_fit_ndf = std::atoi(argv[++i]);
-        } else if (arg == "--min-fit-prob" && i + 1 < argc) {
-            min_fit_prob = std::atof(argv[++i]);
-        } else if (arg == "--local-peak-mm" && i + 1 < argc) {
-            local_peak_half_mm = std::atof(argv[++i]);
-        } else if (arg == "--local-peak-sep" && i + 1 < argc) {
-            local_peak_sep_bins = std::max(1, std::atoi(argv[++i]));
-        } else if (arg == "--hist-fmt" && i + 1 < argc) {
-            // 明示的なフォーマット指定（mode よりこちらを優先）
-            hist_fmt = argv[++i];
-        } else if (arg == "--ave" || arg == "--asad-avg") {
-            use_asad_mean_fill = kTRUE;
+        } else if (arg == "--ave") {
+            use_fill = kTRUE;
         } else if (arg == "--debug") {
             debug_mode = kTRUE;
+        } else {
+            std::cerr << "Error: unknown or incomplete argument: " << arg << std::endl;
+            PrintUsage(argv[0]);
+            return EXIT_FAILURE;
         }
     }
 
-    // mode に応じてデフォルトのヒスト名フォーマットを設定（--hist-fmt があればそちら優先）
-    if (hist_fmt == "TPCHit_ResY_Layer%02d_Row%03d") {
-        if (mode == "trk" || mode == "track" || mode == "TPCTrk") {
-            hist_fmt = "TPCTrk_ResY_Layer%02d_Row%03d";
-        } else {
-            hist_fmt = "TPCHit_ResY_Layer%02d_Row%03d";
-        }
+    TString hist_fmt = "TPCHit_ResY_Layer%02d_Row%03d";
+    if (mode == "trk" || mode == "track" || mode == "TPCTrk") {
+        hist_fmt = "TPCTrk_ResY_Layer%02d_Row%03d";
     }
 
     // 1. Open ROOT file early to potentially detect run number
@@ -348,7 +321,8 @@ int main(Int_t argc, char** argv) {
 
     TH2Poly* hDeltaMap = new TH2Poly(
         "hTPC_TimeOffset_dP0",
-        Form("TPC time offset #Delta p0 (fitted pads, Run %05d, %s);Z [mm];X [mm]", run_number, mode.Data()), -300,
+        Form("TPC time offset #Delta p0 (%s, Run %05d, %s);Z [mm];X [mm]",
+             use_fill ? "fitted + filled pads" : "fitted pads", run_number, mode.Data()), -300,
         300, -300, 300);
     hDeltaMap->SetDirectory(nullptr);
     tpc::InitializeHistograms(hDeltaMap);
@@ -360,7 +334,6 @@ int main(Int_t argc, char** argv) {
 
     std::cout << "Extracting offsets..." << std::endl;
     Int_t n_updated = 0;
-    Int_t n_filled_by_asad = 0;
     Int_t n_total_pads = 0;
     std::map<Int_t, std::pair<Double_t, Double_t>> layer_seed;  // layer -> (mean, sigma)
 
@@ -444,7 +417,7 @@ int main(Int_t argc, char** argv) {
 
             const Double_t h_rms_glob = TMath::Max(h->GetRMS(), 1e-6);
             Double_t h_rms_fit = h_rms_glob;
-            if (local_peak_half_mm > 0.0) {
+            {
                 const Double_t loc = LocalWeightedRmsAroundPeak(h, peak_x, local_peak_half_mm);
                 if (loc > 0.0)
                     h_rms_fit = loc;
@@ -485,11 +458,7 @@ int main(Int_t argc, char** argv) {
                 continue;  // do not fit, do not add to PDF
             }
 
-            Double_t sigma_floor_cfg = min_sigma_mm;
-            if (min_sigma_rel_rms > 0.0)
-                sigma_floor_cfg = TMath::Max(sigma_floor_cfg, min_sigma_rel_rms * h_rms_glob);
-            if (sigma_floor_cfg <= 0.0)
-                sigma_floor_cfg = 0.05;  // 両方 0 のとき従来の下限に相当
+            const Double_t sigma_floor_cfg = TMath::Max(min_sigma_mm, min_sigma_rel_rms * h_rms_glob);
             const Double_t sigma_lo = TMath::Max(0.05, 0.5 * sigma_floor_cfg);
 
             // Define fit function: Gaussian + Constant Background
@@ -497,9 +466,8 @@ int main(Int_t argc, char** argv) {
             fFit->SetParNames("Constant", "Mean", "Sigma", "Background");
             {
                 const Double_t fit_span = fit_max - fit_min;
-                const Double_t rel = (sigma_init_rel > 1e-6) ? sigma_init_rel : 0.72;
                 // グローバル RMS は混ぜない（副ピークで初期 σ が膨らむのを防ぐ）
-                Double_t sigma_init = rel * TMath::Max(seed_sigma, 0.12);
+                Double_t sigma_init = sigma_init_rel * TMath::Max(seed_sigma, 0.12);
                 sigma_init = TMath::Max(sigma_init, sigma_lo * 1.15);
                 if (fit_span > 1e-6)
                     sigma_init = TMath::Min(sigma_init, 0.42 * fit_span);
@@ -521,23 +489,14 @@ int main(Int_t argc, char** argv) {
                 // 2. Gaussian amplitude (constant) must be meaningful (signal clearly above bkg).
                 // 3. Error on the mean (peak position) shouldn't be too large.
                 Double_t fit_range = fit_max - fit_min;
-                Double_t sigma_floor = min_sigma_mm;
-                if (min_sigma_rel_rms > 0.0)
-                    sigma_floor = TMath::Max(sigma_floor, min_sigma_rel_rms * h_rms_glob);
-                if (sigma_floor <= 0.0)
-                    sigma_floor = 0.05;
+                const Double_t sigma_floor = sigma_floor_cfg;
 
                 const Int_t fndf = fFit->GetNDF();
                 const Double_t fchi2 = fFit->GetChisquare();
                 const Double_t chi2ndf = (fndf > 0) ? (fchi2 / static_cast<Double_t>(fndf)) : 0.0;
                 const Double_t fit_prob = (fndf > 0) ? TMath::Prob(fchi2, fndf) : 0.0;
-                Bool_t chi2_ok = kTRUE;
-                if (min_fit_ndf > 0 && fndf < min_fit_ndf)
-                    chi2_ok = kFALSE;
-                if (max_chi2_ndf > 0.0 && fndf > 0 && chi2ndf > max_chi2_ndf)
-                    chi2_ok = kFALSE;
-                if (min_fit_prob > 0.0 && fndf > 0 && fit_prob < min_fit_prob)
-                    chi2_ok = kFALSE;
+                // chi2/ndf and prob are only logged, not used for acceptance
+                const Bool_t chi2_ok = (fndf >= min_fit_ndf);
 
                 if (chi2_ok && sigma >= sigma_floor && sigma < sigma_threshold &&
                     sigma < 0.85 * fit_range &&  // reject effectively flat (peak too broad)
@@ -591,40 +550,37 @@ int main(Int_t argc, char** argv) {
         }
     }
 
-    // --- 未更新パッド補完（同一レイヤーかつ同一 ASAD の更新済み平均） ---
-    std::set<std::pair<Int_t, Int_t>> pads_filled_by_asad;
-    if (use_asad_mean_fill) {
-        std::map<std::pair<Int_t, Int_t>, std::pair<Double_t, Int_t>> lasad_stats;  // (layer, asad) -> (sum, count)
+    // --- 未更新パッド補完（tpc_fill::FillUnfittedPads: 同一 AsAd の隣接 row 平均 → layer+AsAd の中央値） ---
+    std::set<std::pair<Int_t, Int_t>> pads_filled;
+    tpc_fill::FillResult fill_res;
+    if (use_fill) {
+        std::map<tpc_fill::PadKey, Double_t> fill_values;
         for (const auto& e : entries) {
             if (e.is_comment || e.aty != 2 || e.p.empty()) continue;
-            if (tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
-            const auto key = std::make_pair(e.layer, e.row);
-            if (!pads_updated.count(key)) continue;
-            const Int_t asad = tpc::GetASADId(e.layer, e.row);
-            auto& st = lasad_stats[{e.layer, asad}];
-            st.first += e.p[0];
-            st.second += 1;
+            fill_values[{e.layer, e.row}] = e.p[0];
         }
+        const std::set<tpc_fill::PadKey> fill_excluded;
+        auto consistent = [](Double_t v, const tpc_fill::GroupStat& g) {
+            return TMath::Abs(v - g.median) <= 5.0 * 1.4826 * std::max(g.mad, 1e-6);
+        };
+        fill_res = tpc_fill::FillUnfittedPads(fill_values, pads_updated, fill_excluded, consistent);
 
         for (auto& e : entries) {
             if (e.is_comment || e.aty != 2 || e.p.empty()) continue;
-            if (tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;  // frameデフォルトは補完対象外
             const auto key = std::make_pair(e.layer, e.row);
-            if (pads_updated.count(key)) continue;
-            const Int_t asad = tpc::GetASADId(e.layer, e.row);
-            const auto it = lasad_stats.find({e.layer, asad});
-            if (it == lasad_stats.end() || it->second.second <= 0) continue;
+            const auto it = fill_res.value.find(key);
+            if (it == fill_res.value.end()) continue;
 
+            const Bool_t is_neighbor = (fill_res.kind.at(key) == tpc_fill::FillKind::kNeighbor);
             const Double_t old_p0 = e.p[0];
-            const Double_t lasad_mean = it->second.first / static_cast<Double_t>(it->second.second);
-            e.p[0] = lasad_mean;
-            pads_filled_by_asad.insert(key);
-            n_filled_by_asad++;
+            e.p[0] = it->second;
+            pads_filled.insert(key);
 
             const Int_t bin_idx = tpc::GetPadId(e.layer, e.row) + 1;
-            hSummary->SetBinContent(bin_idx, 70.0);  // 100:fit更新, 70:layer+ASAD 平均補完
-            std::cout << Form("  layer+ASAD-mean fill: L=%2d R=%3d (ASAD=%2d, n=%3d) p0: %10.4f -> %10.4f",
-                              e.layer, e.row, asad, it->second.second, old_p0, e.p[0]) << std::endl;
+            hSummary->SetBinContent(bin_idx, is_neighbor ? 70.0 : 40.0);  // 100:fit, 70:neighbor mean, 40:AsAd median
+            std::cout << Form("  %s fill: L=%2d R=%3d (ASAD=%2d) p0: %10.4f -> %10.4f",
+                              is_neighbor ? "neighbor-mean" : "asad-median", e.layer, e.row,
+                              tpc::GetASADId(e.layer, e.row), old_p0, e.p[0]) << std::endl;
         }
     }
 
@@ -641,7 +597,7 @@ int main(Int_t argc, char** argv) {
         hP0Map->SetBinContent(bin_idx, e.p[0]);
         all_p0.push_back(e.p[0]);
         const auto key = std::make_pair(e.layer, e.row);
-        if (pads_updated.count(key) || pads_filled_by_asad.count(key)) {
+        if (pads_updated.count(key) || pads_filled.count(key)) {
             const Double_t dp = e.p[0] - ini_p0.at(key);
             hDeltaMap->SetBinContent(bin_idx, dp);
             all_dp.push_back(dp);
@@ -685,7 +641,8 @@ int main(Int_t argc, char** argv) {
     nb_dp = std::min(nb_dp, 300);
     TH1D* hDeltaDist =
         new TH1D("hTPC_TimeOffset_dp0_distrib",
-                 Form("TPC time offset #Delta p0, fitted pads only (Run %05d);#Delta p0;pads / bin", run_number),
+                 Form("TPC time offset #Delta p0, %s (Run %05d);#Delta p0;pads / bin",
+                      use_fill ? "fitted + filled pads" : "fitted pads only", run_number),
                  nb_dp, dp_lo, dp_hi);
     hDeltaDist->SetDirectory(nullptr);
     for (Double_t v : all_dp)
@@ -803,8 +760,9 @@ int main(Int_t argc, char** argv) {
     }
 
     std::cout << "Done! Updated " << n_updated << " out of " << n_total_pads << " pads." << std::endl;
-    if (use_asad_mean_fill) {
-        std::cout << "layer+ASAD-mean filled pads: " << n_filled_by_asad << std::endl;
+    if (use_fill) {
+        std::cout << "Filled pads: neighbor-mean " << fill_res.n_neighbor << ", asad-median "
+                  << fill_res.n_asad_median << ", left unfilled " << fill_res.n_left << std::endl;
     }
     if (debug_mode) {
         std::cout << "Debug mode: parameter file was NOT updated." << std::endl;

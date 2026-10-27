@@ -1,32 +1,35 @@
 #!/usr/bin/env python3
 """
-run_tpc: TPC 周りの便利フロントエンド
+run_tpc: TPC の較正のフロントエンド
 
 使い方:
-  ./run_tpc.py <root_file> phase  [--fit-step N] [--vdrift V] [--smooth N] [--rebin N] [--mode hit|trk]
-  ./run_tpc.py <root_file> phase --base   # 定数項なし（従来 fit）
-  ./run_tpc.py <root_file> phase --ofs-update  # baseline c0 → CoBo 一律 time offset（Xフレーム除外）
-  ./run_tpc.py <root_file> phase --plot-only [--vdrift V]
-  ./run_tpc.py <root_file> offset [--run N] [--mode hit|trk] [...]
-  ./run_tpc.py <root_file> gain [--run N] [--target-mpv 200] [...]
-  ./run_tpc.py <root_file> drift [--run N] [--mode hit|trk] [--vdrift V] [--debug]
-  ./run_tpc.py <helix_root> pos [--model tan|xz] [--threshold N] [--debug] [--ave] [--parent MAP] [--overwrite]
+  ./run_tpc.py <root_file> phase  [--run N] [--mode hit|trk] [--rebin N] [--ofs-update] [--debug]
+  ./run_tpc.py <root_file> offset [--run N] [--mode hit|trk] [--threshold N] [--ave] [--debug]
+  ./run_tpc.py <root_file> gain   [--run N] [--threshold N] [--target-mpv M] [--rebin N] [--de-source all|pion]
+                                  [--tree [--layer]] [--replace] [--ave] [--debug]
+  ./run_tpc.py <root_file> drift  [--run N] [--mode hit|trk] [--threshold N] [--debug]
+  ./run_tpc.py <helix_root> pos   [--model tan|xz] [--threshold N] [--ave] [--parent MAP] [--overwrite] [--debug]
+
+  サブコマンドごとに使えるオプションだけを受け付ける（ほかはエラー）。run 番号は入力 ROOT の
+  tpc/run_number（無ければファイル名の runNNNNN）から取る。複数 run の hadd では --run N で更新する run を
+  指定する（phase・offset・gain・drift）。--debug は解析と QA だけ行い param を書かない。
 
   入力 ROOT の命名（dst_create_runlist / create_runlist と揃える）:
   - phase : run{NNNNN}_TPCHitBcOut.root（DATA_DIR symlink 可。旧 dst_tpchit_bcout_tracking_* も可）
-  - offset / gain / drift : run{NNNNN}_TPCTracking.root または hadd 済み tracking ROOT
-            （hit 側 hadd は TPCHitBcOut 由来。旧 tpc_runXXXXX / dst_tpctracking_* も可）
+  - offset / drift : hit は run{NNNNN}_TPCHitBcOut.root、trk は TPCTrk_ResY_* を含む DST
+            （例 run{NNNNN}_TPCHelix.root）。複数 run の hadd も可（--run で更新する run を指定）
+  - gain : TPCCl_dE_* を含む DST。--tree は Helix の tpc tree（run{NNNNN}_TPCHelix.root）
   - pos : run{NNNNN}_TPCHelix.root（inclusive helix DST）または hadd
 
-  - phase : tpc_phase_from_tpcbcout + tpc_phase_plot
-            → --fit-step 1 なら kCobo(3) 行を TTree から更新（TPCPRM へのコメント追記はしない）
-  - offset: tpc_time_offset_calib
-            → QA PDF に p0 / Δp0 の分布（1D + TPC 上の 2D マップ）を含む
-  - gain  : tpc_gain_calib
-            → TPCCl_dE_* の Landau fit から MPV を求めて ATY=0 の gain を更新
+  - phase : tpc_phase_from_tpcbcout + tpc_phase_plot → param/TPCPHASE/TpcPhase_NNNNN.root、
+            TPCPRM の kCobo（aty=3）行を TpcPhase_CoboFallback から更新
+  - offset: tpc_time_offset_calib（パッドごとの時間オフセット、aty=2 の p0）
+  - gain  : tpc_gain_calib（TPCCl_dE_* の Landau fit の MPV → aty=0 の gain）
   - drift : tpc_drift_calib（layer ごとの ResY vs Y 傾き → δv を aty=2 の p1 に加算）
-            → --mode は hit/trk ヒストの優先順（無い方へフォールバック）
   - pos   : tpc_pos_calib（pad 粒度 TPCPOS。仕様は docs/tpc/TPCPOS_ITER_PREP.ja.md）
+
+  --ave（offset・gain）: fit で更新できなかったパッドを、同じ AsAd の両隣（row±1）の平均、
+  両隣が揃わなければ同じ layer・AsAd の更新済みパッドの中央値で埋める（中心の枠は対象外）。
 """
 
 import argparse
@@ -135,13 +138,11 @@ def phase_path_for_analyzer_conf(phase_path: Path, param_dir: Path) -> str:
         return str(phase_res)
 
 
-def update_tpcprm_phase_stamp(
-    run_num: int, phase_path: Path, *, patch_kcobo: bool = True
-) -> None:
+def update_tpcprm_phase_stamp(run_num: int, phase_path: Path) -> None:
     """
     TPCPRM の run 別ファイルを更新する（旧 TPCPHASE コメントブロックは除去）。
     ファイルが無ければ TPCParam_example をコピーしてから更新。
-    patch_kcobo=True かつ TpcPhase に TpcPhase_CoboFallback があるとき、--fit-step 1 の kCobo 行を更新。
+    TpcPhase に TpcPhase_CoboFallback があるとき、1 段 fit の kCobo 行を更新。
     """
     param_dir = config.PARAM_DIR
     tpcprm_e72 = param_dir / "TPCPRM" / "e72"
@@ -179,7 +180,7 @@ def update_tpcprm_phase_stamp(
         i += 1
 
     body = "".join(out_lines).rstrip("\n")
-    if patch_kcobo and phase_path.is_file():
+    if phase_path.is_file():
         body = patch_tpcprm_kcobo_from_phase(body, phase_path).rstrip("\n")
     new_text = (body + "\n") if body else ""
     out_prm.write_text(new_text, encoding="utf-8")
@@ -213,736 +214,204 @@ def get_run_number_from_root(root_path: Path) -> int:
     return -1
 
 
-def main():
+def require_file(path: Path) -> Path:
+    path = path.resolve()
+    if not path.exists():
+        print(colored(f"[Error] File not found: {path}", "red"))
+        sys.exit(1)
+    return path
+
+
+def require_binary(bin_dir: Path, name: str) -> Path:
+    exe = bin_dir / name
+    if not exe.exists():
+        print(colored(f"[Error] Binary not found: {exe}. Build myanalysis (./build.sh).", "red"))
+        sys.exit(1)
+    return exe
+
+
+def require_run_number(root_path: Path, run: int | None = None) -> int:
+    run_num = run if run is not None else get_run_number_from_root(root_path)
+    if run_num < 0:
+        print(colored("[Error] Could not get run number from ROOT (tpc/run_number) or filename (runNNNNN).", "red"))
+        sys.exit(1)
+    return run_num
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="TPC helper frontend. Usage: run_tpc.py <root> phase|offset|gain|drift|pos [options]"
+        description="TPC calibration frontend. Usage: run_tpc.py <root> {phase,offset,gain,drift,pos} [options]"
     )
     parser.add_argument(
         "root_file",
         type=Path,
-        help=(
-            "Input ROOT: phase=runNNNNN_TPCHitBcOut.root; "
-            "offset/gain/drift=runNNNNN_TPCTracking.root or hadd ROOT "
-            "(legacy dst_tpchit_bcout_tracking_* / tpc_run* also OK); "
-            "pos=runNNNNN_TPCHelix.root."
-        ),
+        help="Input ROOT: phase=runNNNNN_TPCHitBcOut.root; offset/drift=TPCHitBcOut (hit) or a DST with "
+        "TPCTrk_ResY_* such as runNNNNN_TPCHelix.root (trk); gain=DST with TPCCl_dE_*; "
+        "gain --tree / pos=runNNNNN_TPCHelix.root.",
     )
-    parser.add_argument(
-        "cmd",
-        choices=["phase", "offset", "gain", "drift", "pos"],
-        help="Subcommand: phase, offset, gain, drift, or pos (TPCPOS).",
-    )
-    # phase 用オプション
-    parser.add_argument(
-        "--fit-step",
-        type=int,
-        default=1,
-        metavar="N",
-        help="[phase] Step function order for fit (default: 1). Use 0 for zero-initial TpcPhase only.",
-    )
-    parser.add_argument(
-        "--vdrift",
-        type=float,
-        default=None,
-        metavar="V",
-        help="[phase|drift] Drift velocity [mm/ns]. For drift: override layer median p1.",
-    )
-    parser.add_argument(
-        "--min-entries",
-        type=int,
-        default=None,
-        metavar="N",
-        help="[drift] Minimum entries per Y bin for gaus profile (C++ --min-entries).",
-    )
-    parser.add_argument(
-        "--min-points",
-        type=int,
-        default=None,
-        metavar="N",
-        help="[drift] Minimum profile points for linear fit (C++ --min-points).",
-    )
-    parser.add_argument(
-        "--layer-min",
-        type=int,
-        default=None,
-        metavar="L",
-        help="[drift] First layer index (inclusive).",
-    )
-    parser.add_argument(
-        "--layer-max",
-        type=int,
-        default=None,
-        metavar="L",
-        help="[drift] Last layer index (inclusive).",
-    )
-    parser.add_argument(
-        "--smooth",
-        type=int,
-        default=None,
-        metavar="N",
-        help="[phase] Moving average half-window for tpc_phase_from_tpcbcout.",
-    )
-    parser.add_argument(
-        "--step-width",
-        type=float,
-        default=None,
-        metavar="W",
-        help="[phase] Fixed step width [ns] for fit function (smaller => steeper edge).",
-    )
-    parser.add_argument(
-        "--free",
-        action="store_true",
-        help="[phase] Free the step width in fit (default: fixed).",
-    )
-    parser.add_argument(
-        "--base",
-        action="store_true",
-        help="[phase] Legacy fit without baseline constant (default: baseline term ON for flatness).",
-    )
-    parser.add_argument(
-        "--ofs-update",
-        action="store_true",
-        help="[phase] Apply baseline c0 as CoBo-uniform time offset (δp0=-c0; skips center-frame X). "
-        "Ignored with --debug.",
-    )
-    parser.add_argument(
-        "--plot-only",
-        action="store_true",
-        help="[phase] Skip Step1 (tpc_phase_from_tpcbcout) and run plot-only using existing TpcPhase_*.root.",
-    )
-    parser.add_argument(
-        "--phase-root",
-        type=Path,
-        default=None,
-        metavar="FILE",
-        help="[phase] Override TpcPhase root file path (used with --plot-only).",
-    )
-    prm_group = parser.add_mutually_exclusive_group()
-    prm_group.add_argument(
-        "--update-tpcprm",
-        dest="update_tpcprm",
-        action="store_true",
-        default=None,
-        help="[phase] Stamp TPCPHASE path into TPCPRM/e72/TPCParam_e72_runNNNNN (default: on unless --plot-only).",
-    )
-    prm_group.add_argument(
-        "--no-update-tpcprm",
-        dest="update_tpcprm",
-        action="store_false",
-        default=None,
-        help="[phase] Do not modify TPCPRM.",
-    )
-    parser.add_argument(
-        "--no-patch-kcobo",
-        action="store_true",
-        help="[phase] Do not rewrite kCobo (aty=3) lines from TpcPhase_CoboFallback (TPCPRM stamp only).",
-    )
-    # offset 用オプション
-    parser.add_argument(
-        "--run",
-        type=int,
-        default=None,
-        help="[offset|phase|drift] Run number (if omitted, try to detect from ROOT file).",
-    )
-    parser.add_argument(
-        "--mode",
-        type=str,
-        choices=["hit", "trk"],
-        default="hit",
-        help="hit / trk: [offset] hist name; [phase|drift] ヒスト候補の優先順（無い方へフォールバック）。",
-    )
-    parser.add_argument(
-        "--threshold",
-        type=int,
-        default=None,
-        help="[offset] Min entries in ±stat-range; [drift] min layer 2D hist entries "
-        "(drift default 10000 if omitted); [pos] min hits per pad (C++ default 100).",
-    )
-    parser.add_argument(
-        "--sigma",
-        type=float,
-        default=None,
-        help="[offset] Upper limit for fitted sigma (passed to C++ --sigma).",
-    )
-    parser.add_argument(
-        "--nsigma",
-        type=float,
-        default=None,
-        help="[offset] Fit range = peak ± nsigma * RMS (passed to C++ --nsigma).",
-    )
-    parser.add_argument(
-        "--stat-range",
-        type=float,
-        default=None,
-        help="[offset] Statistics range around 0 for entry counting (passed to C++).",
-    )
-    parser.add_argument(
-        "--min-peak-ratio",
-        type=float,
-        default=None,
-        metavar="R",
-        help="[offset] Skip fit if peak < R * mean in window (flat hist rejection, passed to C++ --min-peak-ratio).",
-    )
-    parser.add_argument(
-        "--min-sigma",
-        type=float,
-        default=None,
-        metavar="MM",
-        help="[offset] Reject fit if Gaussian sigma < this (mm); also used for SetParLimits floor (C++ --min-sigma).",
-    )
-    parser.add_argument(
-        "--min-sigma-rel-rms",
-        type=float,
-        default=None,
-        metavar="F",
-        help="[offset] Also require sigma >= F * hist RMS (needle rejection; C++ --min-sigma-rel-rms).",
-    )
-    parser.add_argument(
-        "--sigma-init-rel",
-        type=float,
-        default=None,
-        metavar="R",
-        help="[offset] Initial Gaussian sigma = R * max(h_rms, hist RMS) (C++ --sigma-init-rel, default ~0.72).",
-    )
-    parser.add_argument(
-        "--max-chi2-ndf",
-        type=float,
-        default=None,
-        metavar="X",
-        help="[offset] Reject fit if chi2/ndf > X (0 disables; C++ --max-chi2-ndf).",
-    )
-    parser.add_argument(
-        "--min-fit-ndf",
-        type=int,
-        default=None,
-        help="[offset] Require fit NDF >= N (C++ --min-fit-ndf).",
-    )
-    parser.add_argument(
-        "--min-fit-prob",
-        type=float,
-        default=None,
-        metavar="P",
-        help="[offset] Require ROOT TMath::Prob(chi2,ndf) >= P (0 disables; C++ --min-fit-prob).",
-    )
-    parser.add_argument(
-        "--local-peak-mm",
-        type=float,
-        default=None,
-        metavar="W",
-        help="[offset] Half-width [mm] for local RMS around tallest peak (0=use full hist RMS; C++ --local-peak-mm).",
-    )
-    parser.add_argument(
-        "--local-peak-sep",
-        type=int,
-        default=None,
-        metavar="B",
-        help="[offset] Peak locality in bins (±B); taller peak wins, ties→|x| smaller (C++ --local-peak-sep).",
-    )
-    parser.add_argument(
-        "--ave",
-        action="store_true",
-        help="[offset] layer+ASAD mean fill; [gain] fill missing pads with mean of same-layer row±1 "
-        "trusted updated pads (both neighbors required; outlier/extreme gains excluded; "
-        "center-frame excluded); [pos] fill unfitted pads (layer+ASAD mean; "
-        "center-frame forced to (vx,vz)=(0,0); without --ave only fitted pads update).",
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default=None,
-        metavar="M",
-        help="[pos] Update model: tan (default) or xz. Aliases: tangent/rt, cartesian/cart.",
-    )
-    parser.add_argument(
-        "--parent",
-        type=Path,
-        default=None,
-        metavar="MAP",
-        help="[pos] TPCPOS map used to reconstruct the helix input; the update is added onto it "
-        "(default: param/TPCPOS/e72/TPCPositionCorrectionMap).",
-    )
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="[pos] Replace touched pads by -<r> instead of adding to the parent map "
-        "(only for a helix reconstructed with a zero map).",
-    )
-    parser.add_argument(
-        "--asad-avg",
-        action="store_true",
-        help="[gain] Fill missing pads with mean of updated pads on same layer and ASAD "
-        "(legacy; ignored if --ave is also set).",
-    )
-    # gain 用オプション
-    parser.add_argument(
-        "--target-mpv",
-        type=float,
-        default=None,
-        metavar="M",
-        help="[gain] Target MPV for gain scaling (C++ --target-mpv, default 200.0).",
-    )
-    parser.add_argument(
-        "--fit-nsigma",
-        type=float,
-        default=None,
-        metavar="N",
-        help="[gain] Fit range = peak ± nsigma * local RMS (C++ --fit-nsigma).",
-    )
-    parser.add_argument(
-        "--local-peak-half",
-        type=float,
-        default=None,
-        metavar="W",
-        help="[gain] Half width [ADC] for local RMS around peak (C++ --local-peak-half).",
-    )
-    parser.add_argument(
-        "--min-width",
-        type=float,
-        default=None,
-        metavar="W",
-        help="[gain] Minimum Landau width accepted (C++ --min-width).",
-    )
-    parser.add_argument(
-        "--rebin",
-        type=int,
-        default=None,
-        metavar="N",
-        help="[phase] Rebin 2D clock axis before gaus profile; [gain] dE hist rebin (C++ --rebin).",
-    )
-    parser.add_argument(
-        "--mpv-min",
-        type=float,
-        default=None,
-        metavar="X",
-        help="[gain] Minimum allowed MPV for fit acceptance/seed (C++ --mpv-min, default 100).",
-    )
-    parser.add_argument(
-        "--mpv-max",
-        type=float,
-        default=None,
-        metavar="X",
-        help="[gain] Maximum allowed MPV for fit acceptance/seed (C++ --mpv-max; <=0 disables).",
-    )
-    de_source_group = parser.add_mutually_exclusive_group()
-    de_source_group.add_argument(
-        "--de-source",
-        type=str,
-        choices=["all", "pion"],
-        default=None,
-        help="[gain] dE histogram source: all (TPCCl_dE_*) or pion (TPCCl_dE_Pion_*). "
-        "Default: pion.",
-    )
-    de_source_group.add_argument(
-        "--pion",
-        action="store_true",
-        help="[gain] Shortcut of --de-source pion (also the default).",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="[phase/offset/gain/drift/pos] Run the same analysis/QA but do not write params "
-        "(TPCPRM for phase/offset/gain/drift; TPCPOS map for pos). "
-        "status check; gain uses C++ --debug.",
-    )
-    parser.add_argument(
-        "--replace",
-        action="store_true",
-        help="[gain] Replace gain by target_mpv/MPV instead of multiplying old gain.",
-    )
-    parser.add_argument(
-        "--tree",
-        action="store_true",
-        help="[gain] Helix tpc tree から dE ヒストを作り gain 較正（pad 別; --layer で layer 別）.",
-    )
-    parser.add_argument(
-        "--layer",
-        action="store_true",
-        help="[gain] --tree 時にレイヤー単位 fit（未指定なら従来どおり pad 別）.",
-    )
-    parser.add_argument(
-        "--tree-name",
-        type=str,
-        default=None,
-        metavar="NAME",
-        help="[gain] TTree name for --tree (default: tpc).",
-    )
-    parser.add_argument(
-        "--clsize-min",
-        type=int,
-        default=1,
-        metavar="N",
-        help="[gain] Minimum track_cluster_size for tree fill (default: 1).",
-    )
-    parser.add_argument(
-        "--clsize-max",
-        type=int,
-        default=1,
-        metavar="N",
-        help="[gain] Maximum track_cluster_size for tree fill (default: 1).",
-    )
-    parser.add_argument(
-        "--alpha-inner",
-        type=float,
-        default=None,
-        metavar="A",
-        help="[gain] --tree: max |theta_diff| for layers 0-9 (C++ default 0.1).",
-    )
-    parser.add_argument(
-        "--alpha-outer",
-        type=float,
-        default=None,
-        metavar="A",
-        help="[gain] --tree: max |theta_diff| for layers 10+ (C++ default 0.2).",
-    )
-    parser.add_argument(
-        "--min-abs-cos-theta",
-        type=float,
-        default=None,
-        metavar="X",
-        help="[gain] --tree: if set, use legacy uniform |cos(theta_diff)| cut instead of "
-        "layer-dependent |theta_diff| (Wiki alpha).",
-    )
+    sub = parser.add_subparsers(dest="cmd", required=True, metavar="{phase,offset,gain,drift,pos}")
 
-    parser.set_defaults(update_tpcprm=None)
-    args = parser.parse_args()
+    def add_debug(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--debug", action="store_true", help="Run the analysis and QA but do not write params.")
 
+    def add_mode(p: argparse.ArgumentParser, text: str) -> None:
+        p.add_argument("--mode", choices=["hit", "trk"], default="hit", help=text)
+
+    def add_run(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--run", type=int, default=None, metavar="N",
+                       help="Run whose TPCPRM is updated, for a hadd of several runs "
+                       "(default: tpc/run_number of the first entry, or runNNNNN in the file name).")
+
+    p = sub.add_parser("phase", help="TPC clock phase (tpc_phase_from_tpcbcout + tpc_phase_plot)")
+    add_mode(p, "Histogram preference (falls back to the other if missing).")
+    add_run(p)
+    p.add_argument("--rebin", type=int, default=None, metavar="N",
+                   help="Rebin the 2D clock axis before the gaus profile.")
+    p.add_argument("--ofs-update", action="store_true",
+                   help="Apply the baseline c0 as a CoBo-uniform time offset (dp0 = -c0; skips the center-frame X). "
+                   "Ignored with --debug.")
+    add_debug(p)
+
+    p = sub.add_parser("offset", help="Per-pad time offset (tpc_time_offset_calib)")
+    add_mode(p, "hit / trk histogram set.")
+    add_run(p)
+    p.add_argument("--threshold", type=int, default=None, metavar="N",
+                   help="Minimum entries in the fit histogram of a pad.")
+    p.add_argument("--ave", action="store_true", help="Fill pads without a fit (see the module help).")
+    add_debug(p)
+
+    p = sub.add_parser("gain", help="Per-pad gain (tpc_gain_calib)")
+    add_run(p)
+    p.add_argument("--threshold", type=int, default=None, metavar="N",
+                   help="Minimum entries in the dE histogram of a pad.")
+    p.add_argument("--target-mpv", type=float, default=None, metavar="M", help="Target MPV (default 200).")
+    p.add_argument("--rebin", type=int, default=None, metavar="N", help="Rebin of the dE histogram.")
+    p.add_argument("--de-source", choices=["all", "pion"], default="pion",
+                   help="dE histograms: all (TPCCl_dE_*) or pion (TPCCl_dE_Pion_*, default).")
+    p.add_argument("--tree", action="store_true",
+                   help="Build the dE histograms from the Helix tpc tree (per pad).")
+    p.add_argument("--layer", action="store_true", help="With --tree: fit per layer instead of per pad.")
+    p.add_argument("--replace", action="store_true",
+                   help="Set gain = target/MPV instead of multiplying the previous gain.")
+    p.add_argument("--ave", action="store_true", help="Fill pads without a fit (see the module help).")
+    add_debug(p)
+
+    p = sub.add_parser("drift", help="Drift velocity per layer (tpc_drift_calib)")
+    add_mode(p, "Histogram preference (falls back to the other if missing).")
+    add_run(p)
+    p.add_argument("--threshold", type=int, default=None, metavar="N",
+                   help="Minimum entries of a layer 2D histogram (default 100000).")
+    add_debug(p)
+
+    p = sub.add_parser("pos", help="TPCPOS pad-level fit (tpc_pos_calib)")
+    p.add_argument("--model", default=None, metavar="M", help="Update model: tan (default) or xz.")
+    p.add_argument("--threshold", type=int, default=None, metavar="N", help="Minimum hits per pad (default 100).")
+    p.add_argument("--ave", action="store_true",
+                   help="Fill unfitted pads (layer+ASAD mean; center-frame forced to (0,0)).")
+    p.add_argument("--parent", type=Path, default=None, metavar="MAP",
+                   help="TPCPOS map used to reconstruct the helix input; the update is added onto it.")
+    p.add_argument("--overwrite", action="store_true",
+                   help="Replace touched pads by -<r> instead of adding to the parent map.")
+    add_debug(p)
+    return parser
+
+
+def opt(flag: str, value) -> list[str]:
+    return [] if value is None else [flag, str(value)]
+
+
+def run_phase(args, bin_dir: Path) -> None:
+    bcout_path = require_file(args.root_file)
+    run_num = require_run_number(bcout_path, args.run)
+    print(colored(f"[INFO] Run number: {run_num}", "green"))
+    print(colored(f"[INFO] Input file: {bcout_path}", "green"))
+    exe_fit = require_binary(bin_dir, "tpc_phase_from_tpcbcout")
+    exe_plot = require_binary(bin_dir, "tpc_phase_plot")
+
+    phase_dir = config.PARAM_DIR / "TPCPHASE"
+    phase_dir.mkdir(parents=True, exist_ok=True)
+    phase_path = phase_dir / f"TpcPhase_{run_num:05d}.root"
+
+    cmd_fit = [str(exe_fit), str(bcout_path), str(phase_path), "--run", str(run_num), "--mode", args.mode,
+               *opt("--rebin", args.rebin)]
+    if args.ofs_update and not args.debug:
+        cmd_fit.append("--ofs-update")
+    print(colored(">>> Step 1: TPC phase fit (tpc_phase_from_tpcbcout)", "cyan"))
+    run_command(" ".join(cmd_fit))
+
+    cmd_plot = [str(exe_plot), str(bcout_path), "--phase", str(phase_path), "--mode", args.mode]
+    print(colored(">>> Step 2: TPC phase plot (tpc_phase_plot)", "cyan"))
+    run_command(" ".join(cmd_plot))
+
+    if not args.debug:
+        update_tpcprm_phase_stamp(run_num, phase_path)
+
+    print(colored(f"\n[DONE] TPC phase calibration complete for run {run_num}.", "green", attrs=["bold"]))
+    print(colored(f"  TpcPhase: {phase_path}", "green"))
+    print(colored(f"  PDF: {config.OUTPUT_DIR}/img/run{run_num:05d}/  (see C++ output)", "green"))
+
+
+def run_offset(args, bin_dir: Path) -> None:
+    input_root = require_file(args.root_file)
+    run_num = require_run_number(input_root, args.run)
+    exe = require_binary(bin_dir, "tpc_time_offset_calib")
+    cmd = [str(exe), str(input_root), str(run_num), "--mode", args.mode, *opt("--threshold", args.threshold)]
+    cmd += ["--ave"] if args.ave else []
+    cmd += ["--debug"] if args.debug else []
+    print(colored(f">>> TPC time offset calib (tpc_time_offset_calib), run={run_num}", "cyan"))
+    run_command(" ".join(cmd))
+
+
+def run_gain(args, bin_dir: Path) -> None:
+    if args.layer and not args.tree:
+        print(colored("[Error] gain --layer needs --tree.", "red"))
+        sys.exit(1)
+    input_root = require_file(args.root_file)
+    run_num = require_run_number(input_root, args.run)
+    exe = require_binary(bin_dir, "tpc_gain_calib")
+    cmd = [str(exe), str(input_root), str(run_num), "--de-source", args.de_source,
+           *opt("--threshold", args.threshold), *opt("--target-mpv", args.target_mpv), *opt("--rebin", args.rebin)]
+    for flag in ("tree", "layer", "replace", "ave", "debug"):
+        if getattr(args, flag):
+            cmd.append(f"--{flag}")
+    print(colored(f">>> TPC gain calib (tpc_gain_calib), run={run_num}", "cyan"))
+    run_command(" ".join(cmd))
+
+
+def run_drift(args, bin_dir: Path) -> None:
+    input_root = require_file(args.root_file)
+    run_num = require_run_number(input_root, args.run)
+    exe = require_binary(bin_dir, "tpc_drift_calib")
+    cmd = [str(exe), str(input_root), str(run_num), "--mode", args.mode, *opt("--threshold", args.threshold)]
+    cmd += ["--debug"] if args.debug else []
+    print(colored(f">>> TPC drift calib (tpc_drift_calib), run={run_num}", "cyan"))
+    run_command(" ".join(cmd))
+
+
+def run_pos(args, bin_dir: Path) -> None:
+    # Spec: docs/tpc/TPCPOS_ITER_PREP.ja.md
+    input_root = require_file(args.root_file)
+    exe = require_binary(bin_dir, "tpc_pos_calib")
+    cmd = [str(exe), str(input_root), *opt("--model", args.model), *opt("--threshold", args.threshold)]
+    cmd += ["--ave"] if args.ave else []
+    cmd += ["--debug"] if args.debug else []
+    if args.parent is not None:
+        parent_map = args.parent.resolve()
+        if not parent_map.exists():
+            print(colored(f"[Error] parent map not found: {parent_map}", "red"))
+            sys.exit(1)
+        cmd += ["--parent", str(parent_map)]
+    cmd += ["--overwrite"] if args.overwrite else []
+    print(colored(">>> TPC pos calib (tpc_pos_calib)", "cyan"))
+    run_command(" ".join(cmd))
+
+
+def main():
+    args = build_parser().parse_args()
     bin_dir = project_root / "bin"
-
-    if args.cmd == "phase":
-        bcout_path = args.root_file.resolve()
-        if not bcout_path.exists():
-            print(colored(f"[Error] File not found: {bcout_path}", "red"))
-            sys.exit(1)
-
-        run_num = get_run_number_from_root(bcout_path)
-        if run_num < 0:
-            print(
-                colored(
-                    "[Error] Could not get run number from ROOT (tpc/run_number) or filename (runNNNNN).",
-                    "red",
-                )
-            )
-            sys.exit(1)
-        print(colored(f"[INFO] Run number: {run_num}", "green"))
-        print(colored(f"[INFO] Input file: {bcout_path}", "green"))
-
-        phase_dir = config.PARAM_DIR / "TPCPHASE"
-        phase_dir.mkdir(parents=True, exist_ok=True)
-        phase_path = (
-            args.phase_root.resolve()
-            if args.phase_root is not None
-            else (phase_dir / f"TpcPhase_{run_num:05d}.root")
-        )
-
-        exe_fit = bin_dir / "tpc_phase_from_tpcbcout"
-        exe_plot = bin_dir / "tpc_phase_plot"
-        if not exe_fit.exists():
-            print(colored(f"[Error] Binary not found: {exe_fit}. Please build the project.", "red"))
-            sys.exit(1)
-        if not exe_plot.exists():
-            print(colored(f"[Error] Binary not found: {exe_plot}. Please build the project.", "red"))
-            sys.exit(1)
-
-        if args.plot_only and not phase_path.exists():
-            print(colored(f"[Error] --plot-only requested but phase file not found: {phase_path}", "red"))
-            print(colored("Run phase once (without --plot-only) to generate it, or pass --phase-root.", "red"))
-            sys.exit(1)
-
-        vdrift_opt = f" --vdrift {args.vdrift}" if args.vdrift is not None else ""
-        smooth_opt = f" --smooth {args.smooth}" if args.smooth is not None else ""
-        mode_opt = f" --mode {args.mode}"
-
-        if not args.plot_only:
-            # Step 1: tpc_phase_from_tpcbcout
-            if args.fit_step == 0:
-                cmd_fit = f"{exe_fit} {phase_path}{vdrift_opt} --fit-step 0{mode_opt}"
-            else:
-                cmd_fit = (
-                    f"{exe_fit} {bcout_path} {phase_path} --fit-step {args.fit_step}"
-                    f"{vdrift_opt}{smooth_opt}{mode_opt}"
-                )
-            if args.step_width is not None:
-                cmd_fit += f" --step-width {args.step_width}"
-            if args.free:
-                cmd_fit += " --free"
-            if args.base:
-                cmd_fit += " --base"
-            if args.ofs_update and not args.debug:
-                cmd_fit += " --ofs-update"
-            if args.run is not None:
-                cmd_fit += f" --run {args.run}"
-            if args.rebin is not None:
-                cmd_fit += f" --rebin {args.rebin}"
-            print(colored(">>> Step 1: TPC phase fit (tpc_phase_from_tpcbcout)", "cyan"))
-            run_command(cmd_fit)
-
-        # Step 2: tpc_phase_plot
-        cmd_plot = f"{exe_plot} {bcout_path} --phase {phase_path}{vdrift_opt}{mode_opt}"
-        print(colored(">>> Step 2: TPC phase plot (tpc_phase_plot)", "cyan"))
-        run_command(cmd_plot)
-
-        do_tpcprm = args.update_tpcprm
-        if do_tpcprm is None:
-            do_tpcprm = not args.plot_only
-        if args.debug:
-            do_tpcprm = False
-        if do_tpcprm:
-            if not phase_path.is_file():
-                print(
-                    colored(
-                        f"[WARN] Skip TPCPRM stamp: phase file not found: {phase_path}",
-                        "yellow",
-                    )
-                )
-            else:
-                update_tpcprm_phase_stamp(
-                    run_num, phase_path, patch_kcobo=not args.no_patch_kcobo
-                )
-
-        print(
-            colored(
-                f"\n[DONE] TPC phase calibration complete for run {run_num}.",
-                "green",
-                attrs=["bold"],
-            )
-        )
-        print(colored(f"  TpcPhase: {phase_path}", "green"))
-        print(
-            colored(
-                f"  PDF: {config.OUTPUT_DIR}/img/run{run_num:05d}/  (see C++ output)",
-                "green",
-            )
-        )
-
-    elif args.cmd == "offset":
-        input_root = args.root_file.resolve()
-        if not input_root.exists():
-            print(colored(f"[Error] File not found: {input_root}", "red"))
-            sys.exit(1)
-
-        run_num = args.run if args.run is not None else get_run_number_from_root(input_root)
-        if run_num < 0:
-            print(
-                colored(
-                    "[Error] Could not get run number (use --run or ensure tpc/run_number is present).",
-                    "red",
-                )
-            )
-            sys.exit(1)
-
-        exe_offset = bin_dir / "tpc_time_offset_calib"
-        if not exe_offset.exists():
-            print(colored(f"[Error] Binary not found: {exe_offset}. Please build the project.", "red"))
-            sys.exit(1)
-
-        opts = [str(exe_offset), str(input_root), str(run_num)]
-        if args.mode:
-            opts += ["--mode", args.mode]
-        if args.threshold is not None:
-            opts += ["--threshold", str(args.threshold)]
-        if args.sigma is not None:
-            opts += ["--sigma", str(args.sigma)]
-        if args.nsigma is not None:
-            opts += ["--nsigma", str(args.nsigma)]
-        if args.stat_range is not None:
-            opts += ["--stat-range", str(args.stat_range)]
-        if args.min_peak_ratio is not None:
-            opts += ["--min-peak-ratio", str(args.min_peak_ratio)]
-        if args.min_sigma is not None:
-            opts += ["--min-sigma", str(args.min_sigma)]
-        if args.min_sigma_rel_rms is not None:
-            opts += ["--min-sigma-rel-rms", str(args.min_sigma_rel_rms)]
-        if args.sigma_init_rel is not None:
-            opts += ["--sigma-init-rel", str(args.sigma_init_rel)]
-        if args.max_chi2_ndf is not None:
-            opts += ["--max-chi2-ndf", str(args.max_chi2_ndf)]
-        if args.min_fit_ndf is not None:
-            opts += ["--min-fit-ndf", str(args.min_fit_ndf)]
-        if args.min_fit_prob is not None:
-            opts += ["--min-fit-prob", str(args.min_fit_prob)]
-        if args.local_peak_mm is not None:
-            opts += ["--local-peak-mm", str(args.local_peak_mm)]
-        if args.local_peak_sep is not None:
-            opts += ["--local-peak-sep", str(args.local_peak_sep)]
-        if args.ave:
-            opts += ["--ave"]
-        if args.debug:
-            opts += ["--debug"]
-
-        cmd = " ".join(opts)
-        print(colored(f">>> TPC time offset calib (tpc_time_offset_calib), run={run_num}", "cyan"))
-        run_command(cmd)
-
-    elif args.cmd == "gain":
-        input_root = args.root_file.resolve()
-        if not input_root.exists():
-            print(colored(f"[Error] File not found: {input_root}", "red"))
-            sys.exit(1)
-
-        run_num = args.run if args.run is not None else get_run_number_from_root(input_root)
-        if run_num < 0:
-            print(
-                colored(
-                    "[Error] Could not get run number (use --run or ensure tpc/run_number is present).",
-                    "red",
-                )
-            )
-            sys.exit(1)
-
-        exe_gain = bin_dir / "tpc_gain_calib"
-        if not exe_gain.exists():
-            print(colored(f"[Error] Binary not found: {exe_gain}. Please build the project.", "red"))
-            sys.exit(1)
-
-        opts = [str(exe_gain), str(input_root), str(run_num)]
-        if args.mode:
-            opts += ["--mode", args.mode]
-        if args.target_mpv is not None:
-            opts += ["--target-mpv", str(args.target_mpv)]
-        if args.threshold is not None:
-            opts += ["--threshold", str(args.threshold)]
-        if args.stat_range is not None:
-            opts += ["--stat-range", str(args.stat_range)]
-        if args.min_peak_ratio is not None:
-            opts += ["--min-peak-ratio", str(args.min_peak_ratio)]
-        if args.max_chi2_ndf is not None:
-            opts += ["--max-chi2-ndf", str(args.max_chi2_ndf)]
-        if args.min_fit_ndf is not None:
-            opts += ["--min-fit-ndf", str(args.min_fit_ndf)]
-        if args.min_fit_prob is not None:
-            opts += ["--min-fit-prob", str(args.min_fit_prob)]
-        if args.fit_nsigma is not None:
-            opts += ["--fit-nsigma", str(args.fit_nsigma)]
-        if args.local_peak_half is not None:
-            opts += ["--local-peak-half", str(args.local_peak_half)]
-        if args.local_peak_sep is not None:
-            opts += ["--local-peak-sep", str(args.local_peak_sep)]
-        if args.min_width is not None:
-            opts += ["--min-width", str(args.min_width)]
-        if args.rebin is not None:
-            opts += ["--rebin", str(args.rebin)]
-        if args.mpv_min is not None:
-            opts += ["--mpv-min", str(args.mpv_min)]
-        if args.mpv_max is not None:
-            opts += ["--mpv-max", str(args.mpv_max)]
-        de_source = "pion"
-        if args.pion:
-            de_source = "pion"
-        elif args.de_source is not None:
-            de_source = args.de_source
-        opts += ["--de-source", de_source]
-        if args.debug:
-            opts += ["--debug"]
-        if args.replace:
-            opts += ["--replace"]
-        if args.ave:
-            opts += ["--ave"]
-        if args.asad_avg:
-            opts += ["--asad-avg"]
-        if args.tree:
-            opts += ["--tree"]
-        if args.layer:
-            opts += ["--layer"]
-        if args.tree_name is not None:
-            opts += ["--tree-name", args.tree_name]
-        if args.tree or args.layer:
-            opts += ["--clsize-min", str(args.clsize_min)]
-            opts += ["--clsize-max", str(args.clsize_max)]
-            if args.alpha_inner is not None:
-                opts += ["--alpha-inner", str(args.alpha_inner)]
-            if args.alpha_outer is not None:
-                opts += ["--alpha-outer", str(args.alpha_outer)]
-            if args.min_abs_cos_theta is not None:
-                opts += ["--min-abs-cos-theta", str(args.min_abs_cos_theta)]
-
-        cmd = " ".join(opts)
-        print(colored(f">>> TPC gain calib (tpc_gain_calib), run={run_num}", "cyan"))
-        run_command(cmd)
-
-    elif args.cmd == "drift":
-        input_root = args.root_file.resolve()
-        if not input_root.exists():
-            print(colored(f"[Error] File not found: {input_root}", "red"))
-            sys.exit(1)
-
-        run_num = args.run if args.run is not None else get_run_number_from_root(input_root)
-        if run_num < 0:
-            print(
-                colored(
-                    "[Error] Could not get run number (use --run or ensure tpc/run_number is present).",
-                    "red",
-                )
-            )
-            sys.exit(1)
-
-        exe_drift = bin_dir / "tpc_drift_calib"
-        if not exe_drift.exists():
-            print(colored(f"[Error] Binary not found: {exe_drift}. Please build the project.", "red"))
-            sys.exit(1)
-
-        opts = [str(exe_drift), str(input_root), str(run_num)]
-        if args.mode:
-            opts += ["--mode", args.mode]
-        if args.vdrift is not None:
-            opts += ["--vdrift", str(args.vdrift)]
-        # drift: --threshold = min total entries on layer 2D hist (default 1e4)
-        drift_threshold = 100000 if args.threshold is None else args.threshold
-        opts += ["--threshold", str(drift_threshold)]
-        if args.min_entries is not None:
-            opts += ["--min-entries", str(args.min_entries)]
-        if args.rebin is not None:
-            opts += ["--rebin", str(args.rebin)]
-        if args.min_points is not None:
-            opts += ["--min-points", str(args.min_points)]
-        if args.layer_min is not None:
-            opts += ["--layer-min", str(args.layer_min)]
-        if args.layer_max is not None:
-            opts += ["--layer-max", str(args.layer_max)]
-        if args.debug:
-            opts += ["--debug"]
-
-        cmd = " ".join(opts)
-        print(colored(f">>> TPC drift calib (tpc_drift_calib), run={run_num}", "cyan"))
-        run_command(cmd)
-
-    elif args.cmd == "pos":
-        # Spec: docs/tpc/TPCPOS_ITER_PREP.ja.md
-        input_root = args.root_file.resolve()
-        if not input_root.exists():
-            print(colored(f"[Error] File not found: {input_root}", "red"))
-            sys.exit(1)
-
-        exe_pos = bin_dir / "tpc_pos_calib"
-        if not exe_pos.exists():
-            print(
-                colored(
-                    f"[Error] Binary not found: {exe_pos}. Build myanalysis (./build.sh).",
-                    "red",
-                )
-            )
-            sys.exit(1)
-
-        opts = [str(exe_pos), str(input_root)]
-        if args.model is not None:
-            opts += ["--model", str(args.model)]
-        if args.threshold is not None:
-            opts += ["--threshold", str(args.threshold)]
-        if args.ave:
-            opts += ["--ave"]
-        if args.debug:
-            opts += ["--debug"]
-        if args.parent is not None:
-            parent_map = args.parent.resolve()
-            if not parent_map.exists():
-                print(colored(f"[Error] parent map not found: {parent_map}", "red"))
-                sys.exit(1)
-            opts += ["--parent", str(parent_map)]
-        if args.overwrite:
-            opts += ["--overwrite"]
-
-        cmd = " ".join(opts)
-        print(colored(">>> TPC pos calib (tpc_pos_calib)", "cyan"))
-        run_command(cmd)
+    {"phase": run_phase, "offset": run_offset, "gain": run_gain, "drift": run_drift, "pos": run_pos}[args.cmd](
+        args, bin_dir
+    )
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@
  * オプションで TpcPhase.root も読み込み、RawClock ヒストグラムに
  * フィット曲線を重ね描きする。
  *
- * 運用前提: 1-step（--fit-step 1）。多段は想定しない。
+ * 運用前提: 1-step フィット。多段は想定しない。
  * phase ファイル契約・修正時チェックリスト:
  *   analyzer docs/tpc/tpc_phase_plot_contract.md
  *
@@ -22,12 +22,12 @@
  * convert がなければ PNG のみ出力し、手動で convert *.png out.pdf 可能。
  *
  * Usage:
- *   tpc_phase_plot <bcout.root> [output.pdf] [--phase <TpcPhase.root>] [--vdrift V]
+ *   tpc_phase_plot <bcout.root> [output.pdf] [--phase <TpcPhase.root>] [--mode hit|trk]
  *
  * オプション:
  *   --phase <file>  : TpcPhase.root を指定してフィット曲線を重ね描き
- *   --vdrift V      : drift velocity [mm/ns] (デフォルト 0.055)
  *   --mode hit|trk  : ヒスト名の優先順（trk: TPCTrk_ResY_vs_ClockTime_... を先に、デフォルト hit）
+ * ResY [mm] <-> Δclock [ns] の換算は drift velocity 0.055 mm/ns 固定。
  *
  * 出力 PDF 構成:
  *   Page 1: CoBo RawClock (補正前、2x4) + フィット曲線（--phase 指定時）
@@ -881,23 +881,26 @@ static int run_convert(const std::vector<std::string>& pngs, const std::string& 
 //_____________________________________________________________________________
 int main(int argc, char* argv[])
 {
-  if (argc < 2) {
+  auto print_usage = [&]() {
     std::cerr << "Usage: " << argv[0]
-              << " <bcout.root> [output.pdf] [--phase <TpcPhase.root>] [--vdrift V] [--mode hit|trk]\n"
+              << " <bcout.root> [output.pdf] [--phase <TpcPhase.root>] [--mode hit|trk]\n"
               << "  Draws 2D hists as PNG, embeds into PDF via 'convert' (ImageMagick).\n"
               << "  Options:\n"
               << "    --phase <file> : overlay fit curves from TpcPhase.root\n"
-              << "    --vdrift V     : drift velocity [mm/ns] (default: 0.055)\n"
               << "    --mode hit|trk : histogram name priority (default: hit)\n"
               << "  If convert is missing, PNGs are kept; merge with:\n"
               << "    convert <base>_page*.png <output.pdf>\n";
+  };
+  if (argc < 2) {
+    print_usage();
     return 1;
   }
 
   std::string inpath = argv[1];
   std::string outpath;
   std::string phase_path;
-  Double_t vdrift = 0.055;
+  // drift velocity [mm/ns] for ResY <-> Δclock conversion
+  const Double_t vdrift = 0.055;
   TString mode = "hit";
 
   // パース引数
@@ -910,12 +913,10 @@ int main(int argc, char* argv[])
     } else if (arg == "--mode" && argidx + 1 < argc) {
       mode = argv[++argidx];
       ++argidx;
-    } else if (arg == "--vdrift" && argidx + 1 < argc) {
-      vdrift = std::atof(argv[++argidx]);
-      if (vdrift <= 0.0) vdrift = 0.055;
-      ++argidx;
     } else if (arg.find("--") == 0) {
-      ++argidx;
+      std::cerr << "Error: unknown or incomplete option: " << arg << "\n";
+      print_usage();
+      return 1;
     } else {
       outpath = arg;
       ++argidx;

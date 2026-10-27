@@ -42,6 +42,10 @@ static constexpr Double_t kMaxGaussSigmaMm = 10.0;
 // Line-fit quality / physical sanity (no meaningful correlation → skip update).
 static constexpr Double_t kMaxLineChi2Ndf = 40.0;
 static constexpr Double_t kMaxAbsSlope = 0.08;
+// Minimum entries per Y-bin slice for the gaus profile.
+static constexpr Int_t kMinSliceEntries = 30;
+// Minimum number of profile points for the line fit.
+static constexpr Int_t kMinProfilePoints = 5;
 
 // ----------------------------------------------------------------------------
 struct TpcParamEntry {
@@ -129,27 +133,26 @@ static Double_t MedianOf(std::vector<Double_t> vals)
 }
 
 // ----------------------------------------------------------------------------
+static void PrintUsage(const char* prog)
+{
+  std::cerr << "Usage: " << prog
+            << " <input.root> [run_number] [--mode hit|trk] [--threshold N] [--debug]"
+            << std::endl;
+}
+
+// ----------------------------------------------------------------------------
 int main(Int_t argc, char** argv)
 {
   if (argc < 2) {
-    std::cerr << "Usage: " << argv[0]
-              << " <input.root> [run_number] [--mode hit|trk] [--vdrift V]"
-              << " [--threshold N] [--min-entries N] [--rebin N] [--min-points N]"
-              << " [--layer-min L] [--layer-max L] [--debug]" << std::endl;
+    PrintUsage(argv[0]);
     return EXIT_FAILURE;
   }
 
   TString input_root = argv[1];
   Int_t run_number = -1;
   TString mode = "hit";
-  Double_t vdrift_override = -1.0;
   // Minimum total entries on layer 2D hist; below this keep vdrift unchanged.
   Int_t threshold = 100000;
-  Int_t min_entries = 30;  // per Y-bin for gaus profile
-  Int_t rebin_x = 1;
-  Int_t min_points = 5;
-  Int_t layer_min = 0;
-  Int_t layer_max = tpc::NumOfLayersTPC - 1;
   Bool_t debug_mode = kFALSE;
 
   Int_t arg_idx = 2;
@@ -161,22 +164,14 @@ int main(Int_t argc, char** argv)
     TString arg = argv[i];
     if (arg == "--mode" && i + 1 < argc) {
       mode = argv[++i];
-    } else if (arg == "--vdrift" && i + 1 < argc) {
-      vdrift_override = std::atof(argv[++i]);
     } else if (arg == "--threshold" && i + 1 < argc) {
       threshold = std::atoi(argv[++i]);
-    } else if (arg == "--min-entries" && i + 1 < argc) {
-      min_entries = std::atoi(argv[++i]);
-    } else if (arg == "--rebin" && i + 1 < argc) {
-      rebin_x = std::max(1, std::atoi(argv[++i]));
-    } else if (arg == "--min-points" && i + 1 < argc) {
-      min_points = std::max(2, std::atoi(argv[++i]));
-    } else if (arg == "--layer-min" && i + 1 < argc) {
-      layer_min = std::atoi(argv[++i]);
-    } else if (arg == "--layer-max" && i + 1 < argc) {
-      layer_max = std::atoi(argv[++i]);
     } else if (arg == "--debug") {
       debug_mode = kTRUE;
+    } else {
+      std::cerr << "Error: unknown option or missing value: " << arg << std::endl;
+      PrintUsage(argv[0]);
+      return EXIT_FAILURE;
     }
   }
 
@@ -230,9 +225,7 @@ int main(Int_t argc, char** argv)
   TString resolved_tag;
   for (Int_t ifmt = 0; ifmt < 2; ++ifmt) {
     Int_t nfound = 0;
-    for (Int_t layer = layer_min; layer <= layer_max; ++layer) {
-      if (layer < 0 || layer >= tpc::NumOfLayersTPC)
-        continue;
+    for (Int_t layer = 0; layer < tpc::NumOfLayersTPC; ++layer) {
       TString hname = Form(hist_fmts[ifmt], layer);
       if (f->Get(hname.Data()))
         ++nfound;
@@ -365,10 +358,7 @@ int main(Int_t argc, char** argv)
   std::map<Int_t, Double_t> delta_by_layer;
 
   std::cout << "Fitting layer slopes..." << std::endl;
-  for (Int_t layer = layer_min; layer <= layer_max; ++layer) {
-    if (layer < 0 || layer >= tpc::NumOfLayersTPC)
-      continue;
-
+  for (Int_t layer = 0; layer < tpc::NumOfLayersTPC; ++layer) {
     LayerDriftResult res;
     res.layer = layer;
 
@@ -402,41 +392,27 @@ int main(Int_t argc, char** argv)
       continue;
     }
 
-    TH2D* hwork = h2;
-    TH2D* hclone = nullptr;
-    if (rebin_x > 1) {
-      hclone = dynamic_cast<TH2D*>(h2->Clone(Form("tpc_drift_rebin_l%d", layer)));
-      if (hclone) {
-        hclone->RebinX(rebin_x);
-        hwork = hclone;
-      }
-    }
-
     const Double_t v_layer =
-        (vdrift_override > 0.0)
-            ? vdrift_override
-            : (layer_p1s.count(layer) ? MedianOf(layer_p1s[layer]) : 0.055);
+        layer_p1s.count(layer) ? MedianOf(layer_p1s[layer]) : 0.055;
     res.v_old = v_layer;
     if (!(v_layer > 0.0)) {
       res.skip_reason = "invalid vdrift";
       results.push_back(res);
-      if (hclone)
-        delete hclone;
       continue;
     }
 
     std::vector<Double_t> xs, ys, exs, eys;
-    const Int_t nx = hwork->GetNbinsX();
+    const Int_t nx = h2->GetNbinsX();
     for (Int_t ix = 1; ix <= nx; ++ix) {
-      const Double_t y_pos = hwork->GetXaxis()->GetBinCenter(ix);
+      const Double_t y_pos = h2->GetXaxis()->GetBinCenter(ix);
       if (TMath::Abs(y_pos) > kFitRangeYMm)
         continue;
 
       TH1D* py =
-          hwork->ProjectionY(Form("tpc_drift_py_l%d_x%d", layer, ix), ix, ix);
+          h2->ProjectionY(Form("tpc_drift_py_l%d_x%d", layer, ix), ix, ix);
       if (!py)
         continue;
-      if (py->GetEntries() < min_entries) {
+      if (py->GetEntries() < kMinSliceEntries) {
         delete py;
         continue;
       }
@@ -453,8 +429,8 @@ int main(Int_t argc, char** argv)
     }
     res.npoints = static_cast<Int_t>(xs.size());
 
-    if (res.npoints < min_points) {
-      res.skip_reason = Form("npoints=%d < %d", res.npoints, min_points);
+    if (res.npoints < kMinProfilePoints) {
+      res.skip_reason = Form("npoints=%d < %d", res.npoints, kMinProfilePoints);
       canvas->Clear();
       canvas->Divide(1, 2);
       canvas->cd(1);
@@ -467,8 +443,6 @@ int main(Int_t argc, char** argv)
                                     res.skip_reason.Data()));
       canvas->Print(pdf_path);
       results.push_back(res);
-      if (hclone)
-        delete hclone;
       continue;
     }
 
@@ -508,8 +482,6 @@ int main(Int_t argc, char** argv)
       res.skip_reason = "line fit failed";
       draw_skip_page(res.skip_reason);
       results.push_back(res);
-      if (hclone)
-        delete hclone;
       continue;
     }
 
@@ -525,8 +497,6 @@ int main(Int_t argc, char** argv)
       res.skip_reason = Form("bad slope a=%.6g", a);
       draw_skip_page(res.skip_reason);
       results.push_back(res);
-      if (hclone)
-        delete hclone;
       continue;
     }
     if (ndf < 1 || chi2ndf > kMaxLineChi2Ndf) {
@@ -537,8 +507,6 @@ int main(Int_t argc, char** argv)
                 << res.skip_reason << std::endl;
       draw_skip_page(res.skip_reason);
       results.push_back(res);
-      if (hclone)
-        delete hclone;
       continue;
     }
     if (TMath::Abs(a) > kMaxAbsSlope) {
@@ -548,8 +516,6 @@ int main(Int_t argc, char** argv)
                 << res.skip_reason << std::endl;
       draw_skip_page(res.skip_reason);
       results.push_back(res);
-      if (hclone)
-        delete hclone;
       continue;
     }
     if (TMath::Abs(res.intercept) > kMaxAbsMeanResYMm) {
@@ -560,8 +526,6 @@ int main(Int_t argc, char** argv)
                 << res.skip_reason << std::endl;
       draw_skip_page(res.skip_reason);
       results.push_back(res);
-      if (hclone)
-        delete hclone;
       continue;
     }
 
@@ -571,8 +535,6 @@ int main(Int_t argc, char** argv)
       res.skip_reason = Form("non-positive v_new=%.6g", res.v_new);
       draw_skip_page(res.skip_reason);
       results.push_back(res);
-      if (hclone)
-        delete hclone;
       continue;
     }
 
@@ -609,9 +571,6 @@ int main(Int_t argc, char** argv)
                      layer, res.slope, res.slope_err, res.v_old, res.delta_v, res.v_new,
                      res.npoints, res.hist_entries)
               << std::endl;
-
-    if (hclone)
-      delete hclone;
   }
 
   // Apply δv; center-frame X pads are forced to p0=0, p1=0.055 (not calibrated).
