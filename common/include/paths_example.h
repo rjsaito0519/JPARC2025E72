@@ -5,6 +5,8 @@
 
 static const TString DATA_DIR     = "/group/had/sks/Users/sryuta/JPARC2025E72";
 static const TString OUTPUT_DIR   = "/home/had/sryuta/JPARC2025E72/results";
+static const TString SCRATCH_DIR  = "/group/had/sks/Users/sryuta/JPARC2025E72/scratch_root";
+static const TString DECODE_DIR   = "/group/had/sks/Users/sryuta/JPARC2025E72/root";
 static const TString WORK_DIR     = "/home/had/sryuta/JPARC2025E72";
 static const TString ANALYZER_DIR = "/home/had/sryuta/analyzer/JPARC2025E72";
 
