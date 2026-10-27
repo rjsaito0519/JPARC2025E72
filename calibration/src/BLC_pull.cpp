@@ -244,7 +244,7 @@ void analyze(TString path, TString particle)
     }
     if (n_found == 0) {
         std::cerr << "Error: no Track_Pull histograms found. "
-                  << "Rebuild UserBc with #define FillPullExclusive 1.\n";
+                  << "Check FillPullExclusive in UserBc{In,Out}Tracking.cc and the decode.\n";
         fout->Close();
         return;
     }

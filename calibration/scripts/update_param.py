@@ -244,11 +244,6 @@ elif args.param_type == "dctdc":
     blc_det = "BLC1" if detector == "BcIn" else "BLC2" if detector == "BcOut" else detector
     
     root_file = get_root_file(args.run_num, blc_det, args.suffix, "TDC")
-    if not root_file:
-         root_file = get_root_file(args.run_num, detector, args.suffix, "tdc")
-    if not root_file and detector != "DC":
-        root_file = get_root_file(args.run_num, "DC", args.suffix, "tdc")
-        
     if root_file:
         data = update_dctdc.make_dictdata(str(root_file))
         all_new_data.update(data)
@@ -282,7 +277,6 @@ elif args.param_type == "residual":
     # C++ (BLC_residual) outputs: runXXXXX_BLC1_residual_Pi.root (BcIn) or runXXXXX_BLC2_residual_Pi.root (BcOut)
     blc_det = "BLC1" if detector == "BcIn" else "BLC2" if detector == "BcOut" else detector
     
-    # 1. Search for specified detector (Result naming: BLC1_residual or BLC2_residual)
     root_file = get_root_file(args.run_num, blc_det, args.suffix, "residual")
     found_any = False
     
@@ -293,30 +287,8 @@ elif args.param_type == "residual":
             print(f"  - {detector} Residuals: {color_ok()} {len(data)} entries found (Additive Update)")
             found_any = True
     
-    # 2. Fallbacks
     if not found_any:
-        # Try "resi" suffix (Old naming or compatibility)
-        root_file = get_root_file(args.run_num, detector, args.suffix, "resi")
-        if root_file:
-             # Double check this is not a 'decoded' file which uproot will now handle via 'tree' check
-             data = prepare_additive_residuals(root_file)
-             if data:
-                 all_new_data.update(data)
-                 print(f"  - {detector} Residuals (resi): {color_ok()} {len(data)} entries found")
-                 found_any = True
-
-    if not found_any:
-        # Generic DC check
-        for d_name in ["DC", "BLC1", "BLC2"]:
-            for t_name in ["residual", "resi"]:
-                if found_any: break
-                root_file = get_root_file(args.run_num, d_name, args.suffix, t_name)
-                if root_file:
-                     data = prepare_additive_residuals(root_file)
-                     if data:
-                         all_new_data.update(data)
-                         print(f"  - {d_name} {t_name}: {color_ok()} {len(data)} entries found")
-                         found_any = True
+        print(colored(f"  - {detector} Residuals: not found (run{args.run_num:05d}_{blc_det}_residual_{args.suffix})", "red"))
 
 elif args.param_type == "resolution":
     # exclusive Pull width p from BLC_pull -> common Res_new = p * mean(Res in group)
@@ -428,7 +400,7 @@ elif args.param_type == "resolution":
                 "yellow",
                 attrs=["bold"],
             ))
-            print(colored("  - Next: re-run DST (#define FillPullExclusive 1), then reso again", "yellow"))
+            print(colored("  - Next: decode BcIn/BcOut again, then reso again", "yellow"))
         print()
 
     def apply_group(group_name, p, mean_chi2):

@@ -29,7 +29,7 @@ def main():
             "Automate BC (DC) Calibration for T0, Drift (ST), Residual, and Resolution. "
             "reso: exclusive Pull width p -> common Res_new = p * mean(Res in group) "
             "(default: one Res for a+b; --separate: one Res each for a and b). "
-            "Iterate: rebuild Bc DST with #define FillPullExclusive 1 -> reso -> DST. "
+            "Iterate: decode BcIn/BcOut -> reso -> decode. "
             "Use --debug to evaluate pull without updating Res."
         )
     )
@@ -38,7 +38,7 @@ def main():
         "mode",
         type=str,
         choices=["t0", "drift", "resi", "reso"],
-        help="Tuning Mode (reso: Pull p -> common DCGEO Res; iterate with DST)",
+        help="Tuning Mode (reso: Pull p -> common DCGEO Res; iterate with decode)",
     )
     
     # Mutually exclusive group for detector selection
@@ -92,13 +92,7 @@ def main():
 
     def resolve_input_root(det_name):
         root_filename = f"run{run_num:05d}_{det_name}.root"
-        path = config.DATA_DIR / root_filename
-        if not path.exists() and det_name == "BcOut":
-            fallback = config.DATA_DIR / f"run{run_num:05d}_DC.root"
-            if fallback.exists():
-                print(colored(f"[INFO] _BcOut.root not found, using _DC.root instead.", "yellow"))
-                return fallback
-        return path
+        return config.DATA_DIR / root_filename
 
     bin_dir = project_root / "bin"
     script_dir = Path(__file__).resolve().parent

@@ -10,20 +10,20 @@ DCGeomRecord::CalcVectors) and adds
 
 to the current Ofs column only.  X, Y, Z, L, TA, and RA are never modified.
 
-Recommended workflow
---------------------
-1. apply_dcgeo_offset.py DCGEO --write   -- survey: X,Y columns -> Ofs (overwrites file)
-2. tracking / D5 validation
-3. apply_dcgeo_offset.py DCGEO --skip-xy --bcin --resiy 0.2 --write
-   -- extra correction from CLI only (ignores X,Y columns)
-4. update_param.py residual  -- per-layer fine tuning (Ofs column, start_col=12)
+Usage
+-----
+* D5 position alignment: run_d5.py pos calls
+  ``--skip-xy --residual-offset BLC1a:s,dy_a --residual-offset BLC1b:-s,dy_b --write``
+  (run_d5.py backs up DCGEO to /group/had/sks/Users/sryuta/backup before writing).
+* Survey input: ``apply_dcgeo_offset.py DCGEO --write`` projects the X,Y columns onto Ofs.
+* Per-layer fine tuning afterwards: run_dcprm.py resi (update_param.py residual).
 
 Notes
 -----
 * By default each layer's X,Y columns are read as survey displacement [mm] from
   nominal (global FF coordinates) and projected onto Ofs via TA/RA.
 * Use --skip-xy for follow-up runs: only --resix/--resiy/--residual-offset apply.
-* Re-running without --skip-xy on the same file double-counts into Ofs; keep a .bk.
+* Re-running without --skip-xy on the same file double-counts into Ofs; back up the file first.
 * --offset DET:DX,DY overrides file X,Y for that detector/layer when not --skip-xy.
 * TA is read per layer from DCGEO (nominal U/V tilt may be ~±45 deg but need not
   be exact, e.g. 44 deg after survey); projection uses each layer's actual value.

@@ -21,18 +21,10 @@ def make_dictdata(root_file_path):
         return {}
     detector_id = -1
     
-    # Identify detector. 
-    # BLC1/2 files often named specifically, but common DC files need checking too.
     if "BLC1" in root_file_path:
         detector_id = detector_id_list["BLC1"]
     elif "BLC2" in root_file_path:
         detector_id = detector_id_list["BLC2"]
-    elif "DC" in root_file_path:
-        # Fallback for combined DC file: we might need to handle both trees or identify which one.
-        # But usually update_param.py iterates over them if separate.
-        # For combined, we default to BLC1 and assume caller handles the offset.
-        print(colored("Warning: Identifying combined DC file as BLC1 (ID 1)", "yellow"))
-        detector_id = detector_id_list["BLC1"]
 
     if detector_id == -1:
         print(colored(f"Error: Could not determine detector from path {root_file_path}", "red"))
