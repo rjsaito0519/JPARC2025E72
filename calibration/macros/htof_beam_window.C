@@ -2,7 +2,7 @@
 // whether plane-0 HTOF (seg 0-5) fired. Used to check the beam-window rectangle assumed by
 // TPCAnalyzer::ExtrapolateToHTOF (analyzer src/TPCAnalyzer.cc: TPC frame |x| < 71 mm,
 // |y - 4| < 56 mm on plane 0). Read-only; writes one PDF.
-//   root -l -b -q 'calibration/macros/htof_beam_window.C+("<out.pdf>", "<DATA_DIR>", "02569,02570")'
+//   root -l -b -q 'calibration/macros/htof_beam_window.C("<out.pdf>", "<DATA_DIR>", "02569,02570")'
 // Inputs per run: <DATA_DIR>/run<run>_BcOut.root (tree bcout: ntrack, chisqr, x0, y0, u0, v0) and
 // <DATA_DIR>/run<run>_Hodo.root (tree hodo: htof_raw_seg, htof_tdc_u/d, htof_hit_seg), same entries.
 // Track: the smallest-chisqr BcOut track of the event (any ntrack >= 1), straight line to z_htof
@@ -16,8 +16,7 @@
 // the edges where the beam tails are cut (what constrains the window size if the beam tails are cut there).
 // Assumes the TPC frame x/y used by the code equal the global x/y (HypTPC X = Y = 0 in DCGEO);
 // check this before comparing with the code values.
-// Note: ACLiC ("+") writes htof_beam_window_C.so/.d/.pcm next to this file (not git-ignored);
-// e.g. call gSystem->SetBuildDir("/tmp/<you>/aclic", kTRUE) first to keep them out of the repo.
+// Run interpreted (no ACLiC "+"), so no .so/.d/.pcm is written next to this file.
 #include <TFile.h>
 #include <TTreeReader.h>
 #include <TTreeReaderValue.h>

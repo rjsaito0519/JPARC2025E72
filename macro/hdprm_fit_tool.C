@@ -4,7 +4,7 @@
 // 使い方例:
 //
 // root -l
-// .L hdprm_fit_tool.C+
+// .L hdprm_fit_tool.C
 //
 // set_path(".../run00001_HTOF_HDPRM_Pi.root"); // 入力ROOT
 // // 粒子はデフォルト "Pi" なので省略可

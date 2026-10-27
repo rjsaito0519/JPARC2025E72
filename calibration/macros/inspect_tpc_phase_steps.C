@@ -2,7 +2,7 @@
 // and print basic step parameters (N, C, A0, t0, w0) for each CoBo.
 //
 // Usage (from ROOT):
-//   .L inspect_tpc_phase_steps.C+
+//   .L inspect_tpc_phase_steps.C
 //   inspect_tpc_phase_steps("param/TPCPHASE/TpcPhase_02601.root");
 //
 // 出力は 1 行/CoBo で、run ごとの代表振幅や位置分布の確認に使うことを想定。

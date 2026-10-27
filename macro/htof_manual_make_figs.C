@@ -4,7 +4,7 @@
 // calib_root_dir: run02601_HTOF_{ADC,PHC}_Pi.root (HTOF calibration outputs, for the weak-side and
 // PHC figures). Writes tdc_example.pdf, adc_example.pdf, weak_example.pdf, phc_example.pdf,
 // qa_dtpi_m2.pdf and phc_fit_steps.pdf in the current directory.
-// phc_fit_steps.pdf alone: root -l -b -q -e '.L <myanalysis>/macro/htof_manual_make_figs.C+' -e 'make_phcfit_fig("<calib_root_dir>")'
+// phc_fit_steps.pdf alone: root -l -b -q -e '.L <myanalysis>/macro/htof_manual_make_figs.C' -e 'make_phcfit_fig("<calib_root_dir>")'
 #include <TFile.h>
 #include <TTree.h>
 #include <TTreeReader.h>

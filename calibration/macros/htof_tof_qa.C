@@ -1,10 +1,9 @@
 // QA of the scattered-particle TOF (TPC helix x HTOF) from DstTPCHelixHTOF outputs.
 // Tracks: non-beam, non-accidental, HTOF-matched, valid TOF. Read-only; writes one PDF.
-//   root -l -b -q 'calibration/macros/htof_tof_qa.C+("<out.pdf>", "<DATA_DIR>", "02601,02602,...")'
+//   root -l -b -q 'calibration/macros/htof_tof_qa.C("<out.pdf>", "<DATA_DIR>", "02601,02602,...")'
 // Pages: (1) dt_pi, m2, m2 vs p*q, dt_pi vs seg; (2) m2 by dE/dx tag, dt_p, dt_pi per seg,
 //        dt_pi vs L_sec; (3) m2 vs p for q>0 / q<0, nsigma_pi, nsigma_p.
-// Note: ACLiC ("+") writes htof_tof_qa_C.so/.d/.pcm next to this file (not git-ignored);
-// e.g. call gSystem->SetBuildDir("/tmp/<you>/aclic", kTRUE) first to keep them out of the repo.
+// Run interpreted (no ACLiC "+"), so no .so/.d/.pcm is written next to this file.
 #include <TFile.h>
 #include <TTreeReader.h>
 #include <TTreeReaderValue.h>
