@@ -25,7 +25,7 @@ import numpy as np
 import uproot
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from tpcpos_constrained_fit import SPEC, Z_TARGET, read_map  # noqa: E402
+from tpc_position_update import SPEC, Z_TARGET, read_map  # noqa: E402
 
 
 def map_lookup(path: Path) -> Dict[int, np.ndarray]:

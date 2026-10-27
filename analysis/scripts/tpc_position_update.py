@@ -1,47 +1,50 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""TPCPOS update from beam-through residuals to a curvature-constrained circle.
+"""One update step of the TPC hit-position correction map (TPCPOS) from beam-through residuals.
 
-The inclusive helix residual cannot see curvature-type distortions (a fixed
-sagitta shift is absorbed into the fitted radius). Here each beam-through
-track is refitted in the bending plane with its radius fixed to a reference
-momentum, and the residual to that circle drives the map update.
+Each beam-through track is refitted in the bending plane; the residual of its hits to that
+circle, projected on the pad tangent, is averaged per pad and a fraction of it is added to
+the parent map. The inclusive helix residual alone cannot see curvature-type distortions (a
+fixed sagitta shift is absorbed into the fitted radius), so the radius may be constrained to
+a reference momentum (--momentum-constraint):
 
-Reference momentum per (species, |p_beam|) charge pair:
-  p_ref = p_beam * (w R+ + (1-w) R-),   R+- = median(mom0)/p_beam of the q=+-1 run(s)
-so the q=+ and q=- tracks are pulled to a common |p|. w=0.5 keeps the pair mean;
-w=1 takes the q=+ beam as reference. Runs without a partner of the opposite
-polarity are not used.
---ref-mode self instead uses p_ref = median(mom0) of the run itself: the charge-pair
-difference is not used, only the track-to-track curvature spread is constrained.
---ref-mode soft keeps the radius free but adds a Gaussian prior on it around the self
-reference: chi2 = sum(d^2)/sigma_hit^2 + ((R - R_ref)/(sigma_p R_ref))^2, so sigma_p is the
-allowed relative momentum spread (beam momentum bite); sigma_p -> 0 is self, large is free.
---ref-mode free uses no radius constraint: the beam-through pads are updated from the
-inclusive helix residual (DST residual_x/z) of all tracks, like the HTOF inclusive fill.
+  none         no radius constraint: pads are updated from the inclusive helix residual
+               (DST residual_x/z) of all tracks, like the multi-pion fill.
+  soft         the radius is free but has a Gaussian prior around the run median momentum:
+               chi2 = sum(d^2)/hit_resolution^2 + ((R - R_ref)/(momentum_width R_ref))^2.
+               momentum_width is the allowed relative momentum spread (beam momentum bite);
+               momentum_width -> 0 is fixed, large is none.
+  fixed        the radius is fixed to the run median momentum (p_ref = median(mom0) of the
+               run): only the track-to-track curvature spread is constrained.
+  charge-pair  the radius is fixed to a common |p| of the q=+ and q=- runs at the same
+               (species, |p_beam|):
+                 p_ref = p_beam * (w R+ + (1-w) R-),  R+- = median(mom0)/p_beam of the q=+-1 run(s),
+               w = --pair-weight (0.5: pair mean, 1: q=+ beam). Runs without a partner of the
+               opposite polarity are not used.
 
 Helix frame (DstTPCHelixTracking): X = -x, Y = z - Z_TARGET, centre (helix_cx,
 helix_cy), radius helix_r; mom0 is proportional to helix_r, so
 R_ref = helix_r * p_ref / mom0.
 
-Residual: r = hit - closest point on the constrained circle, projected on the
-pad tangent  r_t = r_x cos(phi) - r_z sin(phi), phi = atan2(x, z - Z_TARGET).
-Update (tan model, Y-flat):  new = parent + (-alpha * <r_t>) * e_t,
-e_t = (cos phi_pad, -sin phi_pad); center-frame pads set to (0, 0).
---overwrite replaces the touched pads by (-alpha * <r_t>) * e_t instead.
+Residual: r = hit - closest point on the circle, projected on the pad tangent
+  r_t = r_x cos(phi) - r_z sin(phi), phi = atan2(x, z - Z_TARGET).
+Update (tangential, y-independent):  new = parent + (-f * <r_t>) * e_t,
+f = --update-fraction, e_t = (cos phi_pad, -sin phi_pad); centre-frame pads set to (0, 0).
+--overwrite replaces the touched pads by (-f * <r_t>) * e_t instead.
 --zero-layers L0-L1 keeps those layers at (0, 0) (e.g. the hit-starved inner layers under
 the target holder) and excludes them from the update.
 
-HTOF calibration runs (2601-2607, pi- 1.0 GeV/c beam on target):
-  --htof-beam FILE      : beam pi- tracks added to the constrained residual with
-                          p_ref = median(run) * ref(pi 1.0)/R-(pi 1.0) of the BT pair,
-                          i.e. the same relative bias as the BT pi- 1.0 beam is removed;
-  --htof-inclusive FILE : pads without a constrained update get -alpha*<r_t> of the
-                          inclusive helix residual (DST residual_x/z) of all tracks.
+Multi-pion calibration runs (HTOF trigger, 2601-2607, pi- 1.0 GeV/c beam on target):
+  --multipion FILE      : pads without a beam-through update get -f*<r_t> of the
+                          inclusive helix residual (DST residual_x/z) of all tracks;
+  --multipion-beam FILE : beam pi- tracks added to the constrained residual with
+                          p_ref = median(run) * ref(pi 1.0)/R-(pi 1.0) of the beam-through pair,
+                          i.e. the same relative bias as the beam-through pi- 1.0 beam is removed.
 
 Usage:
-  tpcpos_constrained_fit.py <bt_helix_hadd.root> --parent MAP --out MAP
-                            [--threshold N] [--alpha A] [--ref-weight W] [--overwrite]
+  tpc_position_update.py <beamthrough_helix_hadd.root> --parent MAP --out MAP
+                         [--momentum-constraint none|soft|fixed|charge-pair] [--momentum-width S]
+                         [--update-fraction F] [--min-hits N] [--multipion FILE] [--zero-layers L0-L1]
 """
 
 from __future__ import annotations
@@ -260,34 +263,37 @@ def main() -> int:
     ap.add_argument("--pad-dir", type=Path, default=Path("/group/had/sks/Users/sryuta/tmp/debug/tpcpos/cfit"),
                     help="dir with center_frame.txt ('layer row') and pad_phi.txt ('layer row theta[rad]'),"
                     " dumped from TPCPadHelper by dump_pads.C")
-    ap.add_argument("--threshold", type=int, default=100)
-    ap.add_argument("--alpha", type=float, default=1.0)
-    ap.add_argument("--ref-weight", type=float, default=0.5,
-                    help="weight w of the q=+ ratio in the pair reference (0.5: mean, 1: q=+)")
-    ap.add_argument("--ref-mode", choices=["pair", "self", "soft", "free"], default="pair",
-                    help="pair: charge-pair reference with --ref-weight; self: run median; "
-                    "soft: run median as a Gaussian prior (--sigma-p); "
-                    "free: inclusive residual, no radius constraint")
-    ap.add_argument("--sigma-p", type=float, default=0.01,
+    ap.add_argument("--min-hits", type=int, default=100,
+                    help="minimum number of hits in a pad to update it")
+    ap.add_argument("--update-fraction", type=float, default=1.0,
+                    help="fraction of the mean residual added to the map in this step")
+    ap.add_argument("--momentum-constraint", choices=["none", "soft", "fixed", "charge-pair"],
+                    default="charge-pair",
+                    help="none: inclusive residual, no radius constraint; soft: run median as a Gaussian "
+                    "prior (--momentum-width); fixed: radius fixed to the run median; "
+                    "charge-pair: common |p| of the +/- runs (--pair-weight)")
+    ap.add_argument("--momentum-width", type=float, default=0.01,
                     help="soft: allowed relative momentum spread around the run median")
-    ap.add_argument("--sigma-hit", type=float, default=0.6,
+    ap.add_argument("--hit-resolution", type=float, default=0.6,
                     help="soft: hit resolution [mm] used to weight the prior")
+    ap.add_argument("--pair-weight", type=float, default=0.5,
+                    help="charge-pair: weight w of the q=+ ratio in the reference (0.5: mean, 1: q=+)")
     ap.add_argument("--overwrite", action="store_true",
                     help="replace touched pads instead of adding to the parent map")
     ap.add_argument("--zero-layers", default="",
                     help="layer range kept at (0,0), e.g. 0-4")
     ap.add_argument("--max-entries", type=int, default=None)
-    ap.add_argument("--htof-beam", type=Path, action="append", default=[])
-    ap.add_argument("--htof-inclusive", type=Path, action="append", default=[])
+    ap.add_argument("--multipion-beam", type=Path, action="append", default=[])
+    ap.add_argument("--multipion", type=Path, action="append", default=[])
     ap.add_argument("--step", default="300 MB")
     args = ap.parse_args()
 
     tree = uproot.open(args.helix_root)["tpc"]
     med = run_medians(tree, args.step)
-    pref = reference_p(med, args.ref_weight) if args.ref_mode == "pair" else dict(med)
-    soft = (args.sigma_p, args.sigma_hit) if args.ref_mode == "soft" else None
+    pref = reference_p(med, args.pair_weight) if args.momentum_constraint == "charge-pair" else dict(med)
+    soft = (args.momentum_width, args.hit_resolution) if args.momentum_constraint == "soft" else None
     if soft is not None:
-        print(f"soft prior: sigma_p {args.sigma_p}  sigma_hit {args.sigma_hit} mm")
+        print(f"soft prior: momentum width {args.momentum_width}  hit resolution {args.hit_resolution} mm")
     print("run  q   p_beam  med/p   p_ref/p")
     for r in sorted(med):
         s = SPEC[r]
@@ -296,12 +302,12 @@ def main() -> int:
 
     sums: Dict[int, float] = {}
     cnts: Dict[int, int] = {}
-    if args.ref_mode == "free":
+    if args.momentum_constraint == "none":
         accumulate_inclusive(tree, sums, cnts, args.step)
         n_trk = 0
     else:
         n_trk = accumulate_constrained(tree, pref, SPEC, sums, cnts, args.step, args.max_entries, soft)
-    for hf in args.htof_beam:
+    for hf in args.multipion_beam:
         ht = uproot.open(hf)["tpc"]
         hmed = run_medians(ht, args.step, HTOF_SPEC)
         pi_bt = [r for r in pref if SPEC[r].species == "pi" and SPEC[r].p_beam == 1.0
@@ -309,11 +315,11 @@ def main() -> int:
         k = np.mean([pref[r] / med[r] for r in pi_bt]) if pi_bt else 1.0
         href = {r: m * k for r, m in hmed.items()}
         for r in sorted(hmed):
-            print(f"[htof-beam] run {r} med/p {hmed[r]:.4f} p_ref/p {href[r]:.4f} (k={k:.4f})")
+            print(f"[multipion-beam] run {r} med/p {hmed[r]:.4f} p_ref/p {href[r]:.4f} (k={k:.4f})")
         n_trk += accumulate_constrained(ht, href, HTOF_SPEC, sums, cnts, args.step, None)
     isums: Dict[int, float] = {}
     icnts: Dict[int, int] = {}
-    for hf in args.htof_inclusive:
+    for hf in args.multipion:
         accumulate_inclusive(uproot.open(hf)["tpc"], isums, icnts, args.step)
 
     n_y, y0, dy, grid = read_map(args.parent)
@@ -327,20 +333,20 @@ def main() -> int:
     n_incl = 0
     upd = []
     for k, n in cnts.items():
-        if n < args.threshold:
+        if n < args.min_hits:
             continue
         key = (k // 1000, k % 1000)
         if key in cf or key not in grid:
             continue
         mean_rt = sums[k] / n
-        ct = -args.alpha * mean_rt
+        ct = -args.update_fraction * mean_rt
         upd.append((key, ct))
     done = {key for key, _ in upd}
     for k, n in icnts.items():
         key = (k // 1000, k % 1000)
-        if n < args.threshold or key in done or key in cf or key not in grid:
+        if n < args.min_hits or key in done or key in cf or key not in grid:
             continue
-        upd.append((key, -args.alpha * isums[k] / n))
+        upd.append((key, -args.update_fraction * isums[k] / n))
         n_incl += 1
     # e_t = (cos th, -sin th) with the pad angle th, as in tpc_pos_calib.
     pad_phi = {}
@@ -374,7 +380,7 @@ def main() -> int:
     print(f"zero-layers {args.zero_layers or '-'}: {len(zero)} pads set to (0,0)")
     write_map(args.out, n_y, y0, dy, grid)
     cts = np.array([c for _, c in upd])
-    print(f"inclusive-filled pads={n_incl}")
+    print(f"multipion-filled pads={n_incl}")
     print(f"tracks={n_trk} fitted_pads={n_fit} median|ct|={np.median(np.abs(cts)):.4f} "
           f"rms ct={np.std(cts):.4f}")
     print(f"wrote {args.out}")
