@@ -343,7 +343,7 @@ void analyze(TString path, TString particle)
             std::cout << Form("  %s-%s: n/a\n", name_b.Data(), kPlaneLabels[i]);
     }
 
-    // --- last page: same reduced-χ² scale analysis as BLC_chi2 (monitor only) ---
+    // --- last page: reduced-χ² scale analysis (monitor only) ---
     Double_t scale_s = 1.0;
     Double_t sqrt_s = 1.0;
     Double_t mean_chi2 = -1.0;
