@@ -51,8 +51,6 @@ def main():
         help='reso only: one common Res for BLC1+BLC2 (p=mean of both); with --separate: 4 groups',
     )
     parser.add_argument('--kaon', action="store_true", help='Use Kaon (K) suffix instead of Pion (Pi)')
-    parser.add_argument('--guess', action="store_true",
-                        help='Use full-wire projection as Erfc fit seed for TDC (legacy; t0 mode only)')
     parser.add_argument(
         "--debug",
         action="store_true",
@@ -142,8 +140,7 @@ def main():
             sys.exit(1)
             
         print(colored(">>> Step 1: Running BLC_TDC", "cyan"))
-        guess_flag = " --guess" if args.guess else ""
-        run_command(f"{executable} {input_root_file} {suffix}{guess_flag}")
+        run_command(f"{executable} {input_root_file} {suffix}")
         
         if not args.debug:
             print(colored(">>> Step 2: Updating Parameters (DCTDC)", "cyan"))

@@ -29,7 +29,7 @@
 
 Config& conf = Config::getInstance();
 
-void analyze(TString path, TString particle, Bool_t use_guess){    
+void analyze(TString path, TString particle){    
     // +---------+
     // | setting |
     // +---------+
@@ -174,38 +174,24 @@ void analyze(TString path, TString particle, Bool_t use_guess){
             return r;
         };
 
-        // Default: each half uses its own init (nullptr seed).
-        // --guess: borrow Erfc init / fit range from full-wire projection.
-        ana_helper::DcTdcFitSeed seed_a;
-        ana_helper::DcTdcFitSeed seed_b;
-        const ana_helper::DcTdcFitSeed* pseed_a = nullptr;
-        const ana_helper::DcTdcFitSeed* pseed_b = nullptr;
-        if (use_guess) {
-            seed_a = ana_helper::dc_tdc_seed(h_a_all);
-            seed_b = ana_helper::dc_tdc_seed(h_b_all);
-            pseed_a = seed_a.valid ? &seed_a : nullptr;
-            pseed_b = seed_b.valid ? &seed_b : nullptr;
-        }
-
         auto fit_halfwise = [&](TH1D* h_lo, TH1D* h_hi, TH1D* h_all,
                                 Int_t pad_lo, Int_t pad_hi,
-                                const ana_helper::DcTdcFitSeed* pseed,
                                 FitResult& lo_fit, FitResult& hi_fit) {
             bool lo_ok = (h_lo && h_lo->GetEntries() > 0);
             bool hi_ok = (h_hi && h_hi->GetEntries() > 0);
             bool all_ok = (h_all && h_all->GetEntries() > 0);
 
             if (lo_ok && hi_ok) {
-                lo_fit = ana_helper::dc_tdc_fit(h_lo, c_blc, pad_lo, pseed);
-                hi_fit = ana_helper::dc_tdc_fit(h_hi, c_blc, pad_hi, pseed);
+                lo_fit = ana_helper::dc_tdc_fit(h_lo, c_blc, pad_lo);
+                hi_fit = ana_helper::dc_tdc_fit(h_hi, c_blc, pad_hi);
             } else if (lo_ok && !hi_ok) {
-                lo_fit = ana_helper::dc_tdc_fit(h_lo, c_blc, pad_lo, pseed);
+                lo_fit = ana_helper::dc_tdc_fit(h_lo, c_blc, pad_lo);
                 hi_fit = lo_fit;
             } else if (!lo_ok && hi_ok) {
-                hi_fit = ana_helper::dc_tdc_fit(h_hi, c_blc, pad_hi, pseed);
+                hi_fit = ana_helper::dc_tdc_fit(h_hi, c_blc, pad_hi);
                 lo_fit = hi_fit;
             } else if (all_ok) {
-                FitResult all_fit = ana_helper::dc_tdc_fit(h_all, c_blc, pad_lo, nullptr);
+                FitResult all_fit = ana_helper::dc_tdc_fit(h_all, c_blc, pad_lo);
                 lo_fit = all_fit;
                 hi_fit = all_fit;
             } else {
@@ -215,10 +201,10 @@ void analyze(TString path, TString particle, Bool_t use_guess){
         };
 
         FitResult a_lo_fit, a_hi_fit;
-        fit_halfwise(h_a_lo, h_a_hi, h_a_all, pad_a_lo, pad_a_hi, pseed_a, a_lo_fit, a_hi_fit);
+        fit_halfwise(h_a_lo, h_a_hi, h_a_all, pad_a_lo, pad_a_hi, a_lo_fit, a_hi_fit);
 
         FitResult b_lo_fit, b_hi_fit;
-        fit_halfwise(h_b_lo, h_b_hi, h_b_all, pad_b_lo, pad_b_hi, pseed_b, b_lo_fit, b_hi_fit);
+        fit_halfwise(h_b_lo, h_b_hi, h_b_all, pad_b_lo, pad_b_hi, b_lo_fit, b_hi_fit);
 
         blca_tdc_lo.push_back(a_lo_fit);
         blca_tdc_hi.push_back(a_hi_fit);
@@ -258,8 +244,8 @@ void analyze(TString path, TString particle, Bool_t use_guess){
 Int_t main(int argc, char** argv) {
 
     // -- check argments -----
-    if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <root file path> <particle> [--guess]" << std::endl;
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " <root file path> <particle>" << std::endl;
         return 1;
     }
     TString path = argv[1];
@@ -269,17 +255,6 @@ Int_t main(int argc, char** argv) {
         return 1;
     }
 
-    Bool_t use_guess = kFALSE;
-    for (Int_t i = 3; i < argc; ++i) {
-        if (TString(argv[i]) == "--guess") {
-            use_guess = kTRUE;
-        } else {
-            std::cerr << "Error: Unknown option: " << argv[i] << std::endl;
-            std::cerr << "Usage: " << argv[0] << " <root file path> <particle> [--guess]" << std::endl;
-            return 1;
-        }
-    }
-
-    analyze(path, particle, use_guess);
+    analyze(path, particle);
     return 0;
 }

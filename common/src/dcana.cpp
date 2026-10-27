@@ -21,18 +21,12 @@ TF1 *make_dc_tdc_tf1(const char *name, Double_t fit_range_min, Double_t fit_rang
     return new TF1(name, "[0]*TMath::Erfc( (x-[1])/[2] ) + [3]", fit_range_min, fit_range_max);
 }
 
-void set_dc_tdc_init_params(TF1 *fit_f, TH1D *h, const DcTdcFitSeed *seed)
+void set_dc_tdc_init_params(TF1 *fit_f, TH1D *h)
 {
     fit_f->SetParameter(0, h->GetMaximum() / 2.0);
-    if (seed && seed->valid) {
-        fit_f->SetParameter(1, seed->par1);
-        fit_f->SetParameter(2, seed->par2);
-        fit_f->SetParameter(3, seed->par3);
-    } else {
-        fit_f->SetParameter(1, h->GetXaxis()->GetBinCenter(h->GetMaximumBin()) + 10.0);
-        fit_f->SetParameter(2, 10.0);
-        fit_f->SetParameter(3, 0.0);
-    }
+    fit_f->SetParameter(1, h->GetXaxis()->GetBinCenter(h->GetMaximumBin()) + 10.0);
+    fit_f->SetParameter(2, 10.0);
+    fit_f->SetParameter(3, 0.0);
 }
 
 void clear_hist_fit_functions(TH1D *h)
@@ -76,7 +70,7 @@ Double_t dc_tdc_t0_from_fit(TF1 *fit_f, Double_t fit_range_max)
     return rootFinder.Solve() ? rootFinder.Root() : 0.0;
 }
 
-FitResult dc_tdc_fit_impl(TH1D *h, TCanvas *c, Int_t n_c, const DcTdcFitSeed *seed, Bool_t draw)
+FitResult dc_tdc_fit_impl(TH1D *h, TCanvas *c, Int_t n_c)
 {
     FitResult result;
     if (!h || h->GetEntries() <= 0) {
@@ -90,23 +84,16 @@ FitResult dc_tdc_fit_impl(TH1D *h, TCanvas *c, Int_t n_c, const DcTdcFitSeed *se
 
     Double_t fit_range_min = 0.0;
     Double_t fit_range_max = 0.0;
-    if (seed && seed->valid) {
-        fit_range_min = seed->range_min;
-        fit_range_max = seed->range_max;
-    } else {
-        std::tie(fit_range_min, fit_range_max) = dc_tdc_default_range(h);
-    }
+    std::tie(fit_range_min, fit_range_max) = dc_tdc_default_range(h);
 
-    if (draw) {
-        c->cd(n_c);
-    }
+    c->cd(n_c);
 
     TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
 
     // Stage 1: free 4-parameter fit to estimate shape / background.
     TF1 *prefit = make_dc_tdc_tf1(Form("dc_t0_%s_prefit", h->GetName()),
                                   fit_range_min, fit_range_max);
-    set_dc_tdc_init_params(prefit, h, seed);
+    set_dc_tdc_init_params(prefit, h);
     run_dc_tdc_fit(h, prefit, fit_option.Data(), fit_range_min, fit_range_max);
 
     Double_t pre_par[4] = {0.0, 0.0, 10.0, 0.0};
@@ -137,28 +124,26 @@ FitResult dc_tdc_fit_impl(TH1D *h, TCanvas *c, Int_t n_c, const DcTdcFitSeed *se
     Double_t t0 = dc_tdc_t0_from_fit(fit_f, fit_range_max);
     result.additional.push_back(t0);
 
-    if (draw) {
-        Double_t xrange_min = fit_range_min - kTdcFitWidth / 2.0;
-        Double_t xrange_max = fit_range_max;
-        if (t0 > 0.0 && std::isfinite(t0)) {
-            if (t0 < xrange_min) xrange_min = t0 - 10.0;
-            if (t0 > xrange_max) xrange_max = t0 + 10.0;
-        } else {
-            std::cerr << "Warning: dc_tdc_fit could not determine t0 for "
-                      << h->GetName() << std::endl;
-        }
+    Double_t xrange_min = fit_range_min - kTdcFitWidth / 2.0;
+    Double_t xrange_max = fit_range_max;
+    if (t0 > 0.0 && std::isfinite(t0)) {
+        if (t0 < xrange_min) xrange_min = t0 - 10.0;
+        if (t0 > xrange_max) xrange_max = t0 + 10.0;
+    } else {
+        std::cerr << "Warning: dc_tdc_fit could not determine t0 for "
+                  << h->GetName() << std::endl;
+    }
 
-        h->GetXaxis()->SetRangeUser(xrange_min, xrange_max);
-        h->Draw();
-        fit_f->Draw("same");
-        c->Update();
+    h->GetXaxis()->SetRangeUser(xrange_min, xrange_max);
+    h->Draw();
+    fit_f->Draw("same");
+    c->Update();
 
-        if (t0 > 0.0 && std::isfinite(t0)) {
-            TLine *line = new TLine(t0, gPad->GetUymin(), t0, gPad->GetUymax());
-            line->SetLineStyle(2);
-            line->SetLineColor(kRed);
-            line->Draw("same");
-        }
+    if (t0 > 0.0 && std::isfinite(t0)) {
+        TLine *line = new TLine(t0, gPad->GetUymin(), t0, gPad->GetUymax());
+        line->SetLineStyle(2);
+        line->SetLineColor(kRed);
+        line->Draw("same");
     }
 
     // fit_f is owned by the histogram after h->Fit(); do not delete here.
@@ -168,30 +153,9 @@ FitResult dc_tdc_fit_impl(TH1D *h, TCanvas *c, Int_t n_c, const DcTdcFitSeed *se
 } // namespace
 
     // ____________________________________________________________________________________________
-    DcTdcFitSeed dc_tdc_seed(TH1D *h)
+    FitResult dc_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c)
     {
-        DcTdcFitSeed seed;
-        if (!h || h->GetEntries() <= 0) {
-            return seed;
-        }
-
-        FitResult seed_fit = dc_tdc_fit_impl(h, nullptr, 0, nullptr, kFALSE);
-        if (seed_fit.par.size() < 4) {
-            return seed;
-        }
-
-        std::tie(seed.range_min, seed.range_max) = dc_tdc_default_range(h);
-        seed.par1 = seed_fit.par[1];
-        seed.par2 = seed_fit.par[2];
-        seed.par3 = seed_fit.par[3];
-        seed.valid = kTRUE;
-        return seed;
-    }
-
-    // ____________________________________________________________________________________________
-    FitResult dc_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c, const DcTdcFitSeed *seed)
-    {
-        return dc_tdc_fit_impl(h, c, n_c, seed, kTRUE);
+        return dc_tdc_fit_impl(h, c, n_c);
     }
 
     // ____________________________________________________________________________________________
