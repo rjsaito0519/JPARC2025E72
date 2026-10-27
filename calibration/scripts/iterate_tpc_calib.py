@@ -122,8 +122,6 @@ class IterOrchestrator:
         self.trk_runs, self.trk_roots = self._parse_runlist(self.trk_yml)
         if not self.hit_runs or not self.trk_runs:
             raise SystemExit("[Error] No active RUN entries in hit/trk yml")
-        self.hit_run0 = self.hit_runs[0]
-        self.trk_run0 = self.trk_runs[0]
 
     def _validate_paths(self) -> None:
         for p in (self.hit_yml, self.trk_yml, RUN_TPC, self.group_root):
@@ -196,9 +194,6 @@ class IterOrchestrator:
 
     def roots_for(self, kind: str) -> list[Path]:
         return self.hit_roots if kind == "hit" else self.trk_roots
-
-    def run0_for(self, kind: str) -> int:
-        return self.hit_run0 if kind == "hit" else self.trk_run0
 
     def hadd_root_for(self, kind: str) -> Path:
         name = (
@@ -562,15 +557,12 @@ class IterOrchestrator:
 
     def run_tpc(self, kind: str, cmd: str, outer_i: int, extra: list[str]) -> None:
         root = self.hadd_root_for(kind)
-        run_num = self.run0_for(kind)
         mode = "trk" if kind == "trk" else "hit"
         opts = [
             sys.executable,
             str(RUN_TPC),
             str(root),
             cmd,
-            "--run",
-            str(run_num),
             "--mode",
             mode,
             *extra,

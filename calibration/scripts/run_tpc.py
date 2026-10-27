@@ -3,21 +3,21 @@
 run_tpc: TPC の較正のフロントエンド
 
 使い方:
-  ./run_tpc.py <root_file> phase  [--run N] [--mode hit|trk] [--rebin N] [--ofs-update] [--debug]
-  ./run_tpc.py <root_file> offset [--run N] [--mode hit|trk] [--threshold N] [--ave] [--debug]
-  ./run_tpc.py <root_file> gain   [--run N] [--threshold N] [--target-mpv M] [--rebin N] [--de-source all|pion]
+  ./run_tpc.py <root_file> phase  [--mode hit|trk] [--rebin N] [--ofs-update] [--debug]
+  ./run_tpc.py <root_file> offset [--mode hit|trk] [--threshold N] [--ave] [--debug]
+  ./run_tpc.py <root_file> gain   [--threshold N] [--target-mpv M] [--rebin N] [--de-source all|pion]
                                   [--tree [--layer]] [--replace] [--ave] [--debug]
-  ./run_tpc.py <root_file> drift  [--run N] [--mode hit|trk] [--threshold N] [--debug]
+  ./run_tpc.py <root_file> drift  [--mode hit|trk] [--threshold N] [--debug]
   ./run_tpc.py <helix_root> pos   [--model tan|xz] [--threshold N] [--ave] [--parent MAP] [--overwrite] [--debug]
 
   サブコマンドごとに使えるオプションだけを受け付ける（ほかはエラー）。run 番号は入力 ROOT の
-  tpc/run_number（無ければファイル名の runNNNNN）から取る。複数 run の hadd では --run N で更新する run を
-  指定する（phase・offset・gain・drift）。--debug は解析と QA だけ行い param を書かない。
+  tpc/run_number の最小値（複数 run の hadd ならいちばん小さい run。読めなければファイル名の runNNNNN）。
+  --debug は解析と QA だけ行い param を書かない。
 
   入力 ROOT の命名（dst_create_runlist / create_runlist と揃える）:
   - phase : run{NNNNN}_TPCHitBcOut.root（DATA_DIR symlink 可。旧 dst_tpchit_bcout_tracking_* も可）
   - offset / drift : hit は run{NNNNN}_TPCHitBcOut.root、trk は TPCTrk_ResY_* を含む DST
-            （例 run{NNNNN}_TPCHelix.root）。複数 run の hadd も可（--run で更新する run を指定）
+            （例 run{NNNNN}_TPCHelix.root）。複数 run の hadd も可（いちばん小さい run の TPCPRM を更新）
   - gain : TPCCl_dE_* を含む DST。--tree は Helix の tpc tree（run{NNNNN}_TPCHelix.root）
   - pos : run{NNNNN}_TPCHelix.root（inclusive helix DST）または hadd
 
@@ -188,22 +188,18 @@ def update_tpcprm_phase_stamp(run_num: int, phase_path: Path) -> None:
 
 
 def get_run_number_from_root(root_path: Path) -> int:
-    """ROOT ファイルの tpc ツリー run_number から取得。失敗時はファイル名の runNNNNN にフォールバック。"""
+    """Smallest tpc/run_number in the file (a hadd of several runs is labelled by its first run).
+    Falls back to runNNNNN in the file name."""
     path = Path(root_path).resolve()
     if not path.exists():
         return -1
 
     try:
         with uproot.open(path) as f:
-            if "tpc" not in f:
-                return -1
-            tree = f["tpc"]
-            if "run_number" not in tree:
-                return -1
-            arr = tree["run_number"].array(library="np")
-            if arr is None or len(arr) == 0:
-                return -1
-            return int(arr[0])
+            if "tpc" in f and "run_number" in f["tpc"]:
+                arr = f["tpc"]["run_number"].array(library="np")
+                if len(arr) > 0:
+                    return int(arr.min())
     except Exception:
         pass
 
@@ -230,8 +226,8 @@ def require_binary(bin_dir: Path, name: str) -> Path:
     return exe
 
 
-def require_run_number(root_path: Path, run: int | None = None) -> int:
-    run_num = run if run is not None else get_run_number_from_root(root_path)
+def require_run_number(root_path: Path) -> int:
+    run_num = get_run_number_from_root(root_path)
     if run_num < 0:
         print(colored("[Error] Could not get run number from ROOT (tpc/run_number) or filename (runNNNNN).", "red"))
         sys.exit(1)
@@ -257,14 +253,8 @@ def build_parser() -> argparse.ArgumentParser:
     def add_mode(p: argparse.ArgumentParser, text: str) -> None:
         p.add_argument("--mode", choices=["hit", "trk"], default="hit", help=text)
 
-    def add_run(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--run", type=int, default=None, metavar="N",
-                       help="Run whose TPCPRM is updated, for a hadd of several runs "
-                       "(default: tpc/run_number of the first entry, or runNNNNN in the file name).")
-
     p = sub.add_parser("phase", help="TPC clock phase (tpc_phase_from_tpcbcout + tpc_phase_plot)")
     add_mode(p, "Histogram preference (falls back to the other if missing).")
-    add_run(p)
     p.add_argument("--rebin", type=int, default=None, metavar="N",
                    help="Rebin the 2D clock axis before the gaus profile.")
     p.add_argument("--ofs-update", action="store_true",
@@ -274,14 +264,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("offset", help="Per-pad time offset (tpc_time_offset_calib)")
     add_mode(p, "hit / trk histogram set.")
-    add_run(p)
     p.add_argument("--threshold", type=int, default=None, metavar="N",
                    help="Minimum entries in the fit histogram of a pad.")
     p.add_argument("--ave", action="store_true", help="Fill pads without a fit (see the module help).")
     add_debug(p)
 
     p = sub.add_parser("gain", help="Per-pad gain (tpc_gain_calib)")
-    add_run(p)
     p.add_argument("--threshold", type=int, default=None, metavar="N",
                    help="Minimum entries in the dE histogram of a pad.")
     p.add_argument("--target-mpv", type=float, default=None, metavar="M", help="Target MPV (default 200).")
@@ -298,7 +286,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("drift", help="Drift velocity per layer (tpc_drift_calib)")
     add_mode(p, "Histogram preference (falls back to the other if missing).")
-    add_run(p)
     p.add_argument("--threshold", type=int, default=None, metavar="N",
                    help="Minimum entries of a layer 2D histogram (default 100000).")
     add_debug(p)
@@ -322,7 +309,7 @@ def opt(flag: str, value) -> list[str]:
 
 def run_phase(args, bin_dir: Path) -> None:
     bcout_path = require_file(args.root_file)
-    run_num = require_run_number(bcout_path, args.run)
+    run_num = require_run_number(bcout_path)
     print(colored(f"[INFO] Run number: {run_num}", "green"))
     print(colored(f"[INFO] Input file: {bcout_path}", "green"))
     exe_fit = require_binary(bin_dir, "tpc_phase_from_tpcbcout")
@@ -353,7 +340,7 @@ def run_phase(args, bin_dir: Path) -> None:
 
 def run_offset(args, bin_dir: Path) -> None:
     input_root = require_file(args.root_file)
-    run_num = require_run_number(input_root, args.run)
+    run_num = require_run_number(input_root)
     exe = require_binary(bin_dir, "tpc_time_offset_calib")
     cmd = [str(exe), str(input_root), str(run_num), "--mode", args.mode, *opt("--threshold", args.threshold)]
     cmd += ["--ave"] if args.ave else []
@@ -367,7 +354,7 @@ def run_gain(args, bin_dir: Path) -> None:
         print(colored("[Error] gain --layer needs --tree.", "red"))
         sys.exit(1)
     input_root = require_file(args.root_file)
-    run_num = require_run_number(input_root, args.run)
+    run_num = require_run_number(input_root)
     exe = require_binary(bin_dir, "tpc_gain_calib")
     cmd = [str(exe), str(input_root), str(run_num), "--de-source", args.de_source,
            *opt("--threshold", args.threshold), *opt("--target-mpv", args.target_mpv), *opt("--rebin", args.rebin)]
@@ -380,7 +367,7 @@ def run_gain(args, bin_dir: Path) -> None:
 
 def run_drift(args, bin_dir: Path) -> None:
     input_root = require_file(args.root_file)
-    run_num = require_run_number(input_root, args.run)
+    run_num = require_run_number(input_root)
     exe = require_binary(bin_dir, "tpc_drift_calib")
     cmd = [str(exe), str(input_root), str(run_num), "--mode", args.mode, *opt("--threshold", args.threshold)]
     cmd += ["--debug"] if args.debug else []
