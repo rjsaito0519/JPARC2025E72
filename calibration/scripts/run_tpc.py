@@ -6,7 +6,8 @@ run_tpc: TPC の較正のフロントエンド
   ./run_tpc.py <root_file> phase  [--mode hit|trk] [--rebin N] [--ofs-update] [--debug]
   ./run_tpc.py <root_file> offset [--mode hit|trk] [--threshold N] [--ave] [--debug]
   ./run_tpc.py <root_file> gain   [--threshold N] [--target-mpv M] [--rebin N] [--de-source all|pion]
-                                  [--tree [--layer]] [--replace] [--ave] [--debug]
+                                  [--replace] [--ave] [--debug]
+  ./run_tpc.py <helix_root> gain --tree [--threshold N] [--ave] [--debug]
   ./run_tpc.py <root_file> drift  [--mode hit|trk] [--threshold N] [--debug]
   ./run_tpc.py <helix_root> pos   [--model tan|xz] [--threshold N] [--ave] [--parent MAP] [--overwrite] [--debug]
 
@@ -18,7 +19,7 @@ run_tpc: TPC の較正のフロントエンド
   - phase : hit は run{NNNNN}_TPCHitBcOut.root、trk は TPCTrk_ResY_vs_ClockTime_* を含む DST
   - offset / drift : hit は run{NNNNN}_TPCHitBcOut.root、trk は TPCTrk_ResY_* を含む DST
             （例 run{NNNNN}_TPCHelix.root）。複数 run の hadd も可（いちばん小さい run の TPCPRM を更新）
-  - gain : TPCCl_dE_* を含む DST。--tree は Helix の tpc tree（run{NNNNN}_TPCHelix.root）
+  - gain : TPCCl_dE_* を含む DST。--tree は π ビームの run の Helix の tpc tree（run{NNNNN}_TPCHelix.root か hadd）
   - pos : run{NNNNN}_TPCHelix.root（inclusive helix DST）または hadd
 
   - phase : tpc_phase_from_tpcbcout + tpc_phase_plot → TPCPRM の kCobo（aty=3）行 (A, t, w) を
@@ -279,15 +280,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("gain", help="Per-pad gain (tpc_gain_calib)")
     p.add_argument("--threshold", type=int, default=None, metavar="N",
                    help="Minimum entries in the dE histogram of a pad.")
-    p.add_argument("--target-mpv", type=float, default=None, metavar="M", help="Target MPV (default 200).")
-    p.add_argument("--rebin", type=int, default=None, metavar="N", help="Rebin of the dE histogram.")
-    p.add_argument("--de-source", choices=["all", "pion"], default="pion",
-                   help="dE histograms: all (TPCCl_dE_*) or pion (TPCCl_dE_Pion_*, default).")
+    p.add_argument("--target-mpv", type=float, default=None, metavar="M",
+                   help="Target MPV (default 200). Histogram mode only.")
+    p.add_argument("--rebin", type=int, default=None, metavar="N", help="Rebin of the dE histogram. Histogram mode only.")
+    p.add_argument("--de-source", choices=["all", "pion"], default=None,
+                   help="dE histograms: all (TPCCl_dE_*) or pion (TPCCl_dE_Pion_*, default). Histogram mode only.")
     p.add_argument("--tree", action="store_true",
-                   help="Build the dE histograms from the Helix tpc tree (per pad).")
-    p.add_argument("--layer", action="store_true", help="With --tree: fit per layer instead of per pad.")
+                   help="Pion sample from the Helix tpc tree of pion-beam runs (see common/include/tpc_gain_tree.h).")
     p.add_argument("--replace", action="store_true",
-                   help="Set gain = target/MPV instead of multiplying the previous gain.")
+                   help="Set gain = target/MPV instead of multiplying the previous gain. Histogram mode only.")
     p.add_argument("--ave", action="store_true", help="Fill pads without a fit (see the module help).")
     add_debug(p)
 
@@ -364,15 +365,12 @@ def run_offset(args, bin_dir: Path) -> None:
 
 
 def run_gain(args, bin_dir: Path) -> None:
-    if args.layer and not args.tree:
-        print(colored("[Error] gain --layer needs --tree.", "red"))
-        sys.exit(1)
     input_root = require_file(args.root_file)
     run_num = require_run_number(input_root)
     exe = require_binary(bin_dir, "tpc_gain_calib")
-    cmd = [str(exe), str(input_root), str(run_num), "--de-source", args.de_source,
+    cmd = [str(exe), str(input_root), str(run_num), *opt("--de-source", args.de_source),
            *opt("--threshold", args.threshold), *opt("--target-mpv", args.target_mpv), *opt("--rebin", args.rebin)]
-    for flag in ("tree", "layer", "replace", "ave", "debug"):
+    for flag in ("tree", "replace", "ave", "debug"):
         if getattr(args, flag):
             cmd.append(f"--{flag}")
     print(colored(f">>> TPC gain calib (tpc_gain_calib), run={run_num}", "cyan"))

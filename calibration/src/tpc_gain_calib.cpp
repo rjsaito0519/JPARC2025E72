@@ -16,11 +16,13 @@
 #include <TFile.h>
 #include <TF1.h>
 #include <TH1D.h>
+#include <TH2D.h>
 #include <TH2Poly.h>
 #include <TLine.h>
 #include <TMath.h>
 #include <TObject.h>
 #include <TPad.h>
+#include <TPaveText.h>
 #include <TPRegexp.h>
 #include <TROOT.h>
 #include <TString.h>
@@ -33,16 +35,10 @@
 #include "paths.h"
 #include "progress_bar.h"
 #include "TPCPadHelper.hh"
+#include "tpc_gain_tree.h"
 #include "tpc_pad_fill.h"
 
 namespace fs = std::filesystem;
-
-// Tree-mode hit selection: input tree, accepted cluster size, and the |theta_diff| (alpha) cut per layer region.
-static const char* const kTreeName = "tpc";
-constexpr Int_t kClusterSizeMin = 1;
-constexpr Int_t kClusterSizeMax = 1;
-constexpr Double_t kAlphaInner = 0.1;  // |theta_diff| max for L0-9
-constexpr Double_t kAlphaOuter = 0.2;  // |theta_diff| max for L10+
 
 struct TpcParamEntry {
   Int_t layer{};
@@ -411,122 +407,19 @@ static void DrawGainCalibPanel(TH1D* h, TF1* fFit, Bool_t fit_ok, Double_t fit_m
   }
 }
 
-static Bool_t FillTreeHists(TFile* f, Bool_t pion_tracks_only, Bool_t fill_per_pad,
-                            std::vector<TH1D*>& h_layers,
-                            std::map<std::pair<Int_t, Int_t>, TH1D*>& h_pads, Long64_t& n_hits_filled) {
-  h_layers.clear();
-  h_layers.resize(tpc::NumOfLayersTPC, nullptr);
-  for (Int_t layer = 0; layer < tpc::NumOfLayersTPC; ++layer) {
-    h_layers[layer] = new TH1D(Form("hTPCCl_dE_tree_L%02d", layer),
-                               Form("Cluster dE (tree) Layer %02d;Cluster dE;Counts", layer), 400, 0., 800.);
-    h_layers[layer]->SetDirectory(nullptr);
-  }
-
-  TTree* tree = (TTree*)f->Get(kTreeName);
-  if (!tree) {
-    std::cerr << "Error: tree '" << kTreeName << "' not found in " << f->GetName() << std::endl;
-    return kFALSE;
-  }
-
-  TTreeReader reader(tree);
-  TTreeReaderValue<Int_t> rv_ntTpc(reader, "ntTpc");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> rv_clsize(reader, "track_cluster_size");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> rv_theta_diff(reader, "theta_diff");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> rv_clde(reader, "track_cluster_de");
-  TTreeReaderValue<std::vector<std::vector<Double_t>>> rv_hitlayer(reader, "hitlayer");
-  std::unique_ptr<TTreeReaderValue<std::vector<std::vector<Double_t>>>> rv_hitrow;
-  if (fill_per_pad) {
-    rv_hitrow =
-        std::make_unique<TTreeReaderValue<std::vector<std::vector<Double_t>>>>(reader, "track_cluster_row_center");
-  }
-
-  std::unique_ptr<TTreeReaderValue<std::vector<Int_t>>> rv_pid;
-  if (pion_tracks_only) {
-    rv_pid = std::make_unique<TTreeReaderValue<std::vector<Int_t>>>(reader, "pid");
-  }
-
-  const Long64_t n_entries = tree->GetEntries();
-  if (n_entries <= 0) {
-    std::cerr << "Error: tree '" << kTreeName << "' has no entries." << std::endl;
-    return kFALSE;
-  }
-
-  n_hits_filled = 0;
-  Long64_t iev = 0;
-  while (reader.Next()) {
-    displayProgressBar(static_cast<Int_t>(++iev), static_cast<Int_t>(n_entries));
-    const Int_t nt = *rv_ntTpc;
-    const auto& clde_ev = *rv_clde;
-    const auto& clsize_ev = *rv_clsize;
-    const auto& theta_ev = *rv_theta_diff;
-    const auto& hitlayer_ev = *rv_hitlayer;
-    const auto* hitrow_ev = fill_per_pad ? &(**rv_hitrow) : nullptr;
-    for (Int_t it = 0; it < nt; ++it) {
-      if (pion_tracks_only && rv_pid) {
-        const auto& pid_ev = **rv_pid;
-        if (it >= static_cast<Int_t>(pid_ev.size()) || !(pid_ev[it] & 0x1)) continue;
-      }
-      if (it >= static_cast<Int_t>(clde_ev.size())) continue;
-      const auto& v_de = clde_ev[it];
-      const auto& v_cs = clsize_ev[it];
-      const auto& v_td = theta_ev[it];
-      const auto& v_ly = hitlayer_ev[it];
-      const auto* v_rw = (fill_per_pad && it < static_cast<Int_t>(hitrow_ev->size())) ? &(*hitrow_ev)[it] : nullptr;
-      const Int_t nh = static_cast<Int_t>(v_de.size());
-      for (Int_t ih = 0; ih < nh; ++ih) {
-        if (ih >= static_cast<Int_t>(v_cs.size()) || ih >= static_cast<Int_t>(v_td.size()) ||
-            ih >= static_cast<Int_t>(v_ly.size()))
-          continue;
-        const Int_t cs = static_cast<Int_t>(v_cs[ih]);
-        if (cs < kClusterSizeMin || cs > kClusterSizeMax) continue;
-        const Int_t layer = static_cast<Int_t>(v_ly[ih]);
-        if (layer < 0 || layer >= tpc::NumOfLayersTPC) continue;
-        // Wiki: |α| < 0.1 (L0-9), |α| < 0.2 (L10-29); theta_diff ≡ α
-        const Double_t alpha_max = (layer <= 9) ? kAlphaInner : kAlphaOuter;
-        if (TMath::Abs(v_td[ih]) >= alpha_max) continue;
-        h_layers[layer]->Fill(v_de[ih]);
-        if (fill_per_pad && v_rw) {
-          if (ih >= static_cast<Int_t>(v_rw->size())) continue;
-          const Int_t row = static_cast<Int_t>((*v_rw)[ih]);
-          const Int_t n_row = static_cast<Int_t>(tpc::padParameter[layer][tpc::kNumOfPad]);
-          if (row < 0 || row >= n_row) continue;
-          const auto pad_key = std::make_pair(layer, row);
-          auto it_pad = h_pads.find(pad_key);
-          if (it_pad == h_pads.end()) {
-            TH1D* h_pad = new TH1D(Form("hTPCCl_dE_tree_L%02d_R%03d", layer, row),
-                                   Form("Cluster dE (tree) L%02d R%03d;Cluster dE;Counts", layer, row), 400, 0.,
-                                   800.);
-            h_pad->SetDirectory(nullptr);
-            h_pads[pad_key] = h_pad;
-          }
-          h_pads[pad_key]->Fill(v_de[ih]);
-        }
-        ++n_hits_filled;
-      }
-    }
-  }
-
-  std::cout << "Tree fill: " << n_hits_filled << " hits passed cuts (" << iev << " events) into "
-            << (fill_per_pad ? "pad+layer" : "layer") << " histograms." << std::endl;
-  std::cout << Form("  angle cut: |theta_diff| < %.4f (L0-9), < %.4f (L10+)", kAlphaInner, kAlphaOuter)
-            << std::endl;
-  if (fill_per_pad) {
-    std::cout << "  " << h_pads.size() << " pads with at least one hit." << std::endl;
-  }
-  return kTRUE;
-}
-
 static void PrintUsage(const char* prog) {
   std::cerr << "Usage: " << prog
             << " <input.root> <run> [--threshold N] [--target-mpv M] [--rebin N] [--de-source all|pion] "
-               "[--tree] [--layer] [--replace] [--ave] [--debug]\n"
+               "[--replace] [--ave] [--debug]\n"
+               "       " << prog << " <helix.root> <run> --tree [--threshold N] [--ave] [--debug]\n"
                "  <run>        run number (auto-detected from the tpc tree or file name if omitted)\n"
-               "  --threshold  minimum entries in a pad histogram to fit (default 20)\n"
+               "  --threshold  minimum entries in a pad histogram to fit (default 20; --tree: 80)\n"
                "  --target-mpv dE MPV the gains are scaled to (default 200)\n"
                "  --rebin      rebin factor of the dE histograms before fitting (default 1)\n"
                "  --de-source  pion: pion-tagged dE only (default), all: every cluster\n"
-               "  --tree       fill per-pad dE histograms from the tpc tree instead of the stored histograms\n"
-               "  --layer      with --tree: fit one dE histogram per layer and scale all its pads\n"
+               "  --tree       pion-beam Helix DST: pion sample from the tpc tree, dE per path normalized to\n"
+               "               1 GeV/c pions, pads equalized within the inner / outer layers, inner layers matched\n"
+               "               to the outer ones on the track dE/dx (see tpc_gain_tree.h)\n"
                "  --replace    write target/MPV as the gain instead of multiplying the current gain\n"
                "  --ave        fill unfitted pads from row neighbours / (layer, AsAd) median of fitted pads\n"
                "  --debug      do not write the parameter file"
@@ -550,7 +443,8 @@ int main(Int_t argc, char** argv) {
   Bool_t replace_mode = kFALSE;
   Bool_t use_neighbor_mean_fill = kFALSE;  // --ave: fill unfitted pads (tpc_fill::FillUnfittedPads)
   Bool_t use_tree = kFALSE;
-  Bool_t layer_fit = kFALSE;
+  Bool_t threshold_given = kFALSE;
+  Bool_t hist_option_given = kFALSE;  // an option of the histogram mode only
 
   Int_t arg_idx = 2;
   if (arg_idx < argc && TString(argv[arg_idx]).IsDigit()) {
@@ -568,22 +462,25 @@ int main(Int_t argc, char** argv) {
     }
     if (arg == "--target-mpv") {
       target_mpv = std::atof(argv[++i]);
+      hist_option_given = kTRUE;
     } else if (arg == "--threshold") {
       threshold = std::atoi(argv[++i]);
+      threshold_given = kTRUE;
     } else if (arg == "--rebin") {
       rebin = std::max(1, std::atoi(argv[++i]));
+      hist_option_given = kTRUE;
     } else if (arg == "--de-source") {
       de_source = argv[++i];
+      hist_option_given = kTRUE;
     } else if (arg == "--debug") {
       debug_mode = kTRUE;
     } else if (arg == "--replace") {
       replace_mode = kTRUE;
+      hist_option_given = kTRUE;
     } else if (arg == "--ave") {
       use_neighbor_mean_fill = kTRUE;
     } else if (arg == "--tree") {
       use_tree = kTRUE;
-    } else if (arg == "--layer") {
-      layer_fit = kTRUE;
     } else {
       std::cerr << "Error: unknown option " << arg << std::endl;
       PrintUsage(argv[0]);
@@ -591,14 +488,12 @@ int main(Int_t argc, char** argv) {
     }
   }
 
-  if (layer_fit && !use_tree) {
-    std::cerr << "Error: --layer requires --tree." << std::endl;
+  if (use_tree && hist_option_given) {
+    std::cerr << "Error: --target-mpv, --rebin, --de-source and --replace do not apply to --tree." << std::endl;
     PrintUsage(argv[0]);
     return EXIT_FAILURE;
   }
-
-  const Bool_t tree_layer_mode = use_tree && layer_fit;
-  const Bool_t tree_pad_mode = use_tree && !layer_fit;
+  if (use_tree && !threshold_given) threshold = 80;
 
   TFile* f = TFile::Open(input_root.Data());
   if (!f || f->IsZombie()) {
@@ -716,12 +611,8 @@ int main(Int_t argc, char** argv) {
   gStyle->SetOptStat(1111);
   gStyle->SetOptFit(1111);
   const TString img_dir = ana_helper::get_img_dir(OUTPUT_DIR, run_number);
-  TString pdf_path = img_dir + Form("/tpc_gain_calib_%s.pdf", de_source.Data());
-  if (tree_layer_mode) {
-    pdf_path = img_dir + Form("/tpc_gain_calib_%s_tree_layer.pdf", de_source.Data());
-  } else if (tree_pad_mode) {
-    pdf_path = img_dir + Form("/tpc_gain_calib_%s_tree.pdf", de_source.Data());
-  }
+  const TString pdf_path =
+      use_tree ? img_dir + "/tpc_gain_calib_tree.pdf" : img_dir + Form("/tpc_gain_calib_%s.pdf", de_source.Data());
 
   GainFitConfig fit_cfg;
   fit_cfg.target_mpv = target_mpv;
@@ -759,15 +650,10 @@ int main(Int_t argc, char** argv) {
   std::set<std::pair<Int_t, Int_t>> pads_filled_by_asad;
   std::map<Int_t, std::pair<Double_t, Int_t>> layer_mpv_stats;
   std::map<Int_t, std::pair<Double_t, Double_t>> layer_prefit_seed;
-  std::vector<TH1D*> h_tree_layers;
-  std::map<std::pair<Int_t, Int_t>, TH1D*> h_tree_pads;
 
-  if (tree_layer_mode) {
-    const Bool_t pion_tracks_only = (de_source == "pion");
-    std::vector<TH1D*> h_layers;
-    std::map<std::pair<Int_t, Int_t>, TH1D*> h_pads_unused;
-    Long64_t n_hits_filled = 0;
-    if (!FillTreeHists(f, pion_tracks_only, kFALSE, h_layers, h_pads_unused, n_hits_filled)) {
+  if (use_tree) {
+    tpc_gain_tree::Result tres;
+    if (!tpc_gain_tree::Run(f, threshold, tres)) {
       f->Close();
       delete hGainScale;
       delete hMPV;
@@ -776,108 +662,124 @@ int main(Int_t argc, char** argv) {
       delete canvas;
       return EXIT_FAILURE;
     }
+    Int_t n_fit_inner = 0, n_fit_outer = 0;
+    for (const auto& kv : tres.pad_mpv) (tpc_gain_tree::IsInner(kv.first.first) ? n_fit_inner : n_fit_outer)++;
+    std::cout << Form("Tree sample: dE/dx scale %.1f, tracks %lld read / %lld in the pion window, %lld hits used",
+                      tres.dedx_scale, tres.n_tracks_read, tres.n_tracks_pass, tres.n_hits_used)
+              << std::endl;
+    std::cout << Form("Pads fitted: inner %d (median MPV %.1f), outer %d (median MPV %.1f)", n_fit_inner,
+                      tres.median_mpv_inner, n_fit_outer, tres.median_mpv_outer)
+              << std::endl;
+    std::cout << Form("Inner/outer truncated mean on %lld tracks: current gain %.3f, pad factors %.3f -> inner scale "
+                      "%.4f -> %.3f",
+                      tres.n_ratio_tracks, tres.ratio_before, tres.ratio_pads, tres.inner_scale, tres.ratio_after)
+              << std::endl;
 
-    for (const auto& e : entries) {
-      if (e.is_comment || e.aty != 0 || e.p.size() < 2) continue;
-      if (tpc::IsPadOnCenterFrame(e.layer, e.row)) continue;
+    for (auto& entry : entries) {
+      if (entry.is_comment || entry.aty != 0 || entry.p.size() < 2) continue;
+      if (tpc::IsPadOnCenterFrame(entry.layer, entry.row)) continue;
       n_total_pads++;
-    }
-
-    for (Int_t layer = 0; layer < tpc::NumOfLayersTPC; ++layer) {
-      TH1D* h_layer = h_layers[layer];
-      if (!h_layer || h_layer->GetEntries() <= 0) {
-        std::cout << Form("Layer %02d (tree): no entries after cuts (hist skipped)", layer) << std::endl;
-        continue;
-      }
-
-      TH1D* h_layer_fit = h_layer;
-      TH1D* h_layer_rebinned = nullptr;
-      if (rebin > 1) {
-        h_layer_rebinned = (TH1D*)h_layer->Clone(Form("hTPCCl_dE_tree_rebin_L%02d", layer));
-        h_layer_rebinned->SetDirectory(nullptr);
-        h_layer_rebinned->Rebin(rebin);
-        h_layer_fit = h_layer_rebinned;
-      }
-
-      GainFitResult fres;
-      TF1* fFit = nullptr;
-      const Bool_t fit_ok =
-          FitLandauGain(h_layer_fit, layer, -1, fit_cfg, fres, &fFit, kFALSE /* tree: loose quality */);
-
-      if (fit_ok) {
-        std::cout << Form("Layer %02d (tree): MPV=%8.3f width=%6.3f chi2/ndf=%.3f scale=%8.4f n=%.0f", layer,
-                          fres.mpv, fres.width, fres.chi2ndf, fres.scale, h_layer_fit->GetEntries())
-                  << std::endl;
-        hGainScale->Fill(fres.scale);
-        hMPV->Fill(fres.mpv);
-        for (auto& entry : entries) {
-          if (entry.is_comment || entry.aty != 0 || entry.p.size() < 2) continue;
-          if (entry.layer != layer) continue;
-          if (tpc::IsPadOnCenterFrame(entry.layer, entry.row)) continue;
-          const Double_t old = entry.p[1];
-          entry.p[1] = replace_mode ? fres.scale : (old * fres.scale);
-          pads_updated.insert({entry.layer, entry.row});
-        }
-      } else {
-        std::cout << Form("Layer %02d (tree): fit failed (hist only) n=%.0f", layer, h_layer_fit->GetEntries())
+      const auto key = std::make_pair(entry.layer, entry.row);
+      const Bool_t fitted = tres.pad_mpv.count(key) > 0;
+      const Double_t factor = fitted ? tres.factor.at(key)
+                                     : (tpc_gain_tree::IsInner(entry.layer) ? tres.inner_scale : 1.0);
+      const Double_t old = entry.p[1];
+      entry.p[1] = old * factor;
+      if (fitted) {
+        pads_updated.insert(key);
+        hGainScale->Fill(factor);
+        hMPV->Fill(tres.pad_mpv.at(key));
+        std::cout << Form("Updated L=%2d R=%3d: MPV=%8.3f factor=%8.4f gain %10.6f -> %10.6f", entry.layer, entry.row,
+                          tres.pad_mpv.at(key), factor, old, entry.p[1])
                   << std::endl;
       }
-
-      if (ipad == 0) {
-        canvas->Clear();
-        canvas->Divide(nx, ny);
-      }
-      canvas->cd(++ipad);
-      h_layer_fit->SetTitle(Form("Layer %02d  n=%.0f%s", layer, h_layer_fit->GetEntries(),
-                                 fit_ok ? "" : "  (fit failed)"));
-      if (h_layer_rebinned) {
-        page_owned_draw.push_back(h_layer_rebinned);
-      }
-      DrawGainCalibPanel(h_layer_fit, fFit, fit_ok, fres.fit_min, fres.fit_max, fres.mpv, page_owned_draw);
-      if (fFit) delete fFit;
-      if (ipad >= nx * ny) {
-        canvas->Print(pdf_path);
-        for (TObject* obj : page_owned_draw) delete obj;
-        page_owned_draw.clear();
-        ipad = 0;
-      }
     }
-
     n_updated = static_cast<Int_t>(pads_updated.size());
 
-    for (TH1D* h : h_layers) {
-      if (h) delete h;
+    // QA: summary, pad MPV vs layer, inner/outer ratio, example pads
+    canvas->Clear();
+    canvas->Divide(2, 2);
+    canvas->cd(1);
+    {
+      TPaveText* pt = new TPaveText(0.02, 0.02, 0.98, 0.98, "NDC");
+      pt->SetTextAlign(12);
+      pt->SetFillColor(0);
+      pt->AddText(Form("Run %05d, --tree (pion sample)", run_number));
+      pt->AddText(Form("dE/dx scale / Bethe(pion): %.1f", tres.dedx_scale));
+      pt->AddText(Form("tracks: %lld read, %lld in pion window", tres.n_tracks_read, tres.n_tracks_pass));
+      pt->AddText(Form("hits used: %lld, threshold %d", tres.n_hits_used, threshold));
+      pt->AddText(Form("fitted pads: inner %d, outer %d", n_fit_inner, n_fit_outer));
+      pt->AddText(Form("median pad MPV: inner %.1f, outer %.1f", tres.median_mpv_inner, tres.median_mpv_outer));
+      pt->AddText(Form("inner/outer trunc. mean: %.3f -> %.3f -> %.3f", tres.ratio_before, tres.ratio_pads,
+                       tres.ratio_after));
+      pt->AddText(Form("inner scale: %.4f", tres.inner_scale));
+      pt->Draw();
+      page_owned_draw.push_back(pt);
     }
-    h_layers.clear();
+    canvas->cd(2);
+    TH2D* hMpvLayer = new TH2D("hGainTree_MpvLayer", "pad MPV (current gain);layer;MPV", 32, -0.5, 31.5, 100, 0, 400);
+    hMpvLayer->SetDirectory(nullptr);
+    for (const auto& kv : tres.pad_mpv) hMpvLayer->Fill(kv.first.first, kv.second);
+    hMpvLayer->Draw("COLZ");
+    page_owned_draw.push_back(hMpvLayer);
+    canvas->cd(3);
+    TH1D* hRb = new TH1D("hGainTree_RatioBefore", "inner/outer truncated mean (same track);ratio;tracks", 100, 0.4, 2.0);
+    TH1D* hRa = new TH1D("hGainTree_RatioAfter", "", 100, 0.4, 2.0);
+    hRb->SetDirectory(nullptr);
+    hRa->SetDirectory(nullptr);
+    for (Double_t r : tres.ratio_before_v) hRb->Fill(r);
+    for (Double_t r : tres.ratio_after_v) hRa->Fill(r);
+    hRa->SetLineColor(kRed);
+    hRb->Draw("HIST");
+    hRa->Draw("HIST SAME");
+    page_owned_draw.push_back(hRb);
+    page_owned_draw.push_back(hRa);
+    canvas->cd(4);
+    TH1D* hF = new TH1D("hGainTree_Factor", "factor of fitted pads;new/old gain;pads", 100, 0.4, 1.6);
+    hF->SetDirectory(nullptr);
+    for (const auto& kv : tres.pad_mpv) hF->Fill(tres.factor.at(kv.first));
+    hF->Draw("HIST");
+    page_owned_draw.push_back(hF);
+    canvas->Print(pdf_path);
+    for (TObject* obj : page_owned_draw) delete obj;
+    page_owned_draw.clear();
 
-    if (ipad > 0) {
-      canvas->Print(pdf_path);
-      for (TObject* obj : page_owned_draw) delete obj;
-      page_owned_draw.clear();
+    canvas->Clear();
+    canvas->Divide(nx, ny);
+    Int_t ipanel = 0;
+    for (Int_t layer = 0; layer < tpc::NumOfLayersTPC && ipanel < nx * ny; layer += 2) {
+      // the fitted pad with the most hits in this layer
+      const TH1D* best = nullptr;
+      Double_t best_mpv = 0.0;
+      for (const auto& kv : tres.pad_mpv) {
+        if (kv.first.first != layer) continue;
+        const TH1D* h = tres.pad_hist.at(kv.first);
+        if (!best || h->GetEntries() > best->GetEntries()) {
+          best = h;
+          best_mpv = kv.second;
+        }
+      }
+      if (!best) continue;
+      canvas->cd(++ipanel);
+      TH1D* hc = (TH1D*)best->Clone(Form("%s_draw", best->GetName()));
+      hc->SetDirectory(nullptr);
+      hc->Draw("HIST");
+      gPad->Update();
+      TLine* v = new TLine(best_mpv, gPad->GetUymin(), best_mpv, gPad->GetUymax());
+      v->SetLineColor(kRed);
+      v->Draw();
+      page_owned_draw.push_back(hc);
+      page_owned_draw.push_back(v);
     }
+    canvas->Print(pdf_path);
+    for (TObject* obj : page_owned_draw) delete obj;
+    page_owned_draw.clear();
   } else {
-  if (tree_pad_mode) {
-    const Bool_t pion_tracks_only = (de_source == "pion");
-    Long64_t n_hits_filled = 0;
-    if (!FillTreeHists(f, pion_tracks_only, kTRUE, h_tree_layers, h_tree_pads, n_hits_filled)) {
-      f->Close();
-      delete hGainScale;
-      delete hMPV;
-      delete hGainMap;
-      delete hDeltaGainMap;
-      delete canvas;
-      return EXIT_FAILURE;
-    }
-  }
-
   // Layer 合算 dE ヒストを先に fit して、pad fit の初期値 seed を作る。
   // Width は合算ヒストの方が太く出やすいので少し縮めて使う。
   for (Int_t layer = 0; layer < tpc::NumOfLayersTPC; ++layer) {
     TH1D* h_layer = nullptr;
-    if (tree_pad_mode) {
-      if (layer >= static_cast<Int_t>(h_tree_layers.size())) continue;
-      h_layer = h_tree_layers[layer];
-    } else {
+    {
       const TString hname_layer =
           (de_source == "pion")
               ? Form("TPCCl_dE_Pion_Layer%02d", layer)
@@ -936,11 +838,7 @@ int main(Int_t argc, char** argv) {
     n_total_pads++;
 
     TH1D* h = nullptr;
-    if (tree_pad_mode) {
-      const auto it_pad = h_tree_pads.find({entry.layer, entry.row});
-      if (it_pad == h_tree_pads.end()) continue;
-      h = it_pad->second;
-    } else {
+    {
       const TString hname =
           (de_source == "pion")
               ? Form("TPCCl_dE_Pion_Layer%02d_Row%03d", entry.layer, entry.row)
@@ -1112,13 +1010,7 @@ int main(Int_t argc, char** argv) {
     page_owned_draw.clear();
   }
 
-  if (tree_pad_mode) {
-    for (auto& kv : h_tree_pads) delete kv.second;
-    h_tree_pads.clear();
-    for (TH1D* hl : h_tree_layers) delete hl;
-    h_tree_layers.clear();
-  }
-  }  // end hist / tree-pad mode
+  }  // end histogram mode
 
   // --ave: fill pads not updated by the fit from fitted pads (tpc_fill::FillUnfittedPads): mean of row+-1 in
   // the same AsAd, otherwise median of the (layer, AsAd) group. Sources are fitted pads whose scale was not
