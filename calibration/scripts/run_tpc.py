@@ -32,6 +32,9 @@ run_tpc: TPC の較正のフロントエンド
 
   --ave（offset・gain）: fit で更新できなかったパッドを、同じ AsAd の両隣（row±1）の平均、
   両隣が揃わなければ同じ layer・AsAd の更新済みパッドの中央値で埋める（中心の枠は対象外）。
+  ただし offset --mode hit では、p0 ではなく fit したパッドの Δp0 を同じ規則で求め、
+  今の p0 に足す（BcOut で決まるのはビームの通るパッドだけなので、ほかのパッドは
+  trk で決めたパッドごとの差を残したまま全体だけずらす）。
 """
 
 import argparse
@@ -268,7 +271,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_mode(p, "hit / trk histogram set.")
     p.add_argument("--threshold", type=int, default=None, metavar="N",
                    help="Minimum entries in the fit histogram of a pad.")
-    p.add_argument("--ave", action="store_true", help="Fill pads without a fit (see the module help).")
+    p.add_argument("--ave", action="store_true",
+                   help="Fill pads without a fit; with --mode hit, shift them by the fitted pads' dp0 "
+                        "(see the module help).")
     add_debug(p)
 
     p = sub.add_parser("gain", help="Per-pad gain (tpc_gain_calib)")

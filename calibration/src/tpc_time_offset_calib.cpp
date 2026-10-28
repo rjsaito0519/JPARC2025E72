@@ -169,10 +169,15 @@ int main(Int_t argc, char** argv) {
         }
     }
 
-    TString hist_fmt = "TPCHit_ResY_Layer%02d_Row%03d";
-    if (mode == "trk" || mode == "track" || mode == "TPCTrk") {
-        hist_fmt = "TPCTrk_ResY_Layer%02d_Row%03d";
+    if (mode != "hit" && mode != "trk") {
+        std::cerr << "Error: --mode must be hit or trk (got " << mode << ")" << std::endl;
+        return EXIT_FAILURE;
     }
+    const TString hist_fmt = (mode == "trk") ? "TPCTrk_ResY_Layer%02d_Row%03d" : "TPCHit_ResY_Layer%02d_Row%03d";
+    // hit (BcOut reference) reaches only the pads on the beam path; --ave then shifts the other pads
+    // of the same AsAd by the fitted pads' Δp0 and keeps their pad-to-pad differences.
+    // trk reaches nearly all pads; --ave sets the few unfitted pads to the neighbours' p0.
+    const Bool_t fill_by_shift = (mode == "hit");
 
     // 1. Open ROOT file early to potentially detect run number
     TFile* f = TFile::Open(input_root.Data());
@@ -500,7 +505,8 @@ int main(Int_t argc, char** argv) {
 
                 if (chi2_ok && sigma >= sigma_floor && sigma < sigma_threshold &&
                     sigma < 0.85 * fit_range &&  // reject effectively flat (peak too broad)
-                    constant > 0.1 * bkg && constant > 1.0 * bkg && constant > 1.0 &&
+                    constant > bkg && constant > 1.0 &&
+                    mean >= fit_min && mean <= fit_max &&
                     mean_err < 1.0) {
 
                     if (entry.p.size() >= 2 && TMath::Abs(entry.p[1]) > 1e-10) {
@@ -551,13 +557,15 @@ int main(Int_t argc, char** argv) {
     }
 
     // --- 未更新パッド補完（tpc_fill::FillUnfittedPads: 同一 AsAd の隣接 row 平均 → layer+AsAd の中央値） ---
+    // fill_by_shift のときは p0 の代わりに Δp0 を埋め、それを今の p0 に足す。
     std::set<std::pair<Int_t, Int_t>> pads_filled;
     tpc_fill::FillResult fill_res;
     if (use_fill) {
         std::map<tpc_fill::PadKey, Double_t> fill_values;
         for (const auto& e : entries) {
             if (e.is_comment || e.aty != 2 || e.p.empty()) continue;
-            fill_values[{e.layer, e.row}] = e.p[0];
+            const auto key = std::make_pair(e.layer, e.row);
+            fill_values[key] = fill_by_shift ? (pads_updated.count(key) ? e.p[0] - ini_p0.at(key) : 0.0) : e.p[0];
         }
         const std::set<tpc_fill::PadKey> fill_excluded;
         auto consistent = [](Double_t v, const tpc_fill::GroupStat& g) {
@@ -573,13 +581,14 @@ int main(Int_t argc, char** argv) {
 
             const Bool_t is_neighbor = (fill_res.kind.at(key) == tpc_fill::FillKind::kNeighbor);
             const Double_t old_p0 = e.p[0];
-            e.p[0] = it->second;
+            e.p[0] = fill_by_shift ? old_p0 + it->second : it->second;
             pads_filled.insert(key);
 
             const Int_t bin_idx = tpc::GetPadId(e.layer, e.row) + 1;
             hSummary->SetBinContent(bin_idx, is_neighbor ? 70.0 : 40.0);  // 100:fit, 70:neighbor mean, 40:AsAd median
-            std::cout << Form("  %s fill: L=%2d R=%3d (ASAD=%2d) p0: %10.4f -> %10.4f",
-                              is_neighbor ? "neighbor-mean" : "asad-median", e.layer, e.row,
+            std::cout << Form("  %s %s: L=%2d R=%3d (ASAD=%2d) p0: %10.4f -> %10.4f",
+                              is_neighbor ? "neighbor-mean" : "asad-median", fill_by_shift ? "shift" : "fill",
+                              e.layer, e.row,
                               tpc::GetASADId(e.layer, e.row), old_p0, e.p[0]) << std::endl;
         }
     }
@@ -761,7 +770,7 @@ int main(Int_t argc, char** argv) {
 
     std::cout << "Done! Updated " << n_updated << " out of " << n_total_pads << " pads." << std::endl;
     if (use_fill) {
-        std::cout << "Filled pads: neighbor-mean " << fill_res.n_neighbor << ", asad-median "
+        std::cout << (fill_by_shift ? "Shifted pads (by fitted dp0): neighbor-mean " : "Filled pads: neighbor-mean ") << fill_res.n_neighbor << ", asad-median "
                   << fill_res.n_asad_median << ", left unfilled " << fill_res.n_left << std::endl;
     }
     if (debug_mode) {
