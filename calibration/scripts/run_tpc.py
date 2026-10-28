@@ -15,14 +15,16 @@ run_tpc: TPC の較正のフロントエンド
   --debug は解析と QA だけ行い param を書かない。
 
   入力 ROOT の命名（dst_create_runlist / create_runlist と揃える）:
-  - phase : run{NNNNN}_TPCHitBcOut.root（DATA_DIR symlink 可。旧 dst_tpchit_bcout_tracking_* も可）
+  - phase : hit は run{NNNNN}_TPCHitBcOut.root、trk は TPCTrk_ResY_vs_ClockTime_* を含む DST
   - offset / drift : hit は run{NNNNN}_TPCHitBcOut.root、trk は TPCTrk_ResY_* を含む DST
             （例 run{NNNNN}_TPCHelix.root）。複数 run の hadd も可（いちばん小さい run の TPCPRM を更新）
   - gain : TPCCl_dE_* を含む DST。--tree は Helix の tpc tree（run{NNNNN}_TPCHelix.root）
   - pos : run{NNNNN}_TPCHelix.root（inclusive helix DST）または hadd
 
-  - phase : tpc_phase_from_tpcbcout + tpc_phase_plot → param/TPCPHASE/TpcPhase_NNNNN.root、
-            TPCPRM の kCobo（aty=3）行を TpcPhase_CoboFallback から更新
+  - phase : tpc_phase_from_tpcbcout + tpc_phase_plot → TPCPRM の kCobo（aty=3）行 (A, t, w) を
+            TpcPhase_CoboFallback から更新。analyzer が使うのはこの行だけで、
+            param/TPCPHASE/TpcPhase_NNNNN.root は fit の記録と QA 用
+            （--debug では results/root/runNNNNN/runNNNNN_TpcPhase_debug.root に出す）
   - offset: tpc_time_offset_calib（パッドごとの時間オフセット、aty=2 の p0）
   - gain  : tpc_gain_calib（TPCCl_dE_* の Landau fit の MPV → aty=0 の gain）
   - drift : tpc_drift_calib（layer ごとの ResY vs Y 傾き → δv を aty=2 の p1 に加算）
@@ -315,9 +317,14 @@ def run_phase(args, bin_dir: Path) -> None:
     exe_fit = require_binary(bin_dir, "tpc_phase_from_tpcbcout")
     exe_plot = require_binary(bin_dir, "tpc_phase_plot")
 
-    phase_dir = config.PARAM_DIR / "TPCPHASE"
+    # --debug leaves param/TPCPHASE untouched and writes the fit result next to the other outputs.
+    if args.debug:
+        phase_dir = Path(config.OUTPUT_DIR) / "root" / f"run{run_num:05d}"
+        phase_path = phase_dir / f"run{run_num:05d}_TpcPhase_debug.root"
+    else:
+        phase_dir = config.PARAM_DIR / "TPCPHASE"
+        phase_path = phase_dir / f"TpcPhase_{run_num:05d}.root"
     phase_dir.mkdir(parents=True, exist_ok=True)
-    phase_path = phase_dir / f"TpcPhase_{run_num:05d}.root"
 
     cmd_fit = [str(exe_fit), str(bcout_path), str(phase_path), "--run", str(run_num), "--mode", args.mode,
                *opt("--rebin", args.rebin)]
@@ -326,7 +333,9 @@ def run_phase(args, bin_dir: Path) -> None:
     print(colored(">>> Step 1: TPC phase fit (tpc_phase_from_tpcbcout)", "cyan"))
     run_command(" ".join(cmd_fit))
 
-    cmd_plot = [str(exe_plot), str(bcout_path), "--phase", str(phase_path), "--mode", args.mode]
+    pdf_path = Path(config.OUTPUT_DIR) / "img" / f"run{run_num:05d}" / f"{bcout_path.stem}_TPC_Phase.pdf"
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd_plot = [str(exe_plot), str(bcout_path), "--phase", str(phase_path), "--mode", args.mode, str(pdf_path)]
     print(colored(">>> Step 2: TPC phase plot (tpc_phase_plot)", "cyan"))
     run_command(" ".join(cmd_plot))
 
@@ -335,7 +344,7 @@ def run_phase(args, bin_dir: Path) -> None:
 
     print(colored(f"\n[DONE] TPC phase calibration complete for run {run_num}.", "green", attrs=["bold"]))
     print(colored(f"  TpcPhase: {phase_path}", "green"))
-    print(colored(f"  PDF: {config.OUTPUT_DIR}/img/run{run_num:05d}/  (see C++ output)", "green"))
+    print(colored(f"  PDF: {pdf_path}", "green"))
 
 
 def run_offset(args, bin_dir: Path) -> None:

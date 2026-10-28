@@ -1,8 +1,7 @@
 //_____________________________________________________________________________
 /**
- * DstTPCBcOutTracking の出力 ROOT から、
- * TPC_ResidualY_BcOut_vs_ClockTime_CoBo%d_RawClock (補正前) と
- * TPC_ResidualY_BcOut_vs_ClockTime_CoBo%d (補正後) を描画し、PDF に出力する。
+ * TPCHit_ResY_vs_ClockTime_CoBo%d_RawClock (補正前) と
+ * TPCHit_ResY_vs_ClockTime_CoBo%d (補正後) を描画し、PDF に出力する（--mode trk では TPCTrk_*）。
  *
  * オプションで TpcPhase.root も読み込み、RawClock ヒストグラムに
  * フィット曲線を重ね描きする。
@@ -26,7 +25,7 @@
  *
  * オプション:
  *   --phase <file>  : TpcPhase.root を指定してフィット曲線を重ね描き
- *   --mode hit|trk  : ヒスト名の優先順（trk: TPCTrk_ResY_vs_ClockTime_... を先に、デフォルト hit）
+ *   --mode hit|trk  : hit は TPCHit_ResY_*、trk は TPCTrk_ResY_*（デフォルト hit）
  * ResY [mm] <-> Δclock [ns] の換算は drift velocity 0.055 mm/ns 固定。
  *
  * 出力 PDF 構成:
@@ -80,45 +79,29 @@ static const Int_t kCoboW = 1400, kCoboH = 760;
 static const Int_t kAsadW = 1900, kAsadH = 980;
 
 //_____________________________________________________________________________
-// 検索するヒストグラム名のフォーマット候補 (優先順)
+// ヒストグラム名（--mode ごとに 1 つ。hit: BcOut 基準のヒット、trk: TPC トラック基準）
 // フォーマット文字列には channel (%d または %02d) と suffix ("_RawClock" か empty) が入る
 static const std::vector<std::string> HIST_FMTS_COBO_HIT = {
-  "TPC_ResidualY_BcOut_vs_ClockTime_CoBo%d%s",
   "TPCHit_ResY_vs_ClockTime_CoBo%d%s",
-  "TPCCl_ResY_vs_ClockTime_CoBo%d%s",
-  "TPCTrk_ResY_vs_ClockTime_CoBo%d%s",
 };
 static const std::vector<std::string> HIST_FMTS_COBO_TRK = {
   "TPCTrk_ResY_vs_ClockTime_CoBo%d%s",
-  "TPC_ResidualY_BcOut_vs_ClockTime_CoBo%d%s",
-  "TPCHit_ResY_vs_ClockTime_CoBo%d%s",
-  "TPCCl_ResY_vs_ClockTime_CoBo%d%s",
 };
 
 static const std::vector<std::string> HIST_FMTS_ASAD_HIT = {
-  "TPC_ResidualY_BcOut_vs_ClockTime_Asad%02d%s",
   "TPCHit_ResY_vs_ClockTime_Asad%02d%s",
-  "TPCCl_ResY_vs_ClockTime_Asad%02d%s",
-  "TPCTrk_ResY_vs_ClockTime_Asad%02d%s",
 };
 static const std::vector<std::string> HIST_FMTS_ASAD_TRK = {
   "TPCTrk_ResY_vs_ClockTime_Asad%02d%s",
-  "TPC_ResidualY_BcOut_vs_ClockTime_Asad%02d%s",
-  "TPCHit_ResY_vs_ClockTime_Asad%02d%s",
-  "TPCCl_ResY_vs_ClockTime_Asad%02d%s",
 };
 
 static const std::vector<std::string>& HistFmtsCobo(const TString& mode)
 {
-  if (mode == "trk" || mode == "track" || mode == "TPCTrk")
-    return HIST_FMTS_COBO_TRK;
-  return HIST_FMTS_COBO_HIT;
+  return (mode == "trk") ? HIST_FMTS_COBO_TRK : HIST_FMTS_COBO_HIT;
 }
 static const std::vector<std::string>& HistFmtsAsad(const TString& mode)
 {
-  if (mode == "trk" || mode == "track" || mode == "TPCTrk")
-    return HIST_FMTS_ASAD_TRK;
-  return HIST_FMTS_ASAD_HIT;
+  return (mode == "trk") ? HIST_FMTS_ASAD_TRK : HIST_FMTS_ASAD_HIT;
 }
 //_____________________________________________________________________________
 static TH2D* GetHist(TFile* f, const TString& hname)
@@ -887,7 +870,7 @@ int main(int argc, char* argv[])
               << "  Draws 2D hists as PNG, embeds into PDF via 'convert' (ImageMagick).\n"
               << "  Options:\n"
               << "    --phase <file> : overlay fit curves from TpcPhase.root\n"
-              << "    --mode hit|trk : histogram name priority (default: hit)\n"
+              << "    --mode hit|trk : TPCHit_ResY_* or TPCTrk_ResY_* (default: hit)\n"
               << "  If convert is missing, PNGs are kept; merge with:\n"
               << "    convert <base>_page*.png <output.pdf>\n";
   };
@@ -990,6 +973,10 @@ int main(int argc, char* argv[])
     }
   }
 
+  if (mode != "hit" && mode != "trk") {
+    std::cerr << "Error: --mode must be hit or trk (got " << mode << ")\n";
+    return 1;
+  }
   const std::vector<std::string>& hist_fmts_cobo = HistFmtsCobo(mode);
   const std::vector<std::string>& hist_fmts_asad = HistFmtsAsad(mode);
   std::cout << "Histogram mode: " << mode << std::endl;
