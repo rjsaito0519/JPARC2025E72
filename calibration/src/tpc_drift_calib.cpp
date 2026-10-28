@@ -32,7 +32,8 @@
 
 namespace fs = std::filesystem;
 
-// Linear-fit / profile window on Y_BcOut [mm] (edges are unreliable).
+// Linear-fit / profile window on Y [mm] (hit: Y_BcOut, trk: TPC track Y). In the inner layers
+// (L5-8) the trk residual bends beyond |Y| ~ 40 mm, which a per-layer linear v cannot describe.
 static constexpr Double_t kFitRangeYMm = 40.0;
 // Reject nonsense gaus means (ResY hist is typically ±20 mm).
 static constexpr Double_t kMaxAbsMeanResYMm = 15.0;
@@ -175,13 +176,13 @@ int main(Int_t argc, char** argv)
     }
   }
 
-  const Bool_t prefer_trk =
-      (mode == "trk" || mode == "track" || mode == "TPCTrk");
-  const char* hist_fmts_hit_first[] = {"TPCHit_ResY_vs_Y_Layer%02d",
-                                       "TPCTrk_ResY_vs_Y_Layer%02d"};
-  const char* hist_fmts_trk_first[] = {"TPCTrk_ResY_vs_Y_Layer%02d",
-                                       "TPCHit_ResY_vs_Y_Layer%02d"};
-  const char** hist_fmts = prefer_trk ? hist_fmts_trk_first : hist_fmts_hit_first;
+  if (mode != "hit" && mode != "trk") {
+    std::cerr << "Error: --mode must be hit or trk (got " << mode << ")" << std::endl;
+    return EXIT_FAILURE;
+  }
+  const TString hist_fmt =
+      (mode == "trk") ? "TPCTrk_ResY_vs_Y_Layer%02d" : "TPCHit_ResY_vs_Y_Layer%02d";
+  const TString resolved_tag = mode;
 
   TFile* f = TFile::Open(input_root.Data());
   if (!f || f->IsZombie()) {
@@ -221,28 +222,18 @@ int main(Int_t argc, char** argv)
     return EXIT_FAILURE;
   }
 
-  TString hist_fmt;
-  TString resolved_tag;
-  for (Int_t ifmt = 0; ifmt < 2; ++ifmt) {
+  {
     Int_t nfound = 0;
     for (Int_t layer = 0; layer < tpc::NumOfLayersTPC; ++layer) {
-      TString hname = Form(hist_fmts[ifmt], layer);
-      if (f->Get(hname.Data()))
+      if (f->Get(Form(hist_fmt.Data(), layer)))
         ++nfound;
     }
-    if (nfound > 0) {
-      hist_fmt = hist_fmts[ifmt];
-      resolved_tag = TString(hist_fmts[ifmt]).Contains("TPCTrk") ? "trk" : "hit";
-      std::cout << "Histogram series: " << hist_fmt << " (found " << nfound
-                << " layers, mode prefer=" << mode << ")" << std::endl;
-      break;
+    if (nfound == 0) {
+      std::cerr << "Error: no " << hist_fmt << " histograms found." << std::endl;
+      f->Close();
+      return EXIT_FAILURE;
     }
-  }
-  if (hist_fmt.IsNull()) {
-    std::cerr << "Error: no TPCHit/TPCTrk ResY_vs_Y_Layer histograms found."
-              << std::endl;
-    f->Close();
-    return EXIT_FAILURE;
+    std::cout << "Histogram series: " << hist_fmt << " (found " << nfound << " layers)" << std::endl;
   }
 
   std::cout << "threshold (min hist entries) = " << threshold
