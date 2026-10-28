@@ -14,9 +14,13 @@ trk (tracking):
 
 recon = tmux split-pane myrun.py -> poll stat JSON + fresh ROOT -> add.sh/add_trk.sh
 
-Usage (recommended inside tmux session `tpc_iter`):
-  ./calibration/scripts/iterate_tpc_calib.py --max-iter 6
-  ./calibration/scripts/iterate_tpc_calib.py --max-iter 1 --dry-run
+recon = myrun.py (LSF) on the set's runlist -> hadd -T of the outputs (histograms only).
+Each calibration step's log, the TPCPRM / TpcPhase after it and its QA PDFs are kept in
+results/tpc_calib_iter/<set>_<start time>/.
+
+Usage (recommended inside tmux):
+  ./calibration/scripts/iterate_tpc_calib.py --set hsoff --max-iter 6
+  ./calibration/scripts/iterate_tpc_calib.py --set hson --max-iter 1 --dry-run
 """
 
 from __future__ import annotations
@@ -24,6 +28,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import time
@@ -48,8 +54,19 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 MYANALYSIS_ROOT = SCRIPT_DIR.parent.parent
 RUN_TPC = SCRIPT_DIR / "run_tpc.py"
 
-HIT_YML_REL = Path("runlist/dst_tpchit_bcout.yml")
-TRK_YML_REL = Path("runlist/dst_tpctracking.yml")
+# Run sets: runlists (relative to the analyzer dir) for the hit (TPCHitBcOut) and trk (TPC tracking) steps.
+SETS = {
+    "hsoff": {  # magnet off, 2594-2596; trk = DstTPCTracking (straight tracks)
+        "hit": Path("runmanager/runlist/scratch/tpciter_hsoff_hit.yml"),
+        "trk": Path("runmanager/runlist/scratch/tpciter_hsoff_trk.yml"),
+    },
+    "hson": {  # magnet on, 2601-2607; trk = DstTPCHelixTracking (run 2604)
+        "hit": Path("runmanager/runlist/scratch/tpciter_hson_hit.yml"),
+        "trk": Path("runmanager/runlist/scratch/tpciter_hson_trk.yml"),
+    },
+}
+HADD_DIR = Path("/group/had/sks/Users/sryuta/JPARC2025E72/scratch_root/tpciter")
+RUN_RE = re.compile(r"run(\d{5})")
 POLL_SEC = 30
 RECON_TIMEOUT_SEC = 7 * 24 * 3600  # 7 days
 MTIME_SLACK_SEC = 2.0  # clock / filesystem slack for ROOT mtime vs t0
@@ -90,20 +107,23 @@ class IterOrchestrator:
     def __init__(
         self,
         analyzer_dir: Path,
+        run_set: str,
         max_iter: int,
         dry_run: bool,
         poll_sec: int = POLL_SEC,
         recon_timeout_sec: int = RECON_TIMEOUT_SEC,
     ) -> None:
         self.analyzer_dir = analyzer_dir.resolve()
+        self.run_set = run_set
         self.max_iter = max_iter
         self.dry_run = dry_run
         self.poll_sec = poll_sec
         self.recon_timeout_sec = recon_timeout_sec
         self.group_root = self.analyzer_dir / "group_root"
         self.stat_dir = self.analyzer_dir / "runmanager" / "stat"
-        self.log_dir = MYANALYSIS_ROOT / "results" / "tpc_calib_iter"
+        self.log_dir = MYANALYSIS_ROOT / "results" / "tpc_calib_iter" / f"{run_set}_{datetime.now():%Y%m%d_%H%M}"
         self.log_path = self.log_dir / "iter_log.txt"
+        self.step_seq = 0
         self.discord = None
         webhook = os.environ.get(DISCORD_WEBHOOK_ENV, "").strip()
         if not dry_run and Discord is not None and webhook:
@@ -114,25 +134,25 @@ class IterOrchestrator:
                 flush=True,
             )
 
-        self.hit_yml = self.analyzer_dir / HIT_YML_REL
-        self.trk_yml = self.analyzer_dir / TRK_YML_REL
+        self.hit_yml = self.analyzer_dir / SETS[run_set]["hit"]
+        self.trk_yml = self.analyzer_dir / SETS[run_set]["trk"]
         self._validate_paths()
 
         self.hit_runs, self.hit_roots = self._parse_runlist(self.hit_yml)
         self.trk_runs, self.trk_roots = self._parse_runlist(self.trk_yml)
         if not self.hit_runs or not self.trk_runs:
             raise SystemExit("[Error] No active RUN entries in hit/trk yml")
+        # TPCPRM of the set = smallest hit run. The hadd outputs carry no tree, so run_tpc.py takes the run
+        # number from their file name; both kinds are named after this run so that they update the same TPCPRM
+        # (the hson trk step uses run 2604 only).
+        self.param_run = min(self.hit_runs)
 
     def _validate_paths(self) -> None:
-        for p in (self.hit_yml, self.trk_yml, RUN_TPC, self.group_root):
+        for p in (self.hit_yml, self.trk_yml, RUN_TPC):
             if not p.exists():
                 raise SystemExit(f"[Error] Missing path: {p}")
-        for name in ("add.sh", "add_trk.sh", "myrun"):
-            pass
-        if not (self.group_root / "add.sh").is_file():
-            raise SystemExit(f"[Error] Missing {self.group_root / 'add.sh'}")
-        if not (self.group_root / "add_trk.sh").is_file():
-            raise SystemExit(f"[Error] Missing {self.group_root / 'add_trk.sh'}")
+        if shutil.which("hadd") is None:
+            raise SystemExit("[Error] hadd not found in PATH")
         myrun = self.analyzer_dir / "runmanager" / "myrun.py"
         if not myrun.is_file():
             raise SystemExit(f"[Error] Missing {myrun}")
@@ -147,13 +167,13 @@ class IterOrchestrator:
         for key, cfg in run_block.items():
             if cfg is None:
                 continue
-            try:
-                run_num = int(key)
-            except (TypeError, ValueError):
-                continue
             root = cfg.get("root")
             if not root:
                 continue
+            m = RUN_RE.search(Path(root).name) or RUN_RE.search(str(key))
+            if not m:
+                continue
+            run_num = int(m.group(1))
             runs.append(run_num)
             roots.append(Path(root))
         return runs, roots
@@ -196,15 +216,10 @@ class IterOrchestrator:
         return self.hit_roots if kind == "hit" else self.trk_roots
 
     def hadd_root_for(self, kind: str) -> Path:
-        name = (
-            "htof_calib_hsoff.root"
-            if kind == "hit"
-            else "htof_calib_tracking_hsoff.root"
-        )
-        return self.group_root / name
+        return HADD_DIR / f"tpciter_{self.run_set}_{kind}_run{self.param_run:05d}.root"
 
-    def add_script_for(self, kind: str) -> Path:
-        return self.group_root / ("add.sh" if kind == "hit" else "add_trk.sh")
+    def tpcprm_path(self) -> Path:
+        return self.analyzer_dir / "param" / "TPCPRM" / "e72" / f"TPCParam_e72_run{self.param_run:05d}"
 
     def stat_json_for(self, yml: Path) -> Path:
         return self.stat_dir / f"{yml.stem}.json"
@@ -434,11 +449,17 @@ class IterOrchestrator:
         *,
         cwd: Optional[Path] = None,
         check: bool = True,
+        out_path: Optional[Path] = None,
     ) -> int:
         self.log("RUN: " + " ".join(cmd) + (f"  (cwd={cwd})" if cwd else ""))
         if self.dry_run:
             return 0
-        ret = subprocess.call(cmd, cwd=str(cwd) if cwd else None)
+        if out_path is not None:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with out_path.open("w", encoding="utf-8") as f:
+                ret = subprocess.call(cmd, cwd=str(cwd) if cwd else None, stdout=f, stderr=subprocess.STDOUT)
+        else:
+            ret = subprocess.call(cmd, cwd=str(cwd) if cwd else None)
         if check and ret != 0:
             self.fail(f"Command failed ({ret}): {' '.join(cmd)}")
         return ret
@@ -548,9 +569,10 @@ class IterOrchestrator:
             self.log(
                 f"Recon OK ({tag}): stat {snap.done_count}/{snap.expected_count} DONE"
             )
-        add = self.add_script_for(kind)
-        self.run_cmd(["bash", str(add)], cwd=self.group_root)
         hadd = self.hadd_root_for(kind)
+        hadd.parent.mkdir(parents=True, exist_ok=True)
+        # histograms only: the calibration tools read no trees (run numbers come from run_tpc.py)
+        self.run_cmd(["hadd", "-f", "-T", str(hadd), *map(str, self.roots_for(kind))])
         if not self.dry_run and not hadd.is_file():
             self.fail(f"hadd output missing: {hadd}")
         self.notify(f"[tpc_iter] recon+add done {tag}\n{hadd}")
@@ -567,9 +589,31 @@ class IterOrchestrator:
             mode,
             *extra,
         ]
+        self.step_seq += 1
+        label = f"{self.step_seq:03d}_i{outer_i:02d}_{kind}_{cmd}"
         self.notify(f"[tpc_iter] {cmd} start i={outer_i} kind={kind} mode={mode}")
-        self.run_cmd(opts, cwd=MYANALYSIS_ROOT)
+        t_start = time.time()
+        self.run_cmd(opts, cwd=MYANALYSIS_ROOT, out_path=self.log_dir / "steps" / f"{label}.log")
+        self.keep_step_outputs(label, t_start)
         self.notify(f"[tpc_iter] {cmd} done i={outer_i} kind={kind}")
+
+    def keep_step_outputs(self, label: str, t_start: float) -> None:
+        """Copy the TPCPRM / TpcPhase after this step and the QA PDFs it wrote."""
+        if self.dry_run:
+            return
+        dest = self.log_dir / "params" / label
+        dest.mkdir(parents=True, exist_ok=True)
+        prm = self.tpcprm_path()
+        if prm.is_file():
+            shutil.copy2(prm, dest / prm.name)
+        phase = self.analyzer_dir / "param" / "TPCPHASE" / f"TpcPhase_{self.param_run:05d}.root"
+        if phase.is_file() and phase.stat().st_mtime >= t_start - MTIME_SLACK_SEC:
+            shutil.copy2(phase, dest / phase.name)
+        img = MYANALYSIS_ROOT / "results" / "img" / f"run{self.param_run:05d}"
+        if img.is_dir():
+            for pdf in img.glob("*.pdf"):
+                if pdf.stat().st_mtime >= t_start - MTIME_SLACK_SEC:
+                    shutil.copy2(pdf, dest / pdf.name)
 
     def offset_opts(self, kind: str) -> list[str]:
         th = "100" if kind == "hit" else "50"
@@ -644,11 +688,12 @@ class IterOrchestrator:
             f"analyzer={self.analyzer_dir} dry_run={self.dry_run}"
         )
         self.log(
-            f"hit runs={self.hit_runs} trk runs={self.trk_runs} "
-            f"schedule=hit,hit,trk,..."
+            f"set={self.run_set} hit runs={self.hit_runs} trk runs={self.trk_runs} "
+            f"TPCPRM={self.tpcprm_path()} schedule=hit,hit,trk,..."
         )
         if not self.dry_run:
             self.log_dir.mkdir(parents=True, exist_ok=True)
+            self.keep_step_outputs("000_start", 0.0)
         for i in range(1, self.max_iter + 1):
             self.run_outer_iter(i)
         self.notify(
@@ -657,22 +702,15 @@ class IterOrchestrator:
 
 
 def resolve_analyzer_dir() -> Path:
-    # Prefer WORKDIR from hit yml if present under default analyzer path
-    default = Path("/home/had/sryuta/analyzer/JPARC2025E72")
-    yml = default / HIT_YML_REL
-    if yml.is_file():
-        with yml.open(encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        wd = data.get("WORKDIR")
-        if wd:
-            return Path(wd)
-    return default
+    return Path("/home/had/sryuta/analyzer/JPARC2025E72")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="TPC calib auto iterator (hit/trk 2:1; hit: phase/offset x2; trk: offset+drift, phase --debug)"
     )
+    parser.add_argument("--set", dest="run_set", choices=sorted(SETS), required=True,
+                        help="Run set: hsoff (2594-2596) or hson (2601-2607)")
     parser.add_argument(
         "--max-iter",
         type=int,
@@ -709,6 +747,7 @@ def main() -> None:
     analyzer = args.analyzer_dir or resolve_analyzer_dir()
     orch = IterOrchestrator(
         analyzer_dir=analyzer,
+        run_set=args.run_set,
         max_iter=args.max_iter,
         dry_run=args.dry_run,
         poll_sec=args.poll_sec,
