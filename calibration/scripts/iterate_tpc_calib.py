@@ -593,8 +593,12 @@ class IterOrchestrator:
         label = f"{self.step_seq:03d}_i{outer_i:02d}_{kind}_{cmd}"
         self.notify(f"[tpc_iter] {cmd} start i={outer_i} kind={kind} mode={mode}")
         t_start = time.time()
-        self.run_cmd(opts, cwd=MYANALYSIS_ROOT, out_path=self.log_dir / "steps" / f"{label}.log")
+        step_log = self.log_dir / "steps" / f"{label}.log"
+        self.run_cmd(opts, cwd=MYANALYSIS_ROOT, out_path=step_log)
         self.keep_step_outputs(label, t_start)
+        # an offset step that fits no pad means the per-pad histograms are missing from the DST
+        if not self.dry_run and cmd == "offset" and "Done! Updated 0 out of" in step_log.read_text(errors="replace"):
+            self.fail(f"offset fitted no pad ({label}); per-pad histograms missing in {root}?")
         self.notify(f"[tpc_iter] {cmd} done i={outer_i} kind={kind}")
 
     def keep_step_outputs(self, label: str, t_start: float) -> None:
