@@ -137,7 +137,7 @@ static Double_t MedianOf(std::vector<Double_t> vals)
 static void PrintUsage(const char* prog)
 {
   std::cerr << "Usage: " << prog
-            << " <input.root> [run_number] [--mode hit|trk] [--threshold N] [--debug]"
+            << " <input.root> [run_number] [--mode hit|trk] [--threshold N] [--max-dev F] [--debug]"
             << std::endl;
 }
 
@@ -155,6 +155,10 @@ int main(Int_t argc, char** argv)
   // Minimum total entries on layer 2D hist; below this keep vdrift unchanged.
   Int_t threshold = 100000;
   Bool_t debug_mode = kFALSE;
+  // --max-dev F: keep every fitted layer within (1 +- F) of the median drift velocity of the outer
+  // layers (>= kRefMinLayer); 0 = no limit.
+  Double_t max_dev = 0.0;
+  const Int_t kRefMinLayer = 15;
 
   Int_t arg_idx = 2;
   if (arg_idx < argc && TString(argv[arg_idx]).IsDigit()) {
@@ -167,6 +171,8 @@ int main(Int_t argc, char** argv)
       mode = argv[++i];
     } else if (arg == "--threshold" && i + 1 < argc) {
       threshold = std::atoi(argv[++i]);
+    } else if (arg == "--max-dev" && i + 1 < argc) {
+      max_dev = std::atof(argv[++i]);
     } else if (arg == "--debug") {
       debug_mode = kTRUE;
     } else {
@@ -562,6 +568,38 @@ int main(Int_t argc, char** argv)
                      layer, res.slope, res.slope_err, res.v_old, res.delta_v, res.v_new,
                      res.npoints, res.hist_entries)
               << std::endl;
+  }
+
+  if (max_dev > 0.0) {
+    std::vector<Double_t> vref_list;
+    for (const auto& r : results) {
+      if (r.layer < kRefMinLayer)
+        continue;
+      if (r.ok)
+        vref_list.push_back(r.v_new);
+      else if (layer_p1s.count(r.layer))
+        vref_list.push_back(MedianOf(layer_p1s[r.layer]));
+    }
+    if (!vref_list.empty()) {
+      const Double_t v_ref = MedianOf(vref_list);
+      const Double_t v_lo = v_ref * (1.0 - max_dev);
+      const Double_t v_hi = v_ref * (1.0 + max_dev);
+      std::cout << Form("Drift velocity limit: reference %.6g (layers >= %d), allowed [%.6g, %.6g]",
+                        v_ref, kRefMinLayer, v_lo, v_hi)
+                << std::endl;
+      for (auto& r : results) {
+        if (!r.ok)
+          continue;
+        const Double_t v_lim = TMath::Min(TMath::Max(r.v_new, v_lo), v_hi);
+        if (v_lim != r.v_new) {
+          std::cout << Form("  Layer %02d: vnew %.6g limited to %.6g", r.layer, r.v_new, v_lim)
+                    << std::endl;
+          r.v_new = v_lim;
+          r.delta_v = v_lim - r.v_old;
+          delta_by_layer[r.layer] = r.delta_v;
+        }
+      }
+    }
   }
 
   // Apply δv; center-frame X pads are forced to p0=0, p1=0.055 (not calibrated).

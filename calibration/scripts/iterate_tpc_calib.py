@@ -117,6 +117,7 @@ class IterOrchestrator:
         local_except_helix: bool = False,
         trk_ywin: float | None = None,
         trk_ywin_max_layer: int | None = None,
+        drift_max_dev: float | None = None,
     ) -> None:
         self.analyzer_dir = analyzer_dir.resolve()
         self.run_set = run_set
@@ -125,6 +126,7 @@ class IterOrchestrator:
         self.local_except_helix = local_except_helix
         self.trk_ywin = trk_ywin
         self.trk_ywin_max_layer = trk_ywin_max_layer
+        self.drift_max_dev = drift_max_dev
         self.max_iter = len(schedule) if schedule else max_iter
         self.dry_run = dry_run
         self.poll_sec = poll_sec
@@ -653,7 +655,8 @@ class IterOrchestrator:
         return opts
 
     def drift_opts(self, *, debug: bool = False) -> list[str]:
-        return ["--debug"] if debug else []
+        opts = ["--max-dev", str(self.drift_max_dev)] if self.drift_max_dev else []
+        return opts + (["--debug"] if debug else [])
 
     def run_hit_iter(self, outer_i: int) -> None:
         kind = "hit"
@@ -716,7 +719,7 @@ class IterOrchestrator:
             f"set={self.run_set} hit runs={self.hit_runs} trk runs={self.trk_runs} "
             f"TPCPRM={self.tpcprm_path()} schedule={','.join(self.schedule) if self.schedule else 'hit,hit,trk,...'} "
             f"hit_offset={'common' if self.hit_common else 'ave'} "
-            f"trk_ywin={self.trk_ywin}/{self.trk_ywin_max_layer}"
+            f"trk_ywin={self.trk_ywin}/{self.trk_ywin_max_layer} drift_max_dev={self.drift_max_dev}"
         )
         if not self.dry_run:
             self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -794,6 +797,12 @@ def main() -> None:
         default=None,
         help="apply --trk-ywin only to layers <= L",
     )
+    parser.add_argument(
+        "--drift-max-dev",
+        type=float,
+        default=None,
+        help="drift: keep each fitted layer within (1 +- F) of the outer-layer median velocity",
+    )
     args = parser.parse_args()
     if args.max_iter < 1:
         raise SystemExit("--max-iter must be >= 1")
@@ -816,6 +825,7 @@ def main() -> None:
         local_except_helix=args.local_except_helix,
         trk_ywin=args.trk_ywin,
         trk_ywin_max_layer=args.trk_ywin_max_layer,
+        drift_max_dev=args.drift_max_dev,
     )
     orch.run()
 

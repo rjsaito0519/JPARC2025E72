@@ -303,6 +303,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_mode(p, "Histogram preference (falls back to the other if missing).")
     p.add_argument("--threshold", type=int, default=None, metavar="N",
                    help="Minimum entries of a layer 2D histogram (default 100000).")
+    p.add_argument("--max-dev", type=float, default=None, metavar="F",
+                   help="Keep each fitted layer within (1 +- F) of the median drift velocity of layers >= 15.")
     add_debug(p)
 
     p = sub.add_parser("pos", help="TPCPOS pad-level fit (tpc_pos_calib)")
@@ -391,6 +393,7 @@ def run_drift(args, bin_dir: Path) -> None:
     run_num = require_run_number(input_root)
     exe = require_binary(bin_dir, "tpc_drift_calib")
     cmd = [str(exe), str(input_root), str(run_num), "--mode", args.mode, *opt("--threshold", args.threshold)]
+    cmd += opt("--max-dev", args.max_dev)
     cmd += ["--debug"] if args.debug else []
     print(colored(f">>> TPC drift calib (tpc_drift_calib), run={run_num}", "cyan"))
     run_command(" ".join(cmd))
