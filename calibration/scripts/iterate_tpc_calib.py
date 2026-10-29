@@ -112,10 +112,14 @@ class IterOrchestrator:
         dry_run: bool,
         poll_sec: int = POLL_SEC,
         recon_timeout_sec: int = RECON_TIMEOUT_SEC,
+        schedule: list[str] | None = None,
+        hit_common: bool = False,
     ) -> None:
         self.analyzer_dir = analyzer_dir.resolve()
         self.run_set = run_set
-        self.max_iter = max_iter
+        self.schedule = schedule
+        self.hit_common = hit_common
+        self.max_iter = len(schedule) if schedule else max_iter
         self.dry_run = dry_run
         self.poll_sec = poll_sec
         self.recon_timeout_sec = recon_timeout_sec
@@ -204,9 +208,10 @@ class IterOrchestrator:
         self.notify(f"[tpc_iter] STOP: {msg}")
         raise SystemExit(f"[Error] {msg}")
 
-    @staticmethod
-    def kind_for_outer(i: int) -> str:
-        """1-based outer index -> hit, hit, trk, ..."""
+    def kind_for_outer(self, i: int) -> str:
+        """1-based outer index -> the --schedule entry, else hit, hit, trk, ..."""
+        if self.schedule:
+            return self.schedule[i - 1]
         return "trk" if (i % 3 == 0) else "hit"
 
     def yml_for(self, kind: str) -> Path:
@@ -621,6 +626,8 @@ class IterOrchestrator:
 
     def offset_opts(self, kind: str) -> list[str]:
         th = "100" if kind == "hit" else "50"
+        if kind == "hit" and self.hit_common:
+            return ["--threshold", th, "--common"]
         return ["--threshold", th, "--ave"]
 
     def phase_opts(self, *, ofs_update: bool = False, debug: bool = False) -> list[str]:
@@ -693,7 +700,8 @@ class IterOrchestrator:
         )
         self.log(
             f"set={self.run_set} hit runs={self.hit_runs} trk runs={self.trk_runs} "
-            f"TPCPRM={self.tpcprm_path()} schedule=hit,hit,trk,..."
+            f"TPCPRM={self.tpcprm_path()} schedule={','.join(self.schedule) if self.schedule else 'hit,hit,trk,...'} "
+            f"hit_offset={'common' if self.hit_common else 'ave'}"
         )
         if not self.dry_run:
             self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -744,9 +752,24 @@ def main() -> None:
         default=RECON_TIMEOUT_SEC,
         help="Abort recon if stat/ROOT not ready within N seconds (0=disable)",
     )
+    parser.add_argument(
+        "--schedule",
+        default=None,
+        help="Comma-separated outer kinds, e.g. trk,hit,trk,hit (overrides --max-iter and the 2:1 pattern)",
+    )
+    parser.add_argument(
+        "--hit-common",
+        action="store_true",
+        help="hit offset with --common: BcOut sets only a common shift per AsAd, pad-to-pad differences come from trk",
+    )
     args = parser.parse_args()
     if args.max_iter < 1:
         raise SystemExit("--max-iter must be >= 1")
+    schedule = None
+    if args.schedule:
+        schedule = [s.strip() for s in args.schedule.split(",") if s.strip()]
+        if not schedule or any(s not in ("hit", "trk") for s in schedule):
+            raise SystemExit("--schedule entries must be hit or trk")
 
     analyzer = args.analyzer_dir or resolve_analyzer_dir()
     orch = IterOrchestrator(
@@ -756,6 +779,8 @@ def main() -> None:
         dry_run=args.dry_run,
         poll_sec=args.poll_sec,
         recon_timeout_sec=args.recon_timeout_sec,
+        schedule=schedule,
+        hit_common=args.hit_common,
     )
     orch.run()
 

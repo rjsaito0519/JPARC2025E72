@@ -275,6 +275,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ave", action="store_true",
                    help="Fill pads without a fit; with --mode hit, shift them by the fitted pads' dp0 "
                         "(see the module help).")
+    p.add_argument("--common", action="store_true",
+                   help="--mode hit only, instead of --ave: shift every pad of an AsAd by the median dp0 of its "
+                        "fitted pads (global median for AsAds with too few), keeping the pad-to-pad differences.")
     add_debug(p)
 
     p = sub.add_parser("gain", help="Per-pad gain (tpc_gain_calib)")
@@ -359,6 +362,7 @@ def run_offset(args, bin_dir: Path) -> None:
     exe = require_binary(bin_dir, "tpc_time_offset_calib")
     cmd = [str(exe), str(input_root), str(run_num), "--mode", args.mode, *opt("--threshold", args.threshold)]
     cmd += ["--ave"] if args.ave else []
+    cmd += ["--common"] if args.common else []
     cmd += ["--debug"] if args.debug else []
     print(colored(f">>> TPC time offset calib (tpc_time_offset_calib), run={run_num}", "cyan"))
     run_command(" ".join(cmd))

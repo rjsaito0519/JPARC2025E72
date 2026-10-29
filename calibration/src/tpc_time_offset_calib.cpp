@@ -114,7 +114,7 @@ static Int_t DominantLocalMaximumBin(const TH1D* h, Int_t sep) {
 // Main
 // ----------------------------------------------------------------------------
 static void PrintUsage(const char* prog) {
-    std::cerr << "Usage: " << prog << " <input.root> [run_number] [--mode hit|trk] [--threshold N] [--ave] [--debug]"
+    std::cerr << "Usage: " << prog << " <input.root> [run_number] [--mode hit|trk] [--threshold N] [--ave] [--common] [--debug]"
               << std::endl;
 }
 
@@ -146,6 +146,10 @@ int main(Int_t argc, char** argv) {
     TString mode = "hit";
     Bool_t debug_mode = kFALSE;
     Bool_t use_fill = kFALSE;
+    // --common (hit mode): BcOut sets only a common shift per AsAd (median Δp0 of its fitted pads, or the
+    // global median when an AsAd has too few); the pad-to-pad differences are left to the trk mode.
+    Bool_t common_only = kFALSE;
+    const Int_t common_min_pads = 5;
 
     Int_t arg_idx = 2;
     if (arg_idx < argc && TString(argv[arg_idx]).IsDigit()) {
@@ -160,6 +164,8 @@ int main(Int_t argc, char** argv) {
             mode = argv[++i];  // "hit" or "trk"
         } else if (arg == "--ave") {
             use_fill = kTRUE;
+        } else if (arg == "--common") {
+            common_only = kTRUE;
         } else if (arg == "--debug") {
             debug_mode = kTRUE;
         } else {
@@ -171,6 +177,10 @@ int main(Int_t argc, char** argv) {
 
     if (mode != "hit" && mode != "trk") {
         std::cerr << "Error: --mode must be hit or trk (got " << mode << ")" << std::endl;
+        return EXIT_FAILURE;
+    }
+    if (common_only && (mode != "hit" || use_fill)) {
+        std::cerr << "Error: --common is for --mode hit and replaces --ave" << std::endl;
         return EXIT_FAILURE;
     }
     const TString hist_fmt = (mode == "trk") ? "TPCTrk_ResY_Layer%02d_Row%03d" : "TPCHit_ResY_Layer%02d_Row%03d";
@@ -560,7 +570,44 @@ int main(Int_t argc, char** argv) {
     // fill_by_shift のときは p0 の代わりに Δp0 を埋め、それを今の p0 に足す。
     std::set<std::pair<Int_t, Int_t>> pads_filled;
     tpc_fill::FillResult fill_res;
-    if (use_fill) {
+    Int_t n_common_asad = 0, n_common_global = 0;
+    Double_t common_global = 0.0;
+    if (common_only) {
+        std::map<Int_t, std::vector<Double_t>> asad_dp;
+        std::vector<Double_t> all_fit_dp;
+        for (const auto& e : entries) {
+            if (e.is_comment || e.aty != 2 || e.p.empty()) continue;
+            const auto key = std::make_pair(e.layer, e.row);
+            if (!pads_updated.count(key)) continue;
+            const Double_t dp = e.p[0] - ini_p0.at(key);
+            asad_dp[tpc::GetASADId(e.layer, e.row)].push_back(dp);
+            all_fit_dp.push_back(dp);
+        }
+        auto median = [](std::vector<Double_t> v) {
+            if (v.empty()) return 0.0;
+            std::sort(v.begin(), v.end());
+            const size_t n = v.size();
+            return (n % 2) ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
+        };
+        common_global = median(all_fit_dp);
+        std::map<Int_t, Double_t> asad_shift;
+        for (const auto& kv : asad_dp) {
+            if (static_cast<Int_t>(kv.second.size()) >= common_min_pads) asad_shift[kv.first] = median(kv.second);
+        }
+        for (const auto& kv : asad_shift) {
+            std::cout << Form("  common shift: ASAD=%2d  dp0=%9.4f  (%zu fitted pads)", kv.first, kv.second,
+                              asad_dp.at(kv.first).size()) << std::endl;
+        }
+        for (auto& e : entries) {
+            if (e.is_comment || e.aty != 2 || e.p.empty()) continue;
+            const auto key = std::make_pair(e.layer, e.row);
+            const auto it = asad_shift.find(tpc::GetASADId(e.layer, e.row));
+            const Bool_t by_asad = (it != asad_shift.end());
+            e.p[0] = ini_p0.at(key) + (by_asad ? it->second : common_global);
+            if (!pads_updated.count(key)) pads_filled.insert(key);
+            if (by_asad) ++n_common_asad; else ++n_common_global;
+        }
+    } else if (use_fill) {
         std::map<tpc_fill::PadKey, Double_t> fill_values;
         for (const auto& e : entries) {
             if (e.is_comment || e.aty != 2 || e.p.empty()) continue;
@@ -772,6 +819,10 @@ int main(Int_t argc, char** argv) {
     if (use_fill) {
         std::cout << (fill_by_shift ? "Shifted pads (by fitted dp0): neighbor-mean " : "Filled pads: neighbor-mean ") << fill_res.n_neighbor << ", asad-median "
                   << fill_res.n_asad_median << ", left unfilled " << fill_res.n_left << std::endl;
+    }
+    if (common_only) {
+        std::cout << "Common shift only: " << n_common_asad << " pads by their AsAd median, " << n_common_global
+                  << " pads by the global median " << common_global << std::endl;
     }
     if (debug_mode) {
         std::cout << "Debug mode: parameter file was NOT updated." << std::endl;
