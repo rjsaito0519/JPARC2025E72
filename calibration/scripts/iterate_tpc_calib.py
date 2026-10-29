@@ -115,12 +115,16 @@ class IterOrchestrator:
         schedule: list[str] | None = None,
         hit_common: bool = False,
         local_except_helix: bool = False,
+        trk_ywin: float | None = None,
+        trk_ywin_max_layer: int | None = None,
     ) -> None:
         self.analyzer_dir = analyzer_dir.resolve()
         self.run_set = run_set
         self.schedule = schedule
         self.hit_common = hit_common
         self.local_except_helix = local_except_helix
+        self.trk_ywin = trk_ywin
+        self.trk_ywin_max_layer = trk_ywin_max_layer
         self.max_iter = len(schedule) if schedule else max_iter
         self.dry_run = dry_run
         self.poll_sec = poll_sec
@@ -633,7 +637,12 @@ class IterOrchestrator:
         th = "100" if kind == "hit" else "50"
         if kind == "hit" and self.hit_common:
             return ["--threshold", th, "--common"]
-        return ["--threshold", th, "--ave"]
+        opts = ["--threshold", th, "--ave"]
+        if kind == "trk" and self.trk_ywin:
+            opts += ["--ywin", str(self.trk_ywin)]
+            if self.trk_ywin_max_layer is not None:
+                opts += ["--ywin-max-layer", str(self.trk_ywin_max_layer)]
+        return opts
 
     def phase_opts(self, *, ofs_update: bool = False, debug: bool = False) -> list[str]:
         opts = ["--rebin", "2"]
@@ -706,7 +715,8 @@ class IterOrchestrator:
         self.log(
             f"set={self.run_set} hit runs={self.hit_runs} trk runs={self.trk_runs} "
             f"TPCPRM={self.tpcprm_path()} schedule={','.join(self.schedule) if self.schedule else 'hit,hit,trk,...'} "
-            f"hit_offset={'common' if self.hit_common else 'ave'}"
+            f"hit_offset={'common' if self.hit_common else 'ave'} "
+            f"trk_ywin={self.trk_ywin}/{self.trk_ywin_max_layer}"
         )
         if not self.dry_run:
             self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -772,6 +782,18 @@ def main() -> None:
         action="store_true",
         help="Run myrun with --local for every runlist except DstTPCHelixTracking ones (those stay on LSF)",
     )
+    parser.add_argument(
+        "--trk-ywin",
+        type=float,
+        default=None,
+        help="trk offset: fit only the hits with |y| < Y mm (the BcOut beam height), see run_tpc.py offset --ywin",
+    )
+    parser.add_argument(
+        "--trk-ywin-max-layer",
+        type=int,
+        default=None,
+        help="apply --trk-ywin only to layers <= L",
+    )
     args = parser.parse_args()
     if args.max_iter < 1:
         raise SystemExit("--max-iter must be >= 1")
@@ -792,6 +814,8 @@ def main() -> None:
         schedule=schedule,
         hit_common=args.hit_common,
         local_except_helix=args.local_except_helix,
+        trk_ywin=args.trk_ywin,
+        trk_ywin_max_layer=args.trk_ywin_max_layer,
     )
     orch.run()
 

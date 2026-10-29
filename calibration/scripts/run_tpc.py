@@ -278,6 +278,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--common", action="store_true",
                    help="--mode hit only, instead of --ave: shift every pad of an AsAd by the median dp0 of its "
                         "fitted pads (global median for AsAds with too few), keeping the pad-to-pad differences.")
+    p.add_argument("--ywin", type=float, default=None, metavar="Y",
+                   help="--mode trk only: fit only the hits with |y| < Y mm (the height of the BcOut beam).")
+    p.add_argument("--ywin-max-layer", type=int, default=None, metavar="L",
+                   help="Apply --ywin only to layers <= L.")
     add_debug(p)
 
     p = sub.add_parser("gain", help="Per-pad gain (tpc_gain_calib)")
@@ -363,6 +367,7 @@ def run_offset(args, bin_dir: Path) -> None:
     cmd = [str(exe), str(input_root), str(run_num), "--mode", args.mode, *opt("--threshold", args.threshold)]
     cmd += ["--ave"] if args.ave else []
     cmd += ["--common"] if args.common else []
+    cmd += [*opt("--ywin", args.ywin), *opt("--ywin-max-layer", args.ywin_max_layer)]
     cmd += ["--debug"] if args.debug else []
     print(colored(f">>> TPC time offset calib (tpc_time_offset_calib), run={run_num}", "cyan"))
     run_command(" ".join(cmd))

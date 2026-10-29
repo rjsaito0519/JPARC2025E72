@@ -27,6 +27,7 @@
 #include "tpc_pad_fill.h"
 
 #include <TCanvas.h>
+#include <TH2D.h>
 #include <TH2Poly.h>
 #include <TStyle.h>
 #include <TPaveText.h>
@@ -114,7 +115,7 @@ static Int_t DominantLocalMaximumBin(const TH1D* h, Int_t sep) {
 // Main
 // ----------------------------------------------------------------------------
 static void PrintUsage(const char* prog) {
-    std::cerr << "Usage: " << prog << " <input.root> [run_number] [--mode hit|trk] [--threshold N] [--ave] [--common] [--debug]"
+    std::cerr << "Usage: " << prog << " <input.root> [run_number] [--mode hit|trk] [--threshold N] [--ave] [--common] [--ywin Y] [--ywin-max-layer L] [--debug]"
               << std::endl;
 }
 
@@ -150,6 +151,11 @@ int main(Int_t argc, char** argv) {
     // global median when an AsAd has too few); the pad-to-pad differences are left to the trk mode.
     Bool_t common_only = kFALSE;
     const Int_t common_min_pads = 5;
+    // --ywin Y (trk mode): use only the hits with |y| < Y mm (projection of TPCTrk_ResY_vs_Y per pad), so the
+    // offsets refer to the same height as the BcOut beam; 0 uses the full TPCTrk_ResY.
+    Double_t ywin = 0.0;
+    // --ywin-max-layer L: the y window applies only to layers <= L (the outer layers keep the full y range).
+    Int_t ywin_max_layer = 99;
 
     Int_t arg_idx = 2;
     if (arg_idx < argc && TString(argv[arg_idx]).IsDigit()) {
@@ -166,6 +172,10 @@ int main(Int_t argc, char** argv) {
             use_fill = kTRUE;
         } else if (arg == "--common") {
             common_only = kTRUE;
+        } else if (arg == "--ywin" && i + 1 < argc) {
+            ywin = std::atof(argv[++i]);
+        } else if (arg == "--ywin-max-layer" && i + 1 < argc) {
+            ywin_max_layer = std::atoi(argv[++i]);
         } else if (arg == "--debug") {
             debug_mode = kTRUE;
         } else {
@@ -183,6 +193,10 @@ int main(Int_t argc, char** argv) {
         std::cerr << "Error: --common is for --mode hit and replaces --ave" << std::endl;
         return EXIT_FAILURE;
     }
+    if (ywin > 0.0 && mode != "trk") {
+        std::cerr << "Error: --ywin is for --mode trk" << std::endl;
+        return EXIT_FAILURE;
+    }
     const TString hist_fmt = (mode == "trk") ? "TPCTrk_ResY_Layer%02d_Row%03d" : "TPCHit_ResY_Layer%02d_Row%03d";
     // hit (BcOut reference) reaches only the pads on the beam path; --ave then shifts the other pads
     // of the same AsAd by the fitted pads' Δp0 and keeps their pad-to-pad differences.
@@ -195,6 +209,35 @@ int main(Int_t argc, char** argv) {
         std::cerr << "Error: cannot open " << input_root << std::endl;
         return EXIT_FAILURE;
     }
+
+    // Per-pad residual histogram; with --ywin the |y| < ywin projection of the ResY-vs-Y histogram.
+    // The returned histogram is owned by the caller when ywin > 0 (projection), by the file otherwise.
+    auto get_pad_hist = [&](Int_t layer, Int_t row) -> TH1D* {
+        if (ywin > 0.0 && layer <= ywin_max_layer) {
+            TString h2name = Form("TPCTrk_ResY_vs_Y_Layer%02d_Row%03d", layer, row);
+            TH2D* h2 = nullptr;
+            f->GetObject(h2name.Data(), h2);
+            if (!h2) {
+                TString h2name_pre = "hist/" + h2name;
+                f->GetObject(h2name_pre.Data(), h2);
+            }
+            if (!h2)
+                return nullptr;
+            const Int_t b0 = h2->GetXaxis()->FindFixBin(-ywin + 1e-6);
+            const Int_t b1 = h2->GetXaxis()->FindFixBin(ywin - 1e-6);
+            TH1D* p = h2->ProjectionY(Form("hYwin_L%02d_R%03d", layer, row), b0, b1);
+            p->SetDirectory(nullptr);
+            return p;
+        }
+        TString hname = Form(hist_fmt.Data(), layer, row);
+        TH1D* h = nullptr;
+        f->GetObject(hname.Data(), h);
+        if (!h) {
+            TString hname_pre = "hist/" + hname;
+            f->GetObject(hname_pre.Data(), h);
+        }
+        return h;
+    };
 
     // Auto-detect run number if not provided
     if (run_number < 0) {
@@ -357,21 +400,17 @@ int main(Int_t argc, char** argv) {
         const Int_t n_pad = static_cast<Int_t>(tpc::padParameter[layer][tpc::kNumOfPad]);
         TH1D* h_layer = nullptr;
         for (Int_t row = 0; row < n_pad; ++row) {
-            TString hname = Form(hist_fmt.Data(), layer, row);
-            TH1D* h_tmp = nullptr;
-            f->GetObject(hname.Data(), h_tmp);
-            if (!h_tmp) {
-                TString hname_pre = "hist/" + hname;
-                f->GetObject(hname_pre.Data(), h_tmp);
+            TH1D* h_tmp = get_pad_hist(layer, row);
+            if (h_tmp && h_tmp->GetEntries() > 0) {
+                if (!h_layer) {
+                    h_layer = (TH1D*)h_tmp->Clone(Form("hLayerPrefit_%02d", layer));
+                    h_layer->SetDirectory(nullptr);
+                } else {
+                    h_layer->Add(h_tmp);
+                }
             }
-            if (!h_tmp || h_tmp->GetEntries() <= 0)
-                continue;
-            if (!h_layer) {
-                h_layer = (TH1D*)h_tmp->Clone(Form("hLayerPrefit_%02d", layer));
-                h_layer->SetDirectory(nullptr);
-            } else {
-                h_layer->Add(h_tmp);
-            }
+            if (ywin > 0.0 && layer <= ywin_max_layer)
+                delete h_tmp;
         }
         if (!h_layer || h_layer->GetEntries() <= 0) {
             if (h_layer)
@@ -412,13 +451,7 @@ int main(Int_t argc, char** argv) {
         n_total_pads++;
 
         TString hname = Form(hist_fmt.Data(), entry.layer, entry.row);
-        
-        TH1D* h = nullptr;
-        f->GetObject(hname.Data(), h);
-        if (!h) {
-            TString hname_pre = "hist/" + hname;
-            f->GetObject(hname_pre.Data(), h);
-        }
+        TH1D* h = get_pad_hist(entry.layer, entry.row);
 
         if (h && h->GetEntries() > 0) {
             // 最も高い局所峰（二峰性で「でかい方」を優先。同高さは 0 に近い方）
