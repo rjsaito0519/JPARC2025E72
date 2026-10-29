@@ -114,11 +114,13 @@ class IterOrchestrator:
         recon_timeout_sec: int = RECON_TIMEOUT_SEC,
         schedule: list[str] | None = None,
         hit_common: bool = False,
+        local_except_helix: bool = False,
     ) -> None:
         self.analyzer_dir = analyzer_dir.resolve()
         self.run_set = run_set
         self.schedule = schedule
         self.hit_common = hit_common
+        self.local_except_helix = local_except_helix
         self.max_iter = len(schedule) if schedule else max_iter
         self.dry_run = dry_run
         self.poll_sec = poll_sec
@@ -475,7 +477,10 @@ class IterOrchestrator:
     def start_myrun(self, yml: Path, tag: str) -> Optional[MyrunHandle]:
         """Launch myrun (tmux pane or foreground). Caller polls completion."""
         yml_arg = str(yml)
-        cmd_line = f"cd {self.analyzer_dir} && ./runmanager/myrun.py {yml_arg}"
+        # Helix tracking is slow and stays on LSF; other decodes run on the login nodes with --local.
+        local = self.local_except_helix and "DstTPCHelixTracking" not in yml.read_text(encoding="utf-8")
+        local_arg = " --local" if local else ""
+        cmd_line = f"cd {self.analyzer_dir} && ./runmanager/myrun.py {yml_arg}{local_arg}"
 
         if self.dry_run:
             self.log(f"[dry-run] myrun: {cmd_line}")
@@ -487,7 +492,7 @@ class IterOrchestrator:
                 "(prefer: tmux new -s tpc_iter)"
             )
             ret = subprocess.call(
-                ["./runmanager/myrun.py", yml_arg],
+                ["./runmanager/myrun.py", yml_arg] + (["--local"] if local else []),
                 cwd=str(self.analyzer_dir),
             )
             return MyrunHandle(
@@ -762,6 +767,11 @@ def main() -> None:
         action="store_true",
         help="hit offset with --common: BcOut sets only a common shift per AsAd, pad-to-pad differences come from trk",
     )
+    parser.add_argument(
+        "--local-except-helix",
+        action="store_true",
+        help="Run myrun with --local for every runlist except DstTPCHelixTracking ones (those stay on LSF)",
+    )
     args = parser.parse_args()
     if args.max_iter < 1:
         raise SystemExit("--max-iter must be >= 1")
@@ -781,6 +791,7 @@ def main() -> None:
         recon_timeout_sec=args.recon_timeout_sec,
         schedule=schedule,
         hit_common=args.hit_common,
+        local_except_helix=args.local_except_helix,
     )
     orch.run()
 
