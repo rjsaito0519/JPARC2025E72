@@ -74,10 +74,12 @@ def mom_window(p_beam: float) -> float:
 
 def read_map(path: Path):
     with open(path) as f:
-        head = f.readline().split()
+        # lines starting with '#' are comments (allowed before the header and in the body)
+        lines = (ln for ln in f if ln.strip() and not ln.lstrip().startswith("#"))
+        head = next(lines).split()
         n_y, y0, dy = int(head[0]), float(head[1]), float(head[2])
         grid: Dict[Tuple[int, int], List[List[float]]] = {}
-        for line in f:
+        for line in lines:
             s = line.split()
             if len(s) != 5:
                 continue
