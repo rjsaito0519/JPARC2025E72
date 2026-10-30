@@ -300,7 +300,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_debug(p)
 
     p = sub.add_parser("drift", help="Drift velocity per layer (tpc_drift_calib)")
-    add_mode(p, "Histogram preference (falls back to the other if missing).")
+    add_mode(p, "hit / trk histogram set (no fallback: the tool stops if it is missing).")
     p.add_argument("--threshold", type=int, default=None, metavar="N",
                    help="Minimum entries of a layer 2D histogram (default 100000).")
     p.add_argument("--max-dev", type=float, default=None, metavar="F",
