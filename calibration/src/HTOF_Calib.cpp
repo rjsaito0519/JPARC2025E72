@@ -36,16 +36,14 @@ Config& conf = Config::getInstance();
 //
 // Inputs: one or more (Hodo, DST) pairs; several pairs merge runs (the run numbers of each pair
 // must agree). Output is labeled with the first pair's run number (representative run).
-// Option --exclude-beam: on the segments listed in param::htof_phc_exclude_beam_segs (params.h),
-// drop from the PHC samples the hits of events where a beam-like (beam or accidental) track was
-// matched to that segment, and drop beam-like tracks from the proton-excluded selection. Needed
-// when the beam is not a pion (e.g. K beam): beam particles then arrive at a different time from
-// the secondaries and pull the walk fit of the segments they cross.
-// Option --offset-pion-only: determine the absolute TOF offset from tracks with the dE/dx pion bit
-// only (pid == 1), leaving out the pion/kaon-ambiguous ones (pid == 3), which contain kaons when the
-// beam is a kaon beam. A segment with fewer than phc_tof_offset_min_n such tracks uses the full
-// pion-tagged sample instead (logged).
 //   Hodo = run{run}_Hodo.root (UserHodoscope), DST = run{run}_TPCHelixHTOF.root (DstTPCHelixHTOF)
+//
+// "Pion-bit-only" tracks below: non-beam, non-accidental vertex tracks with the dE/dx pion bit
+// only (pid == 1), a valid TOF and p_vtx >= tof_offset_min_p. The pion/kaon-ambiguous ones
+// (pid == 3) are left out (they contain kaons with a kaon beam); low-momentum pion-tagged tracks
+// contain electrons, which arrive early; above the cut the e/pi TOF difference is below the
+// resolution. E = t_beam + tof_calc_pi of such a track is the expected BH2 -> vertex -> HTOF time
+// of a pion (independent of HTOF parameters).
 //
 // - TDC : all-event HTOF_TDC_seg{i}{U|D|S} histograms of Hodo (summed over runs), ana_helper::tdc_fit.
 // - ADC : pedestal from the all-event HTOF_ADC_seg{i}{U|D|S} histograms of Hodo; MIP from the ADC of
@@ -56,24 +54,35 @@ Config& conf = Config::getInstance();
 //         whose strong side is near its MIP with a spike + hump model, ana_helper::htof_adc_fit_weak.
 // - PHC : U/D pairs from the Hodo "hodo" tree; dE recomputed from the raw ADC with the ADC fit above
 //         (dE = (adc - ped)/(mip - ped)), so no re-decoding is needed in between; times are the
-//         decode-time pre-PHC htof_time_{u|d}. U is fitted on Y_U = (time0 - t_U) + (time0 - ct_D)
-//         vs dE_U (mean time: the hit-position correlation cancels), D likewise, alternating; p2 of
-//         each side re-centred per channel (the mean time only fixes the U+D sum). Two stages:
-//         all hits, then the pion-tagged selection with p1 fixed to stage 1. ana_helper::htof_phc_fit.
-//         Function and parameters as the analyzer's HodoPHCParam Type1: ctime = time - p0/sqrt|dE-p1| + p2.
+//         decode-time pre-PHC htof_time_{u|d}. Function and parameters as the analyzer's
+//         HodoPHCParam Type1: ctime = time - p0/sqrt|dE-p1| + p2.
+//         Walk from the hits of pion-bit-only tracks with E subtracted: the mean time minus E
+//         depends on dE through the walk only (no TOF difference between particles); fitted with
+//         p0, p1 shared by U and D (fit_walk_shared), then p2 of each side re-centred per channel
+//         (the mean time only fixes the U+D sum). Segments with fewer than phc_tof_sub_min_n such
+//         hits (beam-window segments) use the two-stage fit instead: U fitted on
+//         Y_U = (time0 - t_U) + (time0 - ct_D) vs dE_U (mean time: the hit-position correlation
+//         cancels), D likewise, alternating; all hits, then the pion-tagged selection with p1 fixed
+//         to stage 1 (ana_helper::htof_phc_fit).
+//         On the segments in param::htof_phc_exclude_beam_segs (where the beam crosses HTOF), the
+//         hits of events with a beam-like track matched to that segment are left out of the PHC
+//         samples: their ADC can contain the beam particle (and a kaon beam arrives at a different
+//         time), which breaks the walk fit there.
 // - TOF offset: common shift of p2 (U and D) per segment so that
-//         dt_pi = (ct_mean - time0) - (t_beam + tof_calc_pi) has median 0 for non-beam pion-tagged
-//         tracks with a valid TOF and p_vtx >= tof_offset_min_p in the DST (expectation independent
-//         of HTOF parameters). Low-momentum pion-tagged tracks contain electrons, which arrive early
-//         and would pull the offset; above the cut the e/pi TOF difference is below the resolution.
+//         dt_pi = (ct_mean - time0) - E has median 0 for the pion-bit-only tracks. A segment with
+//         fewer than phc_tof_offset_min_n of them uses all non-beam pion-tagged (proton bit not
+//         set) tracks with a valid TOF and p_vtx >= tof_offset_min_p instead (logged).
 //
 // Outputs (read by update_param.py htofprm / htofphc):
 //   run{run}_HTOF_HDPRM_All.root : tdc_p0_val/err
 //   run{run}_HTOF_ADC_Pi.root    : adc_p0/p1_val/err, adc_flag/chi2/ndf, raw/selected histograms
-//   run{run}_HTOF_PHC_Pi.root    : p0/p1/p2_val/err (final), p*_all_val (stage 1), fit_lo/hi,
-//                                  tof_offset(_n), Y histograms, dt_pi after correction
+//   run{run}_HTOF_PHC_Pi.root    : p0/p1/p2_val/err (final), tof_sub (1: walk from pion-bit-only
+//                                  tracks, 0: two-stage fit), p*_all_val (two-stage: stage 1;
+//                                  otherwise = final), fit_lo/hi, tof_offset(_n), histograms
 //   run{run}_HTOF_Calib_Pi.pdf   : one page per segment, rows U/D/S, columns
-//     ADC raw | ADC selected | ADC close-up | TDC | PHC stage 1 | PHC final | dt_pi after correction
+//     ADC raw | ADC selected | ADC close-up | TDC | PHC before | PHC after | dt_pi after correction
+//     (PHC before/after: mean time - time0 - E before/after the walk; two-stage fit: Y of
+//     stage 1 / final)
 //     (S row, PHC columns: value summary)
 //
 // Exit status: 0 on success, 1 on any input/processing error (run_hodo.py relies on it so that
@@ -105,8 +114,56 @@ static Bool_t all_branches_found(TTreeReader& r,
     return ok;
 }
 
-Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, TString particle,
-               Bool_t exclude_beam, Bool_t offset_pion_only) {
+// Walk fit shared by U and D on the TOF-subtracted mean time:
+//   r = (mean time - time0) - E = p0 * 0.5 * (1/sqrt|dE_U - p1| + 1/sqrt|dE_D - p1|) - P2.
+// p1 is scanned; for each p1, (p0, P2) follow from linear least squares with p0 >= 0.
+// Hits beyond 3 x 1.4826 MAD of the residual are dropped; 4 iterations.
+static Bool_t fit_walk_shared(const std::vector<Double_t>& du, const std::vector<Double_t>& dd,
+                              const std::vector<Double_t>& r, std::size_t min_n,
+                              Double_t& p0, Double_t& p1, Double_t& P2, Int_t& n_used)
+{
+    const std::size_t n = r.size();
+    if (n < min_n) return kFALSE;
+    auto inv_sqrt = [](Double_t x) { return 1.0/std::sqrt(std::max(std::fabs(x), 1e-6)); };
+    std::vector<char> keep(n, 1);
+    p0 = 0.0; p1 = 0.0; P2 = 0.0;
+    for (Int_t iter = 0; iter < 4; iter++) {
+        Double_t best = std::numeric_limits<Double_t>::max();
+        for (Int_t ip = 0; ip <= 325; ip++) {
+            const Double_t q1 = -3.0 + 0.01*ip;  // -3.00 .. 0.25 MIP
+            Double_t sw = 0, sww = 0, sr = 0, swr = 0, srr = 0;
+            Long64_t m = 0;
+            for (std::size_t k = 0; k < n; k++) {
+                if (!keep[k]) continue;
+                const Double_t w = 0.5*(inv_sqrt(du[k] - q1) + inv_sqrt(dd[k] - q1));
+                sw += w; sww += w*w; sr += r[k]; swr += w*r[k]; srr += r[k]*r[k]; m++;
+            }
+            if (m < 2) continue;
+            const Double_t den = m*sww - sw*sw;
+            Double_t a = (den > 0) ? (m*swr - sw*sr)/den : 0.0;
+            Double_t c = (sr - a*sw)/m;
+            if (a < 0) { a = 0.0; c = sr/m; }
+            const Double_t chi = srr - 2*a*swr - 2*c*sr + a*a*sww + 2*a*c*sw + m*c*c;
+            if (chi < best) { best = chi; p0 = a; p1 = q1; P2 = -c; }
+        }
+        std::vector<Double_t> res(n);
+        std::vector<Double_t> sel;
+        for (std::size_t k = 0; k < n; k++) {
+            res[k] = r[k] - (p0*0.5*(inv_sqrt(du[k] - p1) + inv_sqrt(dd[k] - p1)) - P2);
+            if (keep[k]) sel.push_back(res[k]);
+        }
+        std::nth_element(sel.begin(), sel.begin() + sel.size()/2, sel.end());
+        const Double_t med = sel[sel.size()/2];
+        for (auto& x : sel) x = std::fabs(x - med);
+        std::nth_element(sel.begin(), sel.begin() + sel.size()/2, sel.end());
+        const Double_t mad = 1.4826*sel[sel.size()/2];
+        for (std::size_t k = 0; k < n; k++) keep[k] = (std::fabs(res[k] - med) < 3.0*mad);
+    }
+    n_used = static_cast<Int_t>(std::count(keep.begin(), keep.end(), 1));
+    return kTRUE;
+}
+
+Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, TString particle) {
     gROOT->GetColor(kBlue)->SetRGB(0.12156862745098039, 0.4666666666666667, 0.7058823529411765);
     gROOT->GetColor(kOrange)->SetRGB(1.0, 0.4980392156862745, 0.054901960784313725);
     gROOT->GetColor(kGreen)->SetRGB(44.0/256, 160.0/256, 44.0/256);
@@ -238,10 +295,13 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
     // per run: event_number -> bitmask of HTOF segments matched to a pion-tagged,
     // non-proton TPC track with a vertex (used to select the PHC hits below)
     std::vector<std::unordered_map<UInt_t, ULong64_t>> sel_seg_mask(n_runs);
-    // per run: event_number -> bitmask of HTOF segments matched to a beam-like track (--exclude-beam)
+    // per run: event_number -> bitmask of the segments in param::htof_phc_exclude_beam_segs that
+    // a beam-like (beam or accidental) track was matched to; their hits are dropped from the PHC
+    // samples (the ADC of such a hit can contain the beam particle, and with a non-pion beam the
+    // beam particle also arrives at a different time from the secondaries)
     std::vector<std::unordered_map<UInt_t, ULong64_t>> beam_seg_mask(n_runs);
     Long64_t n_beam_masked = 0;
-    ULong64_t beam_mask_segs = 0;  // segments where beam hits are masked
+    ULong64_t beam_mask_segs = 0;
     for (const Int_t s : param::htof_phc_exclude_beam_segs)
         if (s >= 0 && s < n_seg) beam_mask_segs |= (1ULL << s);
     // (ADC U, ADC D) of the ADC-sample tracks on the beam-window short segments 1-4 (weak-side refit)
@@ -252,7 +312,7 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
     // for a pion (independent of HTOF params).
     // Used for the absolute TOF offset (see the PHC section).
     std::vector<std::unordered_map<UInt_t, std::map<Int_t, Float_t>>> pi_expect(n_runs);
-    // same, from tracks with the pion bit only (pid == 1; --offset-pion-only)
+    // same, from pion-bit-only tracks (pid == 1)
     std::vector<std::unordered_map<UInt_t, std::map<Int_t, Float_t>>> pi_expect_p1(n_runs);
     const Double_t tof_offset_min_p = 0.20; // [GeV/c]
     Long64_t n_entries = 0, n_matched = 0, n_pi_htof = 0, n_pi_htof_novtx = 0, n_pi_htof_novtx_rej = 0, n_pi_tof = 0;
@@ -309,7 +369,7 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
                     seg_hit = (seg_cl >= 0) ? seg_cl : seg_extrap;
                 n_matched++;
                 // segments a beam-like track went through: extrapolated and matched cluster
-                if (exclude_beam && ((it < is_beam->size() && (*is_beam)[it]) || (it < is_accidental->size() && (*is_accidental)[it]))) {
+                if ((it < is_beam->size() && (*is_beam)[it]) || (it < is_accidental->size() && (*is_accidental)[it])) {
                     auto& bm = beam_seg_mask[k][*event_number];
                     bm |= (1ULL << seg_extrap) & beam_mask_segs;
                     if (seg_cl >= 0)
@@ -338,7 +398,7 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
                 }
                 const Bool_t beamlike = (it < is_beam->size() && (*is_beam)[it]) || (it < is_accidental->size() && (*is_accidental)[it]);
                 // PHC looks up by hodo hit_seg: key selection / expected TOF on match_hit_seg.
-                if (has_vtx && !(exclude_beam && beamlike && (beam_mask_segs & (1ULL << seg_hit))))
+                if (has_vtx && !(beamlike && (beam_mask_segs & (1ULL << seg_hit))))
                     sel_seg_mask[k][*event_number] |= (1ULL << seg_hit);
                 if (has_vtx && !beamlike && it < dt_pi->size() && !TMath::IsNaN((*dt_pi)[it])
                     && it < p_vtx->size() && (*p_vtx)[it] >= tof_offset_min_p) {
@@ -347,7 +407,7 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
                         m[seg_hit] = static_cast<Float_t>((*t_beam)[it] + (*tof_calc_pi)[it]);
                         n_pi_tof++;
                     }
-                    if (offset_pion_only && v_pid[it] == 1) {
+                    if (v_pid[it] == 1) {
                         auto& m1 = pi_expect_p1[k][*event_number];
                         if (!m1.count(seg_hit))
                             m1[seg_hit] = static_cast<Float_t>((*t_beam)[it] + (*tof_calc_pi)[it]);
@@ -439,7 +499,7 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
     // then D likewise, alternating phc_n_alt times. Y_U vs dE_U then follows the U walk
     // (same Type1 function and parameter meaning as a per-channel fit).
     // yu = time0 - t_U, yd = time0 - t_D; E = expected pion BH2->vtx->HTOF time (NaN if none)
-    // E1: E from a pion-bit-only track (pid == 1), NaN if none or without --offset-pion-only
+    // E1: E from a pion-bit-only track (pid == 1), NaN if none
     struct PhcPair { Float_t yu, yd, du, dd, E; Bool_t sel; Float_t E1; };
     std::vector<std::vector<PhcPair>> phc_pairs(n_seg);
     Long64_t n_hodo_events = 0, n_pair_all = 0, n_pair_sel = 0;
@@ -471,7 +531,7 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
             for (std::size_t ih = 0; ih < v_hit_seg.size(); ih++) {
                 const Int_t seg = static_cast<Int_t>(std::lround(v_hit_seg[ih]));
                 if (seg < 0 || seg >= n_seg) continue;
-                if (bmask & (1ULL << seg)) { n_beam_masked++; continue; }  // empty unless --exclude-beam
+                if (bmask & (1ULL << seg)) { n_beam_masked++; continue; }
                 const Bool_t is_sel = (mask & (1ULL << seg)); // segment matched to such a track
                 // raw ADC of the same segment (adc_u/d are indexed like htof_raw_seg)
                 Int_t ir = -1;
@@ -512,10 +572,9 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
             }
         }
     }
-    if (exclude_beam)
-        std::cout << "#D HTOF_Calib: --exclude-beam: " << n_beam_masked
-                  << " hits on segments matched to beam-like tracks excluded from the PHC samples"
-                  << " (segments in param::htof_phc_exclude_beam_segs)" << std::endl;
+    std::cout << "#D HTOF_Calib: " << n_beam_masked
+              << " hits on segments matched to beam-like tracks excluded from the PHC samples"
+              << " (segments in param::htof_phc_exclude_beam_segs)" << std::endl;
     std::cout << "#D HTOF_Calib: " << n_hodo_events << " hodo events, "
               << n_pair_all << " U/D-paired (hit x multi-hit) PHC entries for all hits, "
               << n_pair_sel << " for the proton-excluded selection" << std::endl;
@@ -584,13 +643,63 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
     std::vector<Double_t> phc_tof_offset(n_seg, 0.0);
     std::vector<Int_t> phc_tof_offset_n(n_seg, 0);
     const std::size_t phc_tof_offset_min_n = 100;
+    // minimum pion-bit-only PHC entries of a segment for the walk with E subtracted
+    const std::size_t phc_tof_sub_min_n = 200;
+    std::vector<Int_t> phc_tof_sub(n_seg, 0);
     std::vector<FitResult> phc_result_all[2], phc_result[2];
     TCanvas* c_phc_tmp = new TCanvas("c_phc_tmp", "", 400, 300);
     for (Int_t i = 0; i < n_seg; i++) {
         std::vector<Double_t> p_cur[2] = { {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0} };  // start: no correction
         FitResult r_stage[2][2];  // [stage][side]
         TH2D* r_hist[2] = { nullptr, nullptr };
-        for (Int_t stage = 0; stage < 2; stage++) {
+        // walk from pion-bit-only tracks with E subtracted (p0, p1 shared by U and D);
+        // segments with too few such hits use the two stages below
+        Bool_t tof_sub_done = kFALSE;
+        {
+            std::vector<Double_t> v_du, v_dd, v_r;
+            for (const auto& p : phc_pairs[i]) {
+                if (std::isnan(p.E1)) continue;
+                v_du.push_back(p.du); v_dd.push_back(p.dd); v_r.push_back(-0.5*(p.yu + p.yd) - p.E1);
+            }
+            Double_t q0 = 0, q1 = 0, qP2 = 0; Int_t n_used = 0;
+            if (fit_walk_shared(v_du, v_dd, v_r, phc_tof_sub_min_n, q0, q1, qP2, n_used)) {
+                p_cur[0] = { q0, q1, 0.0 };
+                p_cur[1] = { q0, q1, 0.0 };
+                recenter(i, kTRUE, p_cur);  // U/D balance of p2 (common shift fixed below)
+                for (Int_t s = 0; s < 2; s++) {
+                    FitResult fr;
+                    fr.par = { p_cur[s][0], p_cur[s][1], p_cur[s][2] };
+                    fr.err = { 0.0, 0.0, 0.0 };
+                    fr.chi_square = 0.0; fr.ndf = n_used; fr.migrad_stats = 0;
+                    const auto& vde = (s == 0) ? v_du : v_dd;  // fit range = dE range of the sample
+                    fr.additional = { *std::min_element(vde.begin(), vde.end()), *std::max_element(vde.begin(), vde.end()) };
+                    r_stage[0][s] = fr; r_stage[1][s] = fr;
+                    // QA: TOF-subtracted mean time vs dE of this side, before (stage-1 slot) and after (final slot) the walk
+                    TH2D* hb = new TH2D(Form("HTOF_seg%d%s_PHC_R_before", i, side_name[s]),
+                                        Form("HTOF seg%d (mean time - time0) - E_{#pi} vs #DeltaE_{%s};#DeltaE_{%s} [MIP];[ns]", i, side_name[s], side_name[s]),
+                                        h_tmpl->GetNbinsX(), h_tmpl->GetXaxis()->GetXmin(), h_tmpl->GetXaxis()->GetXmax(), 200, -5.0, 5.0);
+                    TH2D* ha = new TH2D(Form("HTOF_seg%d%s_PHC_R_after", i, side_name[s]),
+                                        Form("HTOF seg%d residual after the shared walk vs #DeltaE_{%s};#DeltaE_{%s} [MIP];[ns]", i, side_name[s], side_name[s]),
+                                        h_tmpl->GetNbinsX(), h_tmpl->GetXaxis()->GetXmin(), h_tmpl->GetXaxis()->GetXmax(), 200, -5.0, 5.0);
+                    hb->SetDirectory(nullptr); ha->SetDirectory(nullptr);
+                    for (std::size_t k = 0; k < v_r.size(); k++) {
+                        const Double_t de = (s == 0) ? v_du[k] : v_dd[k];
+                        const Double_t wk = 0.5*(q0/std::sqrt(std::max(std::fabs(v_du[k] - q1), 1e-6))
+                                               + q0/std::sqrt(std::max(std::fabs(v_dd[k] - q1), 1e-6)));
+                        hb->Fill(de, v_r[k]); ha->Fill(de, v_r[k] - wk + qP2);
+                    }
+                    c_seg[i]->cd(cols*s + 5); hb->Draw("colz");
+                    c_seg[i]->cd(cols*s + 6); ha->Draw("colz");
+                    h_phc_all[s][i] = hb; h_phc[s][i] = ha;
+                }
+                tof_sub_done = kTRUE;
+            } else {
+                std::cout << "#D HTOF_Calib: seg" << i << ": " << v_r.size()
+                          << " pion-bit-only TOF entries (< " << phc_tof_sub_min_n << "), PHC from the two-stage fit" << std::endl;
+            }
+        }
+        phc_tof_sub[i] = tof_sub_done ? 1 : 0;
+        for (Int_t stage = 0; stage < 2 && !tof_sub_done; stage++) {
             const Bool_t sel_only = (stage == 1);
             for (Int_t it = 0; it < phc_n_alt; it++) {
                 const Bool_t last = (it == phc_n_alt - 1);
@@ -632,8 +741,8 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
                 }
                 return r;
             };
-            std::vector<Double_t> r = residuals(offset_pion_only);
-            if (offset_pion_only && r.size() < phc_tof_offset_min_n) {
+            std::vector<Double_t> r = residuals(kTRUE);
+            if (r.size() < phc_tof_offset_min_n) {
                 std::cout << "#D HTOF_Calib: seg" << i << ": only " << r.size()
                           << " pion-bit-only TOF entries, absolute offset from the full pion-tagged sample" << std::endl;
                 r = residuals(kFALSE);
@@ -674,12 +783,16 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
         for (Int_t s = 0; s < 2; s++) {
             const FitResult& ra = phc_result_all[s][i];
             const FitResult& r  = phc_result[s][i];
-            tp.DrawLatex(0.05, 0.76 - 0.30*s, Form("%s all : %.3f %.3f %.3f", side_name[s], ra.par[0], ra.par[1], ra.par[2]));
+            if (!phc_tof_sub[i])
+                tp.DrawLatex(0.05, 0.76 - 0.30*s, Form("%s all : %.3f %.3f %.3f", side_name[s], ra.par[0], ra.par[1], ra.par[2]));
             tp.DrawLatex(0.05, 0.66 - 0.30*s, Form("%s final: %.3f %.3f %.3f", side_name[s], r.par[0], r.par[1], r.par[2]));
         }
         tp.DrawLatex(0.05, 0.22, Form("TOF offset (pion dt=0): %+.3f ns from %d entries", phc_tof_offset[i], phc_tof_offset_n[i]));
-        tp.DrawLatex(0.05, 0.12, Form("final: fix mask %d; range thr. %.1f%% / %.1f%%; %d U/D alternations",
-                                      phc_fix_mask, 100*phc_dense_ratio_all, 100*phc_dense_ratio_sel, phc_n_alt));
+        if (phc_tof_sub[i])
+            tp.DrawLatex(0.05, 0.12, Form("walk: pion-bit-only, E subtracted, p0/p1 shared by U/D (%d hits)", phc_result[0][i].ndf));
+        else
+            tp.DrawLatex(0.05, 0.12, Form("two-stage: fix mask %d; range thr. %.1f%% / %.1f%%; %d U/D alternations",
+                                          phc_fix_mask, 100*phc_dense_ratio_all, 100*phc_dense_ratio_sel, phc_n_alt));
     }
     delete c_phc_tmp;
 
@@ -845,13 +958,14 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
         TTree* tree = new TTree("tree", "");
         Int_t ch;
         std::vector<Double_t> p0_val, p1_val, p2_val, p0_err, p1_err, p2_err;
-        // stage-1 (all hits) values, for reference only (update_param.py reads p*_val)
+        // two-stage fit: stage-1 (all hits) values, for reference only (update_param.py reads p*_val)
         std::vector<Double_t> p0_all_val, p1_all_val, p2_all_val;
         // final-fit dE range [MIP]
         std::vector<Double_t> fit_lo, fit_hi;
         // absolute TOF offset included in p2 (same for U and D) and its pion sample size
-        Double_t tof_offset; Int_t tof_offset_n;
+        Double_t tof_offset; Int_t tof_offset_n, tof_sub;
         tree->Branch("ch", &ch, "ch/I");
+        tree->Branch("tof_sub", &tof_sub, "tof_sub/I");
         tree->Branch("p0_val", &p0_val);
         tree->Branch("p1_val", &p1_val);
         tree->Branch("p2_val", &p2_val);
@@ -870,7 +984,7 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
             p0_val.clear(); p1_val.clear(); p2_val.clear();
             p0_err.clear(); p1_err.clear(); p2_err.clear();
             p0_all_val.clear(); p1_all_val.clear(); p2_all_val.clear();
-            tof_offset = phc_tof_offset[i]; tof_offset_n = phc_tof_offset_n[i];
+            tof_offset = phc_tof_offset[i]; tof_offset_n = phc_tof_offset_n[i]; tof_sub = phc_tof_sub[i];
             fit_lo.clear(); fit_hi.clear();
             for (Int_t s = 0; s < 2; s++) {
                 const FitResult& ra = phc_result_all[s][i];
@@ -896,42 +1010,26 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
 Int_t main(int argc, char** argv) {
 
     // -- check arguments -----
-    // [--exclude-beam] [--offset-pion-only] <Hodo1.root> <DST1.root> [<Hodo2.root> <DST2.root> ...] <particle>
+    // <Hodo1.root> <DST1.root> [<Hodo2.root> <DST2.root> ...]
     // (a single pair is the normal single-run case; more pairs merge runs)
-    Bool_t exclude_beam = kFALSE, offset_pion_only = kFALSE;
-    std::vector<char*> pos;  // positional arguments, argv[0] first
-    for (Int_t i = 0; i < argc; i++) {
-        if (TString(argv[i]) == "--exclude-beam") exclude_beam = kTRUE;
-        else if (TString(argv[i]) == "--offset-pion-only") offset_pion_only = kTRUE;
-        else pos.push_back(argv[i]);
-    }
-    argc = static_cast<Int_t>(pos.size());
-    argv = pos.data();
-    if (argc < 4 || (argc - 2) % 2 != 0) {
+    if (argc < 3 || (argc - 1) % 2 != 0) {
         std::cerr << "Usage: " << argv[0]
-                   << " [--exclude-beam] [--offset-pion-only] <Hodo1.root> <DST1.root> [<Hodo2.root> <DST2.root> ...] <particle>" << std::endl;
-        std::cerr << "  --offset-pion-only: absolute TOF offset from pion-bit-only tracks (pid == 1; kaon beam)" << std::endl;
-        std::cerr << "  --exclude-beam: drop hits of segments crossed by beam-like tracks from the PHC (non-pion beam)" << std::endl;
+                   << " <Hodo1.root> <DST1.root> [<Hodo2.root> <DST2.root> ...]" << std::endl;
         std::cerr << "  Hodo.root: all-event HTOF TDC/ADC histograms and the hodo tree (PHC)" << std::endl;
-        std::cerr << "  DST.root : DstTPCHelixHTOF output (TPC dE/dx pion tag for the ADC MIP)" << std::endl;
-        std::cerr << "  particle : Pi (only supported value; used for output naming)" << std::endl;
+        std::cerr << "  DST.root : DstTPCHelixHTOF output (TPC dE/dx pion tag, expected pion time)" << std::endl;
         return 1;
     }
-    TString particle = argv[argc-1];
-    if (particle != "Pi") {
-        std::cerr << "Error: Unsupported particle '" << particle
-                  << "'. Only 'Pi' is implemented (dE/dx pion-bit selection, proton excluded)." << std::endl;
-        return 1;
-    }
+    // output naming: the calibration sample is pion-tagged (dE/dx pion bit, proton excluded)
+    const TString particle = "Pi";
     std::vector<TString> hodo_paths, dst_paths;
-    for (Int_t k = 0; k < (argc - 2) / 2; k++) {
+    for (Int_t k = 0; k < (argc - 1) / 2; k++) {
         hodo_paths.push_back(argv[1 + 2*k]);
         dst_paths.push_back(argv[2 + 2*k]);
     }
 
     conf.detector = "htof";
     conf.phc_de_range_min = 0.2; // lower dE bound [MIP] of the PHC fit range (used by htof_phc_fit)
-    const Bool_t ok = analyze(hodo_paths, dst_paths, particle, exclude_beam, offset_pion_only);
+    const Bool_t ok = analyze(hodo_paths, dst_paths, particle);
     if (!ok) std::cerr << "Error: HTOF_Calib failed; outputs are not valid" << std::endl;
     // ROOT 6.40.04's own static destructor (RConcurrentHashColl) crashes on
     // normal exit after unloading libRIO.so; bypass it. Not this file's bug.

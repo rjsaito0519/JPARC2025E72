@@ -137,9 +137,11 @@ def htof_adc_quality_report(root_file_path):
     return out
 
 def htof_phc_quality_report(root_file_path, min_offset_n=100):
-    """Channels of the HTOF_Calib PHC output whose p0/p1 sit at the fit limits
-    (p0 at 0.001 or 15, p1 at -5; see ana_helper::htof_phc_fit) and segments whose
-    absolute TOF offset was not applied (tof_offset_n < min_offset_n).
+    """Channels of the HTOF_Calib PHC output whose p0/p1 sit at the fit limits and segments
+    whose absolute TOF offset was not applied (tof_offset_n < min_offset_n). Limits: walk from
+    pion-bit-only tracks (tof_sub = 1, fit_walk_shared in HTOF_Calib.cpp): p0 at 0, p1 at the
+    scan ends -3 or 0.25; two-stage fit (tof_sub = 0, ana_helper::htof_phc_fit): p0 at 0.001
+    or 15, p1 at -5.
     Returns (limit_list[(seg, side, p0, p1)], offset_list[(seg, n)])."""
     tree = uproot.open(root_file_path)["tree"].arrays(library="np")
     lim, off = [], []
@@ -147,7 +149,11 @@ def htof_phc_quality_report(root_file_path, min_offset_n=100):
         ch = int(tree["ch"][i])
         for s in range(2):
             p0, p1 = float(tree["p0_val"][i][s]), float(tree["p1_val"][i][s])
-            if p0 < 0.0011 or p0 > 14.99 or p1 < -4.999:
+            if int(tree["tof_sub"][i]) == 1:
+                at_limit = p0 <= 0.0 or p1 < -2.995 or p1 > 0.245
+            else:
+                at_limit = p0 < 0.0011 or p0 > 14.99 or p1 < -4.999
+            if at_limit:
                 lim.append((ch, _HTOF_SIDE[s], p0, p1))
         if "tof_offset_n" in tree and int(tree["tof_offset_n"][i]) < min_offset_n:
             off.append((ch, int(tree["tof_offset_n"][i])))

@@ -41,18 +41,6 @@ def main():
              "t0 is unchanged (T0_Offset). HTOF uses mode 'htof', not this flag.",
     )
     parser.add_argument(
-        "--htof-exclude-beam",
-        action="store_true",
-        help="htof: drop hits of segments crossed by beam-like tracks from the PHC fit "
-             "(use when the beam is not a pion, e.g. K beam)",
-    )
-    parser.add_argument(
-        "--htof-offset-pion-only",
-        action="store_true",
-        help="htof: absolute TOF offset from pion-bit-only tracks (pid == 1), "
-             "leaving out the pion/kaon-ambiguous ones (use with a kaon beam)",
-    )
-    parser.add_argument(
         "--force",
         action="store_true",
         help="Run even if the input ROOT is older than its params or is a decode of the other particle",
@@ -170,9 +158,7 @@ def main():
 
         print(colored(">>> Step 1: Running HTOF_Calib", "cyan"))
         pairs = " ".join(f"{h} {d}" for h, d in zip(hodo_root_files, htof_dst_files))
-        opts = ("--exclude-beam " if args.htof_exclude_beam else "") + \
-               ("--offset-pion-only " if args.htof_offset_pion_only else "")
-        run_command(f"{executable} {opts}{pairs} {suffix}")
+        run_command(f"{executable} {pairs}")
 
         if not args.debug:
             print(colored(">>> Step 2: Updating Parameters (HTOF HDPRM: TDC + ADC)", "cyan"))

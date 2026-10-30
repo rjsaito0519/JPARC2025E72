@@ -91,9 +91,9 @@ namespace param
         { "htof-3-d", { 200.0, 260.0 } },
     };
 
-    // HTOF PHC with HTOF_Calib --exclude-beam (non-pion beam): segments whose hits are dropped
-    // from the PHC samples in events where a beam-like track crossed them. Only these segments
-    // are masked; on the others the beam hits are few and dropping them only costs statistics.
+    // HTOF_Calib PHC: segments where the beam crosses HTOF. Hits of events where a beam-like track
+    // crossed them are dropped from the PHC samples. Only these segments are masked; on the others
+    // the beam hits are few and dropping them only costs statistics.
     static const std::vector<Int_t> htof_phc_exclude_beam_segs{ 20, 21, 22 };
 
     static const std::unordered_map<std::string, std::vector<Double_t>> kvc_opg_fit{
