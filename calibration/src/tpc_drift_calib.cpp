@@ -155,8 +155,8 @@ int main(Int_t argc, char** argv)
   // Minimum total entries on layer 2D hist; below this keep vdrift unchanged.
   Int_t threshold = 100000;
   Bool_t debug_mode = kFALSE;
-  // --max-dev F: keep every fitted layer within (1 +- F) of the median drift velocity of the outer
-  // layers (>= kRefMinLayer); 0 = no limit.
+  // --max-dev F: the median velocity of the outer layers (>= kRefMinLayer) is kept fixed (the common
+  // scale is not constrained by tracks) and every fitted layer is kept within (1 +- F) of it; 0 = off.
   Double_t max_dev = 0.0;
   const Int_t kRefMinLayer = 15;
 
@@ -571,6 +571,24 @@ int main(Int_t argc, char** argv)
   }
 
   if (max_dev > 0.0) {
+    // A common scale of all layers is not constrained by the tracks: remove the median update of the
+    // reference layers so that their median velocity stays fixed, then limit each layer around it.
+    std::vector<Double_t> dref;
+    for (const auto& r : results)
+      if (r.ok && r.layer >= kRefMinLayer)
+        dref.push_back(r.delta_v);
+    if (!dref.empty()) {
+      const Double_t dcommon = MedianOf(dref);
+      std::cout << Form("Common drift update removed: %.6g (median of layers >= %d)", dcommon, kRefMinLayer)
+                << std::endl;
+      for (auto& r : results) {
+        if (!r.ok)
+          continue;
+        r.delta_v -= dcommon;
+        r.v_new = r.v_old + r.delta_v;
+        delta_by_layer[r.layer] = r.delta_v;
+      }
+    }
     std::vector<Double_t> vref_list;
     for (const auto& r : results) {
       if (r.layer < kRefMinLayer)
