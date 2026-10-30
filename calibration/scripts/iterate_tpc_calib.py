@@ -118,6 +118,7 @@ class IterOrchestrator:
         trk_ywin: float | None = None,
         trk_ywin_max_layer: int | None = None,
         drift_max_dev: float | None = None,
+        no_drift: bool = False,
     ) -> None:
         self.analyzer_dir = analyzer_dir.resolve()
         self.run_set = run_set
@@ -127,6 +128,7 @@ class IterOrchestrator:
         self.trk_ywin = trk_ywin
         self.trk_ywin_max_layer = trk_ywin_max_layer
         self.drift_max_dev = drift_max_dev
+        self.no_drift = no_drift
         self.max_iter = len(schedule) if schedule else max_iter
         self.dry_run = dry_run
         self.poll_sec = poll_sec
@@ -689,8 +691,9 @@ class IterOrchestrator:
 
         recon()
         self.run_tpc(kind, "offset", outer_i, self.offset_opts(kind))
-        recon()
-        self.run_tpc(kind, "drift", outer_i, self.drift_opts())
+        if not self.no_drift:
+            recon()
+            self.run_tpc(kind, "drift", outer_i, self.drift_opts())
         # eval only (no TPCPRM write)
         self.run_tpc(kind, "phase", outer_i, self.phase_opts(debug=True))
     def run_outer_iter(self, outer_i: int) -> None:
@@ -719,7 +722,7 @@ class IterOrchestrator:
             f"set={self.run_set} hit runs={self.hit_runs} trk runs={self.trk_runs} "
             f"TPCPRM={self.tpcprm_path()} schedule={','.join(self.schedule) if self.schedule else 'hit,hit,trk,...'} "
             f"hit_offset={'common' if self.hit_common else 'ave'} "
-            f"trk_ywin={self.trk_ywin}/{self.trk_ywin_max_layer} drift_max_dev={self.drift_max_dev}"
+            f"trk_ywin={self.trk_ywin}/{self.trk_ywin_max_layer} drift_max_dev={self.drift_max_dev} no_drift={self.no_drift}"
         )
         if not self.dry_run:
             self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -803,6 +806,11 @@ def main() -> None:
         default=None,
         help="drift: keep each fitted layer within (1 +- F) of the outer-layer median velocity",
     )
+    parser.add_argument(
+        "--no-drift",
+        action="store_true",
+        help="trk steps fit only the offsets (drift velocity kept as it is; no second recon)",
+    )
     args = parser.parse_args()
     if args.max_iter < 1:
         raise SystemExit("--max-iter must be >= 1")
@@ -826,6 +834,7 @@ def main() -> None:
         trk_ywin=args.trk_ywin,
         trk_ywin_max_layer=args.trk_ywin_max_layer,
         drift_max_dev=args.drift_max_dev,
+        no_drift=args.no_drift,
     )
     orch.run()
 
