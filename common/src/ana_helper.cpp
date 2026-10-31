@@ -1,6 +1,8 @@
 #include "ana_helper.h"
 
 #include <sys/stat.h>
+#include <iostream>
+#include "paths.h"
 #include <TObjArray.h>
 #include <TObjString.h>
 
@@ -61,7 +63,13 @@ namespace ana_helper {
               // Try relative to bin/
               param_file = Form("../param/USER/e72/UserParam_run%05d", run_num);
               if (stat(param_file.Data(), &st) != 0) {
-                   return {0.0, 0.0};
+                   // Try the analyzer tree (works from any CWD)
+                   param_file = Form("%s/param/USER/e72/UserParam_run%05d", ANALYZER_DIR.Data(), run_num);
+                   if (stat(param_file.Data(), &st) != 0) {
+                        std::cerr << "Warning: no UserParam_run" << Form("%05d", run_num)
+                                  << " found; " << key << " not taken from USER" << std::endl;
+                        return {0.0, 0.0};
+                   }
               }
          }
 
