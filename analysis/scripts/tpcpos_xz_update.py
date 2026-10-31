@@ -38,6 +38,8 @@ import sys
 from pathlib import Path
 from typing import Dict
 
+from concurrent.futures import ProcessPoolExecutor
+
 import awkward as ak
 import numpy as np
 import uproot
@@ -123,6 +125,16 @@ def accumulate_incl(path, acc, pad_phi, args):
     print(f"[incl] {path.name}: tracks {n_trk} hits {n_hit}", flush=True)
 
 
+def _accumulate_one(task):
+    kind, path, pad_phi, args = task
+    acc: Dict[int, np.ndarray] = {}
+    if kind == "bt":
+        accumulate_bt(path, acc, pad_phi, args.momentum_width, args.hit_resolution, args.bt_weight, args.step)
+    else:
+        accumulate_incl(path, acc, pad_phi, args)
+    return acc
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--parent", type=Path, required=True)
@@ -148,6 +160,7 @@ def main() -> int:
     ap.add_argument("--zero-layers", default="")
     ap.add_argument("--npz", type=Path, default=None, help="per-pad fit results")
     ap.add_argument("--step", default="300 MB")
+    ap.add_argument("--jobs", type=int, default=1, help="input files read in parallel (one process per file)")
     args = ap.parse_args()
 
     phi = {}
@@ -165,11 +178,17 @@ def main() -> int:
                 cf.add((int(s[0]), int(s[1])))
     zl = tuple(int(v) for v in args.zero_layers.split("-")) if args.zero_layers else None
 
+    tasks = [("bt", p) for p in args.bt] + [("incl", p) for p in args.incl]
+    if args.jobs > 1:
+        with ProcessPoolExecutor(max_workers=args.jobs) as ex:
+            parts = list(ex.map(_accumulate_one, [(k, p, pad_phi, args) for k, p in tasks]))
+    else:
+        parts = [_accumulate_one((k, p, pad_phi, args)) for k, p in tasks]
     acc: Dict[int, np.ndarray] = {}
-    for p in args.bt:
-        accumulate_bt(p, acc, pad_phi, args.momentum_width, args.hit_resolution, args.bt_weight, args.step)
-    for p in args.incl:
-        accumulate_incl(p, acc, pad_phi, args)
+    for part in parts:
+        for k, v in part.items():
+            acc.setdefault(k, np.zeros(N_ACC))
+            acc[k] += v
 
     n_y, y0, dy, grid = read_map(args.parent)
     upd: Dict[tuple, np.ndarray] = {}
