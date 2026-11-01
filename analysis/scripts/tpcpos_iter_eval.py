@@ -62,7 +62,7 @@ def load_momentum(path: Path) -> Dict[int, np.ndarray]:
     """run -> selected mom0 array (tracks with the run polarity)."""
     out: Dict[int, List[np.ndarray]] = {}
     br = ["run_number", "nhtrack", "helix_dz", "mom0", "charge"]
-    for arr in uproot.open(path)["tpc"].iterate(br, step_size="400 MB"):
+    for arr in uproot.open(path)["tpc"].iterate(br, step_size=200000):
         runs = ak.to_numpy(arr["run_number"])
         nh, dz, mom, q = arr["nhtrack"], arr["helix_dz"], arr["mom0"], arr["charge"]
         for run in np.unique(runs):

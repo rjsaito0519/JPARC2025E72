@@ -159,9 +159,12 @@ def main() -> int:
     ap.add_argument("--max-chisqr", type=float, default=1e9)
     ap.add_argument("--zero-layers", default="")
     ap.add_argument("--npz", type=Path, default=None, help="per-pad fit results")
-    ap.add_argument("--step", default="300 MB")
+    ap.add_argument("--step", default="200000",
+                    help="entries per chunk, or a size such as '300 MB' (a size makes uproot read every basket header first)")
     ap.add_argument("--jobs", type=int, default=1, help="input files read in parallel (one process per file)")
     args = ap.parse_args()
+    if args.step.isdigit():
+        args.step = int(args.step)
 
     phi = {}
     with open(args.pad_dir / "pad_phi.txt") as f:
