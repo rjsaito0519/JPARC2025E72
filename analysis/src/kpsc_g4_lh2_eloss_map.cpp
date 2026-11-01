@@ -18,7 +18,10 @@
 // --pdg: primary PDG codes used for the map (default 2212).
 // --particle: species written as particle_id (default proton).
 // --pedges: p grid edges [MeV/c] (overrides --pgrid).
+// --ledges: L grid edges [mm] (default 0,10,...,80,100).
 // --vessel-radius: VesselRadius header value [mm] (default 48.5).
+// --dump-samples f.root: write every unique sample (train and holdout) to a
+//             TTree "samples" for offline studies of the map.
 // --min-hits: require at least N TPC hits on the primary track
 //             (mimics the reconstructed sample; default 0).
 // --split-exit: side grid (exit_id 0) from particles leaving the cylinder
@@ -89,7 +92,7 @@ const std::vector<Double_t> kPEdgesFine = {
   300., 325., 350., 375., 400., 450., 500., 550., 600., 650., 700., 750.,
   800., 900.
 };
-const std::vector<Double_t> kLEdges = {
+const std::vector<Double_t> kLEdgesDefault = {
   0., 10., 20., 30., 40., 50., 60., 70., 80., 100.
 };
 
@@ -102,7 +105,8 @@ usage(const char* a0)
     << " [--paxis prm|1st] [--pgrid coarse|fine] [--min-hits N]"
     << " [--holdout-frac f] [--split-exit]"
     << " [--pdg c1,c2,...] [--particle proton|pion|kaon]"
-    << " [--pedges e1,e2,...] [--vessel-radius R]\n"
+    << " [--pedges e1,e2,...] [--ledges e1,e2,...] [--vessel-radius R]"
+    << " [--dump-samples f.root]\n"
     << "  output: Lh2ElossMan 5-column map (particle_id exit_id p L Loss)\n"
     << "  tree: g4hyptpc\n"
     << "  Loss = p_PRM - p_TPC1st [MeV/c], L = cylinder PathLength [mm]\n"
@@ -458,7 +462,9 @@ main(int argc, char** argv)
   std::vector<Int_t> pdg_list = {2212};
   TString particle_name = "proton";
   std::vector<Double_t> p_edges_user;
+  std::vector<Double_t> l_edges_user;
   Double_t vessel_radius = 48.5;  // mm, vacuum-vessel window (G4 TargetAl)
+  TString dump_path;
   for (int i = 1; i < argc; ++i) {
     const TString a = argv[i];
     if (a == "-h" || a == "--help") {
@@ -532,6 +538,18 @@ main(int argc, char** argv)
       particle_name = argv[++i];
       continue;
     }
+    if (a == "--ledges" && i + 1 < argc) {
+      // comma separated L grid edges [mm]
+      TString v = argv[++i];
+      std::unique_ptr<TObjArray> tok(v.Tokenize(","));
+      for (Int_t k = 0; k < tok->GetEntries(); ++k)
+        l_edges_user.push_back(static_cast<TObjString*>(tok->At(k))->GetString().Atof());
+      continue;
+    }
+    if (a == "--dump-samples" && i + 1 < argc) {
+      dump_path = argv[++i];
+      continue;
+    }
     if (a == "--vessel-radius" && i + 1 < argc) {
       vessel_radius = TString(argv[++i]).Atof();
       continue;
@@ -595,6 +613,8 @@ main(int argc, char** argv)
   const std::vector<Double_t> kPEdges = !p_edges_user.empty() ? p_edges_user
     : (pgrid_fine ? kPEdgesFine : kPEdgesCoarse);
   const Int_t np = static_cast<Int_t>(kPEdges.size());
+  const std::vector<Double_t> kLEdges = !l_edges_user.empty() ? l_edges_user
+                                                              : kLEdgesDefault;
   const Int_t nl = static_cast<Int_t>(kLEdges.size());
   std::vector<std::vector<Double_t>> cells(
     static_cast<size_t>(np * nl));
@@ -613,7 +633,39 @@ main(int argc, char** argv)
   std::vector<HoldoutSample> holdout;
   const EventFingerprintHash fp_hash;
 
+  // optional per-sample dump (MeV/c, mm)
+  std::unique_ptr<TFile> dump_file;
+  TTree* dump_tree = nullptr;
+  Float_t d_p0 = 0, d_p1 = 0, d_L = 0, d_loss = 0;
+  Float_t d_vx = 0, d_vy = 0, d_vz = 0, d_ux = 0, d_uy = 0, d_uz = 0;
+  Int_t d_pdg = 0, d_cap = 0, d_holdout = 0, d_file = 0, d_nhit = 0;
+  if (!dump_path.IsNull()) {
+    dump_file.reset(TFile::Open(dump_path, "RECREATE"));
+    if (!dump_file || dump_file->IsZombie()) {
+      std::cerr << "Error: cannot write " << dump_path << "\n";
+      return 1;
+    }
+    dump_tree = new TTree("samples", "unique LH2 eloss samples");
+    dump_tree->Branch("p0", &d_p0);
+    dump_tree->Branch("p1", &d_p1);
+    dump_tree->Branch("L", &d_L);
+    dump_tree->Branch("loss", &d_loss);
+    dump_tree->Branch("vx", &d_vx);
+    dump_tree->Branch("vy", &d_vy);
+    dump_tree->Branch("vz", &d_vz);
+    dump_tree->Branch("ux", &d_ux);
+    dump_tree->Branch("uy", &d_uy);
+    dump_tree->Branch("uz", &d_uz);
+    dump_tree->Branch("pdg", &d_pdg);
+    dump_tree->Branch("cap", &d_cap);
+    dump_tree->Branch("holdout", &d_holdout);
+    dump_tree->Branch("file", &d_file);
+    dump_tree->Branch("nhit", &d_nhit);
+  }
+  Int_t file_index = -1;
+
   for (const auto& in_path : in_paths) {
+    ++file_index;
     TFile* fin = TFile::Open(in_path, "READ");
     if (!fin || fin->IsZombie()) {
       std::cerr << "Error: cannot open " << in_path << "\n";
@@ -712,6 +764,25 @@ main(int argc, char** argv)
         (holdout_frac > 0.) &&
         ((fp_hash(fp) % 10000ull) <
          static_cast<std::size_t>(holdout_frac * 10000. + 0.5));
+      if (dump_tree) {
+        const TVector3 u = p_prm.Unit();
+        d_p0 = p0;
+        d_p1 = p1.Mag();
+        d_L = L;
+        d_loss = loss;
+        d_vx = v_prm.X();
+        d_vy = v_prm.Y();
+        d_vz = v_prm.Z();
+        d_ux = u.X();
+        d_uy = u.Y();
+        d_uz = u.Z();
+        d_pdg = pdg;
+        d_cap = exit_cap ? 1 : 0;
+        d_holdout = is_holdout ? 1 : 0;
+        d_file = file_index;
+        d_nhit = nhit_p;
+        dump_tree->Fill();
+      }
       if (is_holdout) {
         HoldoutSample s;
         s.p = paxis_1st ? p1.Mag() : p0;
@@ -732,6 +803,13 @@ main(int argc, char** argv)
       }
     }
     fin->Close();
+  }
+
+  if (dump_tree) {
+    dump_file->cd();
+    dump_tree->Write();
+    dump_file->Close();
+    std::cout << "Wrote samples: " << dump_path << "\n";
   }
 
   // Fill empty cells by nearest non-empty along L at same p, else 0.
