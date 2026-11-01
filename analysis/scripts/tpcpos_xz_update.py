@@ -187,6 +187,9 @@ def main() -> int:
     ap.add_argument("--trim", type=float, default=2.5)
     ap.add_argument("--min-sigma", type=float, default=0.1, help="floor of the core sigma (mm) in the trim window")
     ap.add_argument("--zero-layers", default="")
+    ap.add_argument("--reset-layers", default="",
+                    help="LO-HI: pads in these layers take their nodes from --reset-from (not updated)")
+    ap.add_argument("--reset-from", type=Path, default=None)
     ap.add_argument("--npz", type=Path, default=None, help="per-pad fit results")
     ap.add_argument("--step", default="200000",
                     help="entries per chunk, or a size such as '300 MB' (a size makes uproot read every basket header first)")
@@ -304,6 +307,12 @@ def main() -> int:
         for node in grid[key]:
             node[1] += vx
             node[2] += vz
+    if args.reset_layers:
+        rl = tuple(int(v) for v in args.reset_layers.split("-"))
+        ref = read_map(args.reset_from)[3]
+        for key in grid:
+            if rl[0] <= key[0] <= rl[1]:
+                grid[key] = [list(node) for node in ref[key]]
     zero = {key for key in grid if zl and zl[0] <= key[0] <= zl[1]}
     for key in cf | zero:
         for node in grid.get(key, []):
