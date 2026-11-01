@@ -1,21 +1,35 @@
 // -*- C++ -*-
-// Build Lh2ElossMap_proton from Geant4 truth (scattered protons).
+// Build an LH2 energy-loss map for one particle species from Geant4 truth
+// (primary particles of the given PDG codes; default: protons).
 //
 // Usage:
 //   kpsc_g4_lh2_eloss_map <g4.root> [g4.root ...] [-o mapfile] [--pdf out.pdf]
 //                         [--paxis prm|1st] [--pgrid coarse|fine] [--min-hits N]
 //                         [--holdout-frac f] [--split-exit]
-// --min-hits: require at least N TPC hits on the primary proton track
+//                         [--pdg c1,c2,...] [--particle proton|pion|kaon]
+//                         [--pedges e1,e2,...] [--vessel-radius R]
+//
+// Output: the Lh2ElossMan 5-column format
+//   particle_id exit_id p[MeV/c] L[mm] Loss[MeV/c]
+//   (particle_id 0=proton 1=pion 2=kaon, exit_id 0=side 1=cap)
+// with the Target* and VesselRadius header keys. Without --split-exit the
+// cap rows repeat the side grid. Several single-particle files are combined
+// into one map with scripts/lh2eloss/merge_lh2_eloss_maps.py.
+// --pdg: primary PDG codes used for the map (default 2212).
+// --particle: species written as particle_id (default proton).
+// --pedges: p grid edges [MeV/c] (overrides --pgrid).
+// --vessel-radius: VesselRadius header value [mm] (default 48.5).
+// --min-hits: require at least N TPC hits on the primary track
 //             (mimics the reconstructed sample; default 0).
-// --split-exit: main grid from protons leaving the cylinder through the side
-//             wall, plus "Cap p L Loss" lines from protons leaving through a
-//             Y end cap (read by Lh2ElossMan as the cap grid).
+// --split-exit: side grid (exit_id 0) from particles leaving the cylinder
+//             through the side wall, cap grid (exit_id 1) from particles
+//             leaving through a Y end cap.
 // --holdout-frac f: fraction of unique events held out of the map median
 //             (0..1, default 0). Holdout residuals are summarized after the
 //             map is built. Duplicate kinematics never enter either set.
 //
 // Loss = p_PRM - p_TPC1st  [MeV/c] (>=0; negative samples dropped)
-// L    = PathLength in finite LH2 cylinder from vtx along proton dir [mm]
+// L    = PathLength in finite LH2 cylinder from vtx along the track dir [mm]
 // Grid: median Loss in (p, L) bins over unique kinematics; written as flat text map.
 // --paxis selects the p used for the grid axis:
 //   prm (default): p_PRM (vertex momentum)
@@ -32,6 +46,8 @@
 #include <TInterpreter.h>
 #include <TLatex.h>
 #include <TMath.h>
+#include <TObjArray.h>
+#include <TObjString.h>
 #include <TParticle.h>
 #include <TProfile2D.h>
 #include <TROOT.h>
@@ -45,6 +61,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -83,7 +100,10 @@ usage(const char* a0)
     << "Usage: " << a0
     << " <g4.root> [g4.root ...] [-o mapfile] [--pdf out.pdf]"
     << " [--paxis prm|1st] [--pgrid coarse|fine] [--min-hits N]"
-    << " [--holdout-frac f] [--split-exit]\n"
+    << " [--holdout-frac f] [--split-exit]"
+    << " [--pdg c1,c2,...] [--particle proton|pion|kaon]"
+    << " [--pedges e1,e2,...] [--vessel-radius R]\n"
+    << "  output: Lh2ElossMan 5-column map (particle_id exit_id p L Loss)\n"
     << "  tree: g4hyptpc\n"
     << "  Loss = p_PRM - p_TPC1st [MeV/c], L = cylinder PathLength [mm]\n"
     << "  Unique kinematics only (rounded fingerprint); optional holdout\n"
@@ -119,7 +139,8 @@ FirstHitMom(const std::vector<int>* pid, const std::vector<int>* parentid,
             const std::vector<double>* py, const std::vector<double>* pz,
             TVector3& mom, TVector3& pos,
             const std::vector<double>* x0, const std::vector<double>* y0,
-            const std::vector<double>* z0, Int_t* nhit = nullptr)
+            const std::vector<double>* z0, Int_t* nhit = nullptr,
+            Int_t pdg = 2212)
 {
   mom.SetXYZ(0, 0, 0);
   pos.SetXYZ(0, 0, 0);
@@ -133,7 +154,7 @@ FirstHitMom(const std::vector<int>* pid, const std::vector<int>* parentid,
   for (size_t j = 0; j < pid->size(); ++j) {
     if ((*parentid)[j] != 0)
       continue;
-    if ((*pid)[j] != 2212)
+    if ((*pid)[j] != pdg)
       continue;
     const int tid = (*trackid)[j];
     if (cnt.find(tid) == cnt.end())
@@ -434,6 +455,10 @@ main(int argc, char** argv)
   Int_t min_hits = 0;
   Bool_t split_exit = kFALSE;
   Double_t holdout_frac = 0.;
+  std::vector<Int_t> pdg_list = {2212};
+  TString particle_name = "proton";
+  std::vector<Double_t> p_edges_user;
+  Double_t vessel_radius = 48.5;  // mm, vacuum-vessel window (G4 TargetAl)
   for (int i = 1; i < argc; ++i) {
     const TString a = argv[i];
     if (a == "-h" || a == "--help") {
@@ -494,6 +519,31 @@ main(int argc, char** argv)
       }
       continue;
     }
+    if (a == "--pdg" && i + 1 < argc) {
+      // comma separated PDG codes of the primary particles to use
+      pdg_list.clear();
+      TString v = argv[++i];
+      std::unique_ptr<TObjArray> tok(v.Tokenize(","));
+      for (Int_t k = 0; k < tok->GetEntries(); ++k)
+        pdg_list.push_back(static_cast<TObjString*>(tok->At(k))->GetString().Atoi());
+      continue;
+    }
+    if (a == "--particle" && i + 1 < argc) {
+      particle_name = argv[++i];
+      continue;
+    }
+    if (a == "--vessel-radius" && i + 1 < argc) {
+      vessel_radius = TString(argv[++i]).Atof();
+      continue;
+    }
+    if (a == "--pedges" && i + 1 < argc) {
+      // comma separated p grid edges [MeV/c]
+      TString v = argv[++i];
+      std::unique_ptr<TObjArray> tok(v.Tokenize(","));
+      for (Int_t k = 0; k < tok->GetEntries(); ++k)
+        p_edges_user.push_back(static_cast<TObjString*>(tok->At(k))->GetString().Atof());
+      continue;
+    }
     if (a == "--pgrid") {
       if (i + 1 >= argc) {
         usage(argv[0]);
@@ -519,12 +569,31 @@ main(int argc, char** argv)
     usage(argv[0]);
     return 1;
   }
+  // particle_id of the Lh2ElossMan 5-column map
+  Int_t particle_id = -1;
+  if (particle_name == "proton")
+    particle_id = 0;
+  else if (particle_name == "pion")
+    particle_id = 1;
+  else if (particle_name == "kaon")
+    particle_id = 2;
+  if (particle_id < 0) {
+    std::cerr << "Unknown --particle: " << particle_name
+              << " (proton|pion|kaon)\n";
+    return 1;
+  }
+  if (!(vessel_radius > kTargetRadius)) {
+    std::cerr << "--vessel-radius must be larger than TargetRadius ("
+              << kTargetRadius << " mm)\n";
+    return 1;
+  }
 
   gROOT->SetBatch(kTRUE);
   gStyle->SetOptStat(0);
   gInterpreter->GenerateDictionary("vector<TParticle>", "vector;TParticle.h");
 
-  const std::vector<Double_t>& kPEdges = pgrid_fine ? kPEdgesFine : kPEdgesCoarse;
+  const std::vector<Double_t> kPEdges = !p_edges_user.empty() ? p_edges_user
+    : (pgrid_fine ? kPEdgesFine : kPEdgesCoarse);
   const Int_t np = static_cast<Int_t>(kPEdges.size());
   const Int_t nl = static_cast<Int_t>(kLEdges.size());
   std::vector<std::vector<Double_t>> cells(
@@ -568,6 +637,11 @@ main(int argc, char** argv)
     std::vector<double>* y0tpc = nullptr;
     std::vector<double>* z0tpc = nullptr;
 
+    // read only the branches used below
+    tree->SetBranchStatus("*", 0);
+    for (const char* bn : {"generator", "PRM", "pidtpc", "parentidtpc", "trackidtpc",
+                           "pxtpc", "pytpc", "pztpc", "x0tpc", "y0tpc", "z0tpc"})
+      tree->SetBranchStatus(bn, 1);
     tree->SetBranchAddress("generator", &generator);
     tree->SetBranchAddress("PRM", &PRM);
     tree->SetBranchAddress("pidtpc", &pidtpc);
@@ -588,23 +662,20 @@ main(int argc, char** argv)
       if (!PRM || PRM->empty())
         continue;
 
-      TVector3 p_prm(0, 0, 0), v_prm(0, 0, 0);
-      Bool_t has_p = kFALSE;
       for (const auto& part : *PRM) {
-        if (part.GetPdgCode() == 2212) {
-          p_prm.SetXYZ(part.Px(), part.Py(), part.Pz());
-          v_prm.SetXYZ(part.Vx(), part.Vy(), part.Vz());
-          has_p = kTRUE;
-          break;
-        }
-      }
+      const Int_t pdg = part.GetPdgCode();
+      if (std::find(pdg_list.begin(), pdg_list.end(), pdg) == pdg_list.end())
+        continue;
+      TVector3 p_prm(part.Px(), part.Py(), part.Pz());
+      TVector3 v_prm(part.Vx(), part.Vy(), part.Vz());
+      const Bool_t has_p = kTRUE;
       if (!has_p || !(p_prm.Mag() > 1e-3))
         continue;
 
       TVector3 p1, r1;
       Int_t nhit_p = 0;
       if (!FirstHitMom(pidtpc, parentidtpc, trackidtpc, pxtpc, pytpc, pztpc,
-                       p1, r1, x0tpc, y0tpc, z0tpc, &nhit_p))
+                       p1, r1, x0tpc, y0tpc, z0tpc, &nhit_p, pdg))
         continue;
       if (nhit_p < min_hits)
         continue;
@@ -658,6 +729,7 @@ main(int argc, char** argv)
         cells[static_cast<size_t>(ip * nl + il)].push_back(loss);
       }
       ++n_used;
+      }
     }
     fin->Close();
   }
@@ -734,7 +806,7 @@ main(int argc, char** argv)
   const TString img_dir = ana_helper::get_img_dir(OUTPUT_DIR, kRunOut) + "/kpsc_lh2eloss/g4";
   gSystem->mkdir(img_dir.Data(), kTRUE);
   if (out_map.IsNull())
-    out_map = Form("%s/Lh2ElossMap_proton", img_dir.Data());
+    out_map = Form("%s/Lh2ElossMap_%s", img_dir.Data(), particle_name.Data());
   if (out_pdf.IsNull())
     out_pdf = Form("%s/kpsc_g4_lh2_eloss_map_run%05d.pdf", img_dir.Data(),
                    kRunOut);
@@ -746,7 +818,10 @@ main(int argc, char** argv)
       return 1;
     }
     ofs << "#\n";
-    ofs << "#  Lh2ElossMap_proton\n";
+    ofs << "#  Lh2ElossMap_" << particle_name << "\n";
+    ofs << "#  primary PDG codes:";
+    for (const auto c : pdg_list) ofs << " " << c;
+    ofs << "\n";
     ofs << "#  Loss = p_start - p_end  [MeV/c]  (>=0)\n";
     ofs << "#  apply: |p|_vtx [MeV/c] = |p|_TPC [MeV/c] + Loss\n";
     ofs << "#  L from vtx+dir vs cylinder (TargetRadius, TargetHalfHeight)\n";
@@ -757,10 +832,12 @@ main(int argc, char** argv)
         << "  N_holdout=" << n_holdout << "\n";
     ofs << "#  dedupe: rounded kinematics fingerprint (cross-file)\n";
     ofs << "#  holdout_frac=" << holdout_frac << "\n";
-    ofs << "#  min TPC hits on proton track: " << min_hits << "\n";
+    ofs << "#  min TPC hits on primary track: " << min_hits << "\n";
     if (split_exit)
-      ofs << "#  split by exit surface: main grid = side exits,"
-          << " Cap lines = end-cap exits (N_cap=" << n_used_cap << ")\n";
+      ofs << "#  split by exit surface: exit_id 0 = side exits,"
+          << " exit_id 1 = end-cap exits (N_cap=" << n_used_cap << ")\n";
+    else
+      ofs << "#  no exit split: exit_id 1 rows repeat the exit_id 0 grid\n";
     ofs << "#  p axis: "
         << (paxis_1st ? "p_TPC1st (momentum at first TPC hit)"
                       : "p_PRM (vertex momentum)") << "\n";
@@ -773,28 +850,22 @@ main(int argc, char** argv)
     ofs << "TargetCenterX      " << kTargetCenterX << "    # mm\n";
     ofs << "TargetCenterY      " << kTargetCenterY << "    # mm\n";
     ofs << "TargetCenterZ      " << kTargetCenterZ << "    # mm\n";
+    ofs << "VesselRadius       " << vessel_radius << "    # mm\n";
     ofs << "\n";
     ofs << "#______________________________________________________________________________\n";
-    ofs << "# p[MeV/c]   L[mm]   Loss[MeV/c]\n";
+    ofs << "# particle  exit  p[MeV/c]  L[mm]  Loss[MeV/c]"
+        << "  (particle 0=proton 1=pion 2=kaon, exit 0=side 1=cap)\n";
     ofs << std::fixed;
-    for (Int_t ip = 0; ip < np; ++ip) {
-      for (Int_t il = 0; il < nl; ++il) {
-        const size_t idx = static_cast<size_t>(ip * nl + il);
-        ofs << kPEdges[static_cast<size_t>(ip)] << "  "
-            << kLEdges[static_cast<size_t>(il)] << "  "
-            << loss_grid[idx] << "\n";
-      }
-    }
-    if (split_exit) {
-      ofs << "\n";
-      ofs << "#______________________________________________________________________________\n";
-      ofs << "# end-cap exits:  Cap  p[MeV/c]   L[mm]   Loss[MeV/c]\n";
+    for (Int_t exit_id = 0; exit_id < 2; ++exit_id) {
+      const std::vector<Double_t>& grid
+        = (exit_id == 1 && split_exit) ? loss_cap : loss_grid;
       for (Int_t ip = 0; ip < np; ++ip) {
         for (Int_t il = 0; il < nl; ++il) {
           const size_t idx = static_cast<size_t>(ip * nl + il);
-          ofs << "Cap  " << kPEdges[static_cast<size_t>(ip)] << "  "
+          ofs << particle_id << "  " << exit_id << "  "
+              << kPEdges[static_cast<size_t>(ip)] << "  "
               << kLEdges[static_cast<size_t>(il)] << "  "
-              << loss_cap[idx] << "\n";
+              << grid[idx] << "\n";
         }
       }
     }
@@ -823,7 +894,7 @@ main(int argc, char** argv)
   c.Clear();
   c.cd();
   gPad->SetRightMargin(0.14);
-  h_loss.SetTitle("LH2 proton Loss median [MeV/c]");
+  h_loss.SetTitle(Form("LH2 %s Loss median [MeV/c]", particle_name.Data()));
   h_loss.Draw("colz");
   TLatex lat;
   lat.SetNDC();
