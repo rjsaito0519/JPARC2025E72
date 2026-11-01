@@ -105,34 +105,41 @@ def accumulate_bt(path, acc, pad_phi, width, hit_res, weight, step):
     print(f"[bt] {path.name}: runs {len(med)} tracks {n_trk} hits {n_hit}", flush=True)
 
 
-def accumulate_incl(path, acc, pad_phi, args):
+def accumulate_incl(path, acc, pad_phi, args, acc_fb=None):
     br = ["nhtrack", "helix_dz", "helix_cx", "helix_cy", "mom0", "chisqr", "hitlayer",
           "track_cluster_row_center", "hitpos_x", "hitpos_z", "residual_x", "residual_z"]
     n_trk = n_hit = 0
     for a in uproot.open(path)["tpc"].iterate(br, step_size=args.step):
-        sel = ((a["nhtrack"] >= args.min_nhit) & (abs(a["helix_dz"]) < args.max_dip)
-               & (a["mom0"] > args.min_mom) & (a["chisqr"] < args.max_chisqr))
-        cx = flat(ak.broadcast_arrays(a["helix_cx"][sel], a["hitpos_x"][sel])[0])
-        cy = flat(ak.broadcast_arrays(a["helix_cy"][sel], a["hitpos_x"][sel])[0])
-        x, z = flat(a["hitpos_x"][sel]), flat(a["hitpos_z"][sel])
-        # helix frame X = -x, Y = z - Z_TARGET; the normal (X - cx, Y - cy) in (x, z)
-        nx, nz = x + cx, (z - Z_TARGET) - cy
-        nn = np.hypot(nx, nz)
-        nx, nz = nx / nn, nz / nn
-        rn = flat(a["residual_x"][sel]) * nx + flat(a["residual_z"][sel]) * nz
-        n_hit += add_hits(acc, pad_key(a, sel), nx, nz, rn, 1.0, pad_phi)
-        n_trk += int(ak.sum(sel))
+        good = (a["nhtrack"] >= args.min_nhit) & (a["mom0"] > args.min_mom) & (a["chisqr"] < args.max_chisqr)
+        dip = abs(a["helix_dz"])
+        n_hit += _add_incl(a, good & (dip < args.max_dip), acc, pad_phi)
+        n_trk += int(ak.sum(good & (dip < args.max_dip)))
+        if acc_fb is not None and args.max_dip_fallback > args.max_dip:
+            _add_incl(a, good & (dip >= args.max_dip) & (dip < args.max_dip_fallback), acc_fb, pad_phi)
     print(f"[incl] {path.name}: tracks {n_trk} hits {n_hit}", flush=True)
+
+
+def _add_incl(a, sel, acc, pad_phi):
+    cx = flat(ak.broadcast_arrays(a["helix_cx"][sel], a["hitpos_x"][sel])[0])
+    cy = flat(ak.broadcast_arrays(a["helix_cy"][sel], a["hitpos_x"][sel])[0])
+    x, z = flat(a["hitpos_x"][sel]), flat(a["hitpos_z"][sel])
+    # helix frame X = -x, Y = z - Z_TARGET; the normal (X - cx, Y - cy) in (x, z)
+    nx, nz = x + cx, (z - Z_TARGET) - cy
+    nn = np.hypot(nx, nz)
+    nx, nz = nx / nn, nz / nn
+    rn = flat(a["residual_x"][sel]) * nx + flat(a["residual_z"][sel]) * nz
+    return add_hits(acc, pad_key(a, sel), nx, nz, rn, 1.0, pad_phi)
 
 
 def _accumulate_one(task):
     kind, path, pad_phi, args = task
     acc: Dict[int, np.ndarray] = {}
+    acc_fb: Dict[int, np.ndarray] = {}
     if kind == "bt":
         accumulate_bt(path, acc, pad_phi, args.momentum_width, args.hit_resolution, args.bt_weight, args.step)
     else:
-        accumulate_incl(path, acc, pad_phi, args)
-    return acc
+        accumulate_incl(path, acc, pad_phi, args, acc_fb)
+    return acc, acc_fb
 
 
 def main() -> int:
@@ -155,6 +162,10 @@ def main() -> int:
     ap.add_argument("--bt-weight", type=float, default=1.0)
     ap.add_argument("--min-nhit", type=int, default=15)
     ap.add_argument("--max-dip", type=float, default=0.05)
+    ap.add_argument("--max-dip-fallback", type=float, default=0.0,
+                    help="--incl: pads below --threshold also use tracks with --max-dip <= |dip| < this")
+    ap.add_argument("--fallback-min-layer", type=int, default=5,
+                    help="--max-dip-fallback only for layers >= this (layers 0-4 lie under the target)")
     ap.add_argument("--min-mom", type=float, default=0.15)
     ap.add_argument("--max-chisqr", type=float, default=1e9)
     ap.add_argument("--zero-layers", default="")
@@ -188,10 +199,21 @@ def main() -> int:
     else:
         parts = [_accumulate_one((k, p, pad_phi, args)) for k, p in tasks]
     acc: Dict[int, np.ndarray] = {}
-    for part in parts:
-        for k, v in part.items():
-            acc.setdefault(k, np.zeros(N_ACC))
-            acc[k] += v
+    acc_fb: Dict[int, np.ndarray] = {}
+    for part, part_fb in parts:
+        for dst, src in ((acc, part), (acc_fb, part_fb)):
+            for k, v in src.items():
+                dst.setdefault(k, np.zeros(N_ACC))
+                dst[k] += v
+    # pads below --threshold with the --max-dip tracks also take the steeper --incl tracks
+    n_fb = 0
+    for k, v in acc_fb.items():
+        base = acc.get(k)
+        if k // 1000 >= args.fallback_min_layer and (base is None or base[6] < args.threshold):
+            acc[k] = v + (base if base is not None else 0.0)
+            n_fb += 1
+    if args.max_dip_fallback > args.max_dip:
+        print(f"pads using the --max-dip-fallback tracks: {n_fb}", flush=True)
 
     n_y, y0, dy, grid = read_map(args.parent)
     upd: Dict[tuple, np.ndarray] = {}
