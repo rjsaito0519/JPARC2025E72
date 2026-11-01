@@ -168,6 +168,9 @@ def main() -> int:
                     help="minimum smallest eigenvalue of M/N for the radial part")
     ap.add_argument("--threshold", type=int, default=100)
     ap.add_argument("--fill-rows", type=int, default=3)
+    ap.add_argument("--radial-rows", type=int, default=0,
+                    help="tangential-only pads take the radial part interpolated in row from the nearest pads "
+                         "with a full fit within this many rows in the same layer (0: radial part stays 0)")
     ap.add_argument("--momentum-width", type=float, default=0.01)
     ap.add_argument("--hit-resolution", type=float, default=0.6)
     ap.add_argument("--bt-weight", type=float, default=1.0)
@@ -266,6 +269,25 @@ def main() -> int:
             key = (k // 1000, k % 1000)
             c[i] = (upd[key][0], upd[key][1], args.trim * max(sg, args.min_sigma))
         pad_phi["c"] = c
+    # radial part of tangential-only pads: linear interpolation in row between the nearest fully fitted pads
+    tan_keys = {(int(r[0]) // 1000, int(r[0]) % 1000) for r in rec if r[4] == 0.0}
+    n_rint = 0
+    if args.radial_rows > 0:
+        full = {key for key in upd if key not in tan_keys}
+        for key in tan_keys:
+            lo = next(((j, upd[(key[0], key[1] - j)][1]) for j in range(1, args.radial_rows + 1)
+                       if (key[0], key[1] - j) in full), None)
+            hi = next(((j, upd[(key[0], key[1] + j)][1]) for j in range(1, args.radial_rows + 1)
+                       if (key[0], key[1] + j) in full), None)
+            if lo and hi:
+                upd[key][1] = (lo[1] * hi[0] + hi[1] * lo[0]) / (lo[0] + hi[0])
+            elif lo or hi:
+                upd[key][1] = (lo or hi)[1]
+            else:
+                continue
+            n_rint += 1
+        print(f"tangential-only pads with an interpolated radial part: {n_rint} / {len(tan_keys)}", flush=True)
+        rec = [r[:4] + (upd[(int(r[0]) // 1000, int(r[0]) % 1000)][1], r[5]) for r in rec]
     # fill thin pads from fitted neighbours in the same layer
     fill = {}
     for key in grid:
@@ -291,7 +313,7 @@ def main() -> int:
     r = np.array(rec)
     if args.npz:
         np.savez(args.npz, key=r[:, 0].astype(np.int64), n=r[:, 1], ev=r[:, 2], d_t=r[:, 3], d_r=r[:, 4],
-                 sigma=r[:, 5])
+                 sigma=r[:, 5], tan_only=np.isin(r[:, 0].astype(np.int64), [a * 1000 + b for a, b in tan_keys]))
     print(f"fitted pads {len(upd)} (tangential-only {n_tan}), filled {len(fill)}, "
           f"untouched {len(grid) - len(upd) - len(fill) - len(cf | zero)}")
     print(f"median|d_t|={np.median(np.abs(r[:, 3])):.4f} median|d_r|={np.median(np.abs(r[:, 4])):.4f} "
