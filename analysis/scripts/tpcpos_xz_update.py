@@ -21,6 +21,10 @@ which is degenerate with a cluster bias linear in that angle), towards 0; ridge 
 gives the tangential-only update. Pads whose smallest eigenvalue of M / N stays below
 --cond are tangential-only.
 
+With --robust R, the files are read R more times; each pass keeps only the hits whose residual
+lies within --trim times the core sigma of the previous pass's per-pad fit, so the update follows
+the peak of the residual distribution rather than its mean.
+
 Pads with fewer than --threshold hits get the median update of the fitted pads within
 --fill-rows rows in the same layer (if at least two exist); others keep the parent.
 Update (additive, y-flat): node += -alpha * d. Centre-frame pads and --zero-layers are
@@ -34,6 +38,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 from typing import Dict
@@ -48,8 +53,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tpc_position_update import (SPEC, Z_TARGET, mom_window, read_map, run_medians,  # noqa: E402
                                  soft_residual, write_map)
 
-# per-pad sums: [tt, tr, rr, t*rn, r*rn, w, n_hits]
-N_ACC = 7
+# per-pad sums: [tt, tr, rr, t*rn, r*rn, w, n_hits, rn*rn]
+N_ACC = 8
 
 
 def flat(v):
@@ -62,10 +67,16 @@ def add_hits(acc, key, nx, nz, rn, w, pad_phi):
     th = pad_phi["th"][np.searchsorted(pad_phi["keys"], key)]
     nt = nx * np.cos(th) - nz * np.sin(th)
     nr = nx * np.sin(th) + nz * np.cos(th)
+    if "c" in pad_phi:
+        # keep the core around the previous pass's per-pad estimate (d_t, d_r) within trim * sigma
+        c = pad_phi["c"][np.searchsorted(pad_phi["keys"], key)]
+        dev = rn - (nt * c[:, 0] + nr * c[:, 1])
+        ok = ~np.isfinite(c[:, 2]) | (np.abs(dev) < c[:, 2])
+        nt, nr, rn, key = nt[ok], nr[ok], rn[ok], key[ok]
     ww = np.full(len(rn), w)
     uk, inv = np.unique(key, return_inverse=True)
     cols = [np.bincount(inv, weights=c) for c in
-            (ww * nt * nt, ww * nt * nr, ww * nr * nr, ww * nt * rn, ww * nr * rn, ww, np.ones_like(rn))]
+            (ww * nt * nt, ww * nt * nr, ww * nr * nr, ww * nt * rn, ww * nr * rn, ww, np.ones_like(rn), ww * rn * rn)]
     for i, k in enumerate(uk):
         v = acc.setdefault(int(k), np.zeros(N_ACC))
         v += [c[i] for c in cols]
@@ -168,6 +179,10 @@ def main() -> int:
                     help="--max-dip-fallback only for layers >= this (layers 0-4 lie under the target)")
     ap.add_argument("--min-mom", type=float, default=0.15)
     ap.add_argument("--max-chisqr", type=float, default=1e9)
+    ap.add_argument("--robust", type=int, default=0,
+                    help="extra passes that keep only hits within --trim core sigma of the previous per-pad fit")
+    ap.add_argument("--trim", type=float, default=2.5)
+    ap.add_argument("--min-sigma", type=float, default=0.1, help="floor of the core sigma (mm) in the trim window")
     ap.add_argument("--zero-layers", default="")
     ap.add_argument("--npz", type=Path, default=None, help="per-pad fit results")
     ap.add_argument("--step", default="200000",
@@ -193,45 +208,64 @@ def main() -> int:
     zl = tuple(int(v) for v in args.zero_layers.split("-")) if args.zero_layers else None
 
     tasks = [("bt", p) for p in args.bt] + [("incl", p) for p in args.incl]
-    if args.jobs > 1:
-        with ProcessPoolExecutor(max_workers=args.jobs) as ex:
-            parts = list(ex.map(_accumulate_one, [(k, p, pad_phi, args) for k, p in tasks]))
-    else:
-        parts = [_accumulate_one((k, p, pad_phi, args)) for k, p in tasks]
-    acc: Dict[int, np.ndarray] = {}
-    acc_fb: Dict[int, np.ndarray] = {}
-    for part, part_fb in parts:
-        for dst, src in ((acc, part), (acc_fb, part_fb)):
-            for k, v in src.items():
-                dst.setdefault(k, np.zeros(N_ACC))
-                dst[k] += v
-    # pads below --threshold with the --max-dip tracks also take the steeper --incl tracks
-    n_fb = 0
-    for k, v in acc_fb.items():
-        base = acc.get(k)
-        if k // 1000 >= args.fallback_min_layer and (base is None or base[6] < args.threshold):
-            acc[k] = v + (base if base is not None else 0.0)
-            n_fb += 1
-    if args.max_dip_fallback > args.max_dip:
-        print(f"pads using the --max-dip-fallback tracks: {n_fb}", flush=True)
-
     n_y, y0, dy, grid = read_map(args.parent)
-    upd: Dict[tuple, np.ndarray] = {}
-    rec = []
-    n_tan = 0
-    for k, v in acc.items():
-        key = (k // 1000, k % 1000)
-        if v[6] < args.threshold or key in cf or key not in grid or (zl and zl[0] <= key[0] <= zl[1]):
-            continue
-        M = np.array([[v[0], v[1]], [v[1], v[2]]])
-        ev = np.linalg.eigvalsh(M / v[5])
-        if ev[0] < args.cond:
-            d_t, d_r = v[3] / v[0], 0.0
-            n_tan += 1
+    # sigma of a unit Gaussian truncated at +-trim, to undo the trimming in the core width
+    k_t = args.trim
+    phi_k = math.exp(-0.5 * k_t * k_t) / math.sqrt(2.0 * math.pi)
+    f_trunc = math.sqrt(1.0 - 2.0 * k_t * phi_k / math.erf(k_t / math.sqrt(2.0)))
+    for it in range(args.robust + 1):
+        if args.jobs > 1:
+            with ProcessPoolExecutor(max_workers=args.jobs) as ex:
+                parts = list(ex.map(_accumulate_one, [(k, p, pad_phi, args) for k, p in tasks]))
         else:
-            d_t, d_r = np.linalg.solve(M + np.diag([0.0, args.ridge * v[5]]), v[3:5])
-        upd[key] = np.array([d_t, d_r])
-        rec.append((k, v[6], ev[0], d_t, d_r))
+            parts = [_accumulate_one((k, p, pad_phi, args)) for k, p in tasks]
+        acc: Dict[int, np.ndarray] = {}
+        acc_fb: Dict[int, np.ndarray] = {}
+        for part, part_fb in parts:
+            for dst, src in ((acc, part), (acc_fb, part_fb)):
+                for k, v in src.items():
+                    dst.setdefault(k, np.zeros(N_ACC))
+                    dst[k] += v
+        # pads below --threshold with the --max-dip tracks also take the steeper --incl tracks
+        n_fb = 0
+        for k, v in acc_fb.items():
+            base = acc.get(k)
+            if k // 1000 >= args.fallback_min_layer and (base is None or base[6] < args.threshold):
+                acc[k] = v + (base if base is not None else 0.0)
+                n_fb += 1
+        if args.max_dip_fallback > args.max_dip:
+            print(f"pads using the --max-dip-fallback tracks: {n_fb}", flush=True)
+
+        upd: Dict[tuple, np.ndarray] = {}
+        rec = []
+        n_tan = 0
+        sig = {}
+        for k, v in acc.items():
+            key = (k // 1000, k % 1000)
+            if v[6] < args.threshold or key in cf or key not in grid or (zl and zl[0] <= key[0] <= zl[1]):
+                continue
+            M = np.array([[v[0], v[1]], [v[1], v[2]]])
+            ev = np.linalg.eigvalsh(M / v[5])
+            if ev[0] < args.cond:
+                d_t, d_r = v[3] / v[0], 0.0
+                n_tan += 1
+            else:
+                d_t, d_r = np.linalg.solve(M + np.diag([0.0, args.ridge * v[5]]), v[3:5])
+            d = np.array([d_t, d_r])
+            var = (v[7] - 2.0 * d @ v[3:5] + d @ M @ d) / v[5]
+            sig[k] = math.sqrt(max(var, 1e-6)) / (f_trunc if it > 0 else 1.0)
+            upd[key] = d
+            rec.append((k, v[6], ev[0], d_t, d_r, sig[k]))
+        s_med = np.median(list(sig.values()))
+        print(f"pass {it}: fitted pads {len(upd)}, median core sigma {s_med:.3f} mm, "
+              f"median|d_t|={np.median([abs(r[3]) for r in rec]):.4f} "
+              f"median|d_r|={np.median([abs(r[4]) for r in rec]):.4f}", flush=True)
+        c = np.full((len(pad_phi["keys"]), 3), np.nan)
+        for k, sg in sig.items():
+            i = np.searchsorted(pad_phi["keys"], k)
+            key = (k // 1000, k % 1000)
+            c[i] = (upd[key][0], upd[key][1], args.trim * max(sg, args.min_sigma))
+        pad_phi["c"] = c
     # fill thin pads from fitted neighbours in the same layer
     fill = {}
     for key in grid:
@@ -256,7 +290,8 @@ def main() -> int:
     write_map(args.out, n_y, y0, dy, grid)
     r = np.array(rec)
     if args.npz:
-        np.savez(args.npz, key=r[:, 0].astype(np.int64), n=r[:, 1], ev=r[:, 2], d_t=r[:, 3], d_r=r[:, 4])
+        np.savez(args.npz, key=r[:, 0].astype(np.int64), n=r[:, 1], ev=r[:, 2], d_t=r[:, 3], d_r=r[:, 4],
+                 sigma=r[:, 5])
     print(f"fitted pads {len(upd)} (tangential-only {n_tan}), filled {len(fill)}, "
           f"untouched {len(grid) - len(upd) - len(fill) - len(cf | zero)}")
     print(f"median|d_t|={np.median(np.abs(r[:, 3])):.4f} median|d_r|={np.median(np.abs(r[:, 4])):.4f} "
