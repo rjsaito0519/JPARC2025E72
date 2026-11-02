@@ -18,8 +18,10 @@ offset d shifts it by n . d, so per pad (t, r basis)
 with w = --bt-weight for beam-through hits and 1 otherwise, N = sum w. The ridge pulls
 the radial part, which a pad sees only from the spread of track crossing angles (and
 which is degenerate with a cluster bias linear in that angle), towards 0; ridge -> inf
-gives the tangential-only update. Pads whose smallest eigenvalue of M / N stays below
---cond are tangential-only.
+gives the tangential-only update. Pads whose smallest eigenvalue of M / N stays below --cond are
+tangential-only. With --anchor, the ridge pulls the radial offset from the anchor map (rather than
+the radial step) towards 0, so a radial part the residuals do not hold stays bounded instead of
+accumulating; tangential-only pads then move back towards the anchor's radial value.
 
 With --robust R, the files are read R more times; each pass keeps only the hits whose residual
 lies within --trim times the core sigma of the previous pass's per-pad fit, so the update follows
@@ -164,6 +166,9 @@ def main() -> int:
     ap.add_argument("--alpha", type=float, default=0.7)
     ap.add_argument("--ridge", type=float, default=0.02,
                     help="radial ridge per unit weight (0: free, large: tangential only)")
+    ap.add_argument("--anchor", type=Path, default=None,
+                    help="the ridge pulls the total radial offset from this map (not the radial step) towards 0; "
+                         "tangential-only pads go back to its radial value")
     ap.add_argument("--cond", type=float, default=0.01,
                     help="minimum smallest eigenvalue of M/N for the radial part")
     ap.add_argument("--threshold", type=int, default=100)
@@ -215,6 +220,15 @@ def main() -> int:
 
     tasks = [("bt", p) for p in args.bt] + [("incl", p) for p in args.incl]
     n_y, y0, dy, grid = read_map(args.parent)
+    # radial offset of the parent from the --anchor map (y-averaged), which the ridge pulls towards 0
+    r_prev: Dict[tuple, float] = {}
+    if args.anchor:
+        ref = read_map(args.anchor)[3]
+        for key, nodes in grid.items():
+            if key in ref and key[0] * 1000 + key[1] in phi:
+                th = phi[key[0] * 1000 + key[1]]
+                d = (np.array(nodes)[:, 1:3] - np.array(ref[key])[:, 1:3]).mean(axis=0)
+                r_prev[key] = d[0] * np.sin(th) + d[1] * np.cos(th)
     # sigma of a unit Gaussian truncated at +-trim, to undo the trimming in the core width
     k_t = args.trim
     phi_k = math.exp(-0.5 * k_t * k_t) / math.sqrt(2.0 * math.pi)
@@ -253,10 +267,11 @@ def main() -> int:
             M = np.array([[v[0], v[1]], [v[1], v[2]]])
             ev = np.linalg.eigvalsh(M / v[5])
             if ev[0] < args.cond:
-                d_t, d_r = v[3] / v[0], 0.0
+                d_t, d_r = v[3] / v[0], r_prev.get(key, 0.0)
                 n_tan += 1
             else:
-                d_t, d_r = np.linalg.solve(M + np.diag([0.0, args.ridge * v[5]]), v[3:5])
+                rhs = v[3:5] + np.array([0.0, args.ridge * v[5] * r_prev.get(key, 0.0)])
+                d_t, d_r = np.linalg.solve(M + np.diag([0.0, args.ridge * v[5]]), rhs)
             d = np.array([d_t, d_r])
             var = (v[7] - 2.0 * d @ v[3:5] + d @ M @ d) / v[5]
             sig[k] = math.sqrt(max(var, 1e-6)) / (f_trunc if it > 0 else 1.0)
