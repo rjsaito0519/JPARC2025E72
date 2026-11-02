@@ -1,165 +1,126 @@
-import os
-import statistics
-import numpy as np
-import matplotlib.pyplot as plt
-import uproot
-import pprint
+"""KVC one-photon gain (OPG) per (segment, channel) from the LED-run fits.
+
+Input : OUTPUT_DIR/root/kvc_opg.root (or the path given as the first argument), made by
+        analysis/src/kvc_opg.cpp. One entry = one fit of one LED run for (seg, ch), where
+          seg     : KVC segment 0-7 (one LED run measures seg s and s+4 together)
+          ch      : readout channel 0-3 = a, b, c, d
+          board_x : MPPC setting number 1-16 of that channel; settings 4*(seg%4)+1 .. 4*(seg%4)+4
+                    are the four MPPCs of the segment.
+Output: HDPRM gain lines "6 0 seg 0 ch p0 p1" (p1 = OPG; p0 is a placeholder, the pedestal comes
+        from update_hdprm.py) and a plot of the OPG of every MPPC (skip with --no-plot).
+"""
 import sys
 from pathlib import Path
 
-# Add shared library path
-# myanalysis/analysis/scripts/current_file
-# parent -> scripts
-# parent.parent -> analysis
-# parent.parent.parent -> ProjectRoot
+import numpy as np
+import matplotlib.pyplot as plt
+import uproot
+
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
-
 from lib import config
-
 import opg_tool
 
-debug_flag = 0
+HV = 58
+N_SEG = 8
+N_CH = 4
+N_MPPC = 4  # MPPCs per (seg, ch)
+CH_NAME = {0: "a", 1: "b", 2: "c", 3: "d"}
+RESULT_GAIN = 3  # index of the OPG in result_val / result_err
 
-# Apply plot settings from config
-for k, v in config.PLOT_SETTINGS.items():
-    plt.rcParams[k] = v
 
-root_file_path = config.OUTPUT_DIR / "root/kvc_opg.root"
+def mppc_index(seg, setting):
+    """MPPC 0-3 inside the segment from the setting number 1-16; error if it does not belong to seg."""
+    mppc = setting - 1 - N_MPPC * (seg % 4)
+    if not 0 <= mppc < N_MPPC:
+        raise ValueError(f"setting {setting} does not belong to seg {seg}")
+    return mppc
 
-file = uproot.open(root_file_path)
-tree = file["tree"].arrays(library="np")
 
-# -- distribute data to dict -----
-opg_data = {
-    "ch1": dict(),
-    "ch2": dict(),
-    "ch3": dict(),
-    "ch4": dict()    
-}
-ch_board_map ={
-    0: "a",
-    1: "b",
-    2: "c",
-    3: "d"
-}
-for i in range(len(tree["run_num"])):
-    hv    = tree["hv"][i]
-    seg   = tree["seg"][i]
-    ch    = tree["ch"][i]
-    ch_idx = tree["ch"][i]
-    board_suffix = ch_board_map[ch_idx]
-    board = tree[f"board_{board_suffix}"][i]
-    key = f"{hv}-{seg}-{ch}-{board}"
-    if key in opg_data[f"ch{ch+1}"]:
-        opg_data[f"ch{ch+1}"][key].append([tree["result_val"][i][3], tree["result_err"][i][3]])
-    else:
-        opg_data[f"ch{ch+1}"][key] = [[tree["result_val"][i][3], tree["result_err"][i][3]]]
+def read_fits(path):
+    """{(seg, ch, mppc): [(opg, err), ...]} for the fits taken at HV."""
+    tree = uproot.open(path)["tree"].arrays(library="np")
+    fits = {}
+    for i in range(len(tree["run_num"])):
+        if int(tree["hv"][i]) != HV:
+            continue
+        seg, ch = int(tree["seg"][i]), int(tree["ch"][i])
+        setting = int(tree[f"board_{CH_NAME[ch]}"][i])
+        key = (seg, ch, mppc_index(seg, setting))
+        fits.setdefault(key, []).append((tree["result_val"][i][RESULT_GAIN], tree["result_err"][i][RESULT_GAIN]))
+    return fits
 
-# import pprint
-# pprint.pprint(opg_data)
-# sys.exit()
 
-# -- calc weighted mean for each condition -----
-opg_mean_data  = np.full_like(np.zeros(8*16*2), np.nan).reshape(8, 16, 2)
-for ch in range(4):
-    for key in opg_data[f"ch{ch+1}"].keys():
-        n        = len(opg_data[f"ch{ch+1}"][key])
-        mppc_hv  = int(key.split("-")[0])
-        seg      = int(key.split("-")[1])
-        mppc_num = int(key.split("-")[3]) - 1
-        if n > 1:
-            opg = np.array(opg_data[f"ch{ch+1}"][key])
-            exist_outlier = opg_tool.check_condition(opg[:, 0])
-            if exist_outlier:
-                print(ch, key)
-                pprint.pprint(opg[:, 0])
-                print("-----")
-            mean, error = opg_tool.weighted_mean_and_error(opg[:, 0], 1.0/opg[:, 1]**2)
-        else:
-            mean, error = opg_data[f"ch{ch+1}"][key][0]
+def mean_per_mppc(fits):
+    """OPG array [seg][ch][mppc][val, err]; weighted mean over repeated fits, NaN if not measured."""
+    opg = np.full((N_SEG, N_CH, N_MPPC, 2), np.nan)
+    for (seg, ch, mppc), values in fits.items():
+        v = np.array(values)
+        if len(v) > 1 and opg_tool.check_condition(v[:, 0]):
+            print(f"outlier: seg {seg} ch {CH_NAME[ch]} mppc {mppc}: {np.round(v[:, 0], 3)}")
+        opg[seg, ch, mppc] = opg_tool.weighted_mean_and_error(v[:, 0], 1.0 / v[:, 1] ** 2)
+    return opg
 
-        if mppc_hv == 58:
-            idx = ch + 4*(seg//4)
-            opg_mean_data[idx][mppc_num] = [mean, error]
 
-if debug_flag: # for debug
-    pprint.pprint(opg_mean_data)
-    print(opg_mean_data.shape)
+def mean_per_channel(opg):
+    """OPG array [seg][ch][val, err]; weighted mean over the four MPPCs of (seg, ch)."""
+    gain = np.full((N_SEG, N_CH, 2), np.nan)
+    for seg in range(N_SEG):
+        for ch in range(N_CH):
+            d = opg[seg, ch]
+            gain[seg, ch] = opg_tool.weighted_mean_and_error(d[:, 0], 1.0 / d[:, 1] ** 2)
+    return gain
 
-for seg in range(8):
-    buf1 = []
-    buf2 = []
-    for ch in range(4):
-        buf1.extend(opg_mean_data[ch][4*(seg%4):4*(seg%4+1)][:, 0])
-        buf2.extend(opg_mean_data[ch][4*(seg%4):4*(seg%4+1)][:, 1])
-    buf1 = np.asarray(buf1)
-    buf2 = np.asarray(buf2)        
-    mean, error = opg_tool.weighted_mean_and_error(buf1, 1.0/buf2**2)
-    print(mean)
-sys.exit()
 
-for HV in [58]:
+def print_missing(opg):
+    for seg, ch, mppc in zip(*np.where(np.isnan(opg[:, :, :, 0]))):
+        print(f"not measured: seg {seg} ch {CH_NAME[ch]} mppc {mppc}")
+
+
+def print_hdprm_lines(gain):
+    # CId=6 (KVC), PlId=0, SegId=seg, AorT=0 (ADC), UorD=ch, p0=placeholder, p1=OPG
+    for seg in range(N_SEG):
+        for ch in range(N_CH):
+            print(f"6\t0\t{seg}\t0\t{ch}\t{0.0:.6e}\t{gain[seg, ch, 0]:.6e}")
+
+
+def plot(opg, gain, img_dir):
     fig = plt.figure(figsize=(15, 6))
-    ax  = fig.add_subplot(111)
-    legend_labels = []
-    for ch in range(4):
-        label_str = ""
-        for seg in range(8):
-            idx = ch
-            corrected_data = opg_mean_data[idx][4*(seg%4):4*(seg%4+1)]
-            ax.errorbar(
-                np.arange(4*seg+1, 4*(seg+1)+1), corrected_data[:, 0], yerr = corrected_data[:, 1], 
-                fmt = "s", capsize = 0, markeredgecolor = "k", ms = 8, ecolor='black',  color=f'C{idx}', markeredgewidth = 0.2, zorder = 3
-            )
-
-            try:
-                mean, error = opg_tool.weighted_mean_and_error(corrected_data[:, 0], 1.0/corrected_data[:, 1]**2)
-                if seg == 0:
-                    label_str += f"seg.{seg+1}-{ch_board_map[ch]}: mean = {mean:.2f}"
-                else:
-                    label_str += f"\nseg.{seg+1}-{ch_board_map[ch]}: mean = {mean:.2f}"
-                # print(ch, seg, format(mean, ".3f"), format(error, ".3f"))
-                # p1の更新用フォーマットで出力
-                # CId=6, PlId=0, SegId=seg, AorT=0, UorD=ch, p0=0.0, p1=mean
-                print(f"6\t0\t{seg}\t0\t{ch}\t{0.0:.6e}\t{mean:.6e}")
-
-                # 重み付き平均の横線を描画
-                ls = "--" if seg < 4 else ":"
-                ax.hlines(mean, 4*seg+0.5, 4*(seg+1)+0.5, color=f'C{idx}', linestyle=ls)
-
-                # エラー帯を描画
-                ax.fill_between(
-                    x=[4*seg+0.5, 4*(seg+1)+0.5],  # x範囲をデータ範囲に拡張
-                    y1=mean - error,             # エラー範囲下限
-                    y2=mean + error,             # エラー範囲上限
-                    color=f'C{idx}',
-                    alpha=0.2
-                )
-            except:
-                pass
-
-            if seg == 3 or seg == 7:
-                legend_labels.append([idx, ls, label_str])
-                label_str = ""
-
-    ax.set_xticks(np.arange(1, 33))
-    xtick_labels = [f"{i%16+1}" if i%2 == 0 else f"" for i in range(0, 32)]
-    ax.set_xticklabels(xtick_labels, rotation = 0)
-    # ax.set_xlim(0, 17)
-    ax.set_xlabel("MPPC number")
-
+    ax = fig.add_subplot(111)
+    for ch in range(N_CH):
+        for seg in range(N_SEG):
+            x = N_MPPC * seg + np.arange(1, N_MPPC + 1)
+            d = opg[seg, ch]
+            ax.errorbar(x, d[:, 0], yerr=d[:, 1], fmt="s", capsize=0, markeredgecolor="k", ms=8,
+                        ecolor="black", color=f"C{ch}", markeredgewidth=0.2, zorder=3)
+            mean, err = gain[seg, ch]
+            ax.hlines(mean, x[0] - 0.5, x[-1] + 0.5, color=f"C{ch}", linestyle="--")
+            ax.fill_between([x[0] - 0.5, x[-1] + 0.5], mean - err, mean + err, color=f"C{ch}", alpha=0.2)
+        ax.plot([], [], color=f"C{ch}", linestyle="--", label=f"ch {CH_NAME[ch]}")
+    ax.set_xticks(N_MPPC * np.arange(N_SEG) + 2.5)
+    ax.set_xticklabels([f"seg {s}" for s in range(N_SEG)])
+    ax.set_xlabel("segment (4 MPPCs each)")
     ax.set_ylabel("One Photon Gain [arb. unit]")
-    for i, ls, label in legend_labels:
-        ax.plot([], [], color=f'C{i}', linestyle=ls, label=label)  # ダミー線を作成して凡例に追加
-    ax.legend(loc='upper left', fontsize = 18, bbox_to_anchor=(1.0, 1.025), ncol=2)
-    plt.subplots_adjust(left = 0.1, right = 0.56, top = 0.98, bottom = 0.15)
-    
-    img_dir = config.OUTPUT_DIR / "img"
+    ax.legend(loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    plt.subplots_adjust(left=0.1, right=0.85, top=0.98, bottom=0.15)
     img_dir.mkdir(parents=True, exist_ok=True)
-    
-    plt.savefig(img_dir / f"kvc_opg_{HV:.0f}.png", format='png', bbox_inches='tight', dpi=600, transparent=True)
-    plt.savefig(img_dir / f"kvc_opg_{HV:.0f}.jpg", format='jpg', bbox_inches='tight', dpi=600, transparent=True)
-    plt.show()
-    
-    
+    plt.savefig(img_dir / f"kvc_opg_{HV}.png", format="png", bbox_inches="tight", dpi=600, transparent=True)
+    plt.savefig(img_dir / f"kvc_opg_{HV}.jpg", format="jpg", bbox_inches="tight", dpi=600, transparent=True)
+
+
+def main():
+    for k, v in config.PLOT_SETTINGS.items():
+        plt.rcParams[k] = v
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    path = Path(args[0]) if args else config.OUTPUT_DIR / "root/kvc_opg.root"
+    opg = mean_per_mppc(read_fits(path))
+    print_missing(opg)
+    gain = mean_per_channel(opg)
+    print_hdprm_lines(gain)
+    if "--no-plot" not in sys.argv:
+        plot(opg, gain, config.OUTPUT_DIR / "img")
+        plt.show()
+
+
+if __name__ == "__main__":
+    main()

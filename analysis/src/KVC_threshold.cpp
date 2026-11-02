@@ -42,16 +42,17 @@ static const Double_t kvc_ratio_closeup_xmax = 45.;
 static const Double_t kvc_ped_fit_min = -5.;
 static const Double_t kvc_ped_fit_max = 30.;
 
-// KVC gain (p1) per segment and channel [seg][a,b,c,d]. From HodoParam_run02140_Pi (CId=6, AorT=0, UorD=0,1,2,3).
+// KVC gain (p1) per segment and channel [seg][a,b,c,d]: one-photon gain from analysis/scripts/kvc_opg_plot.py
+// (LED runs 3054-3134), same values as HDPRM CId=6, AorT=0, UorD=0-3.
 static const std::vector<std::vector<Double_t>> kvc_gain = {
-    {9.405720e+00, 8.864464e+00, 9.281763e+00, 9.215651e+00},  // seg 0
-    {9.293611e+00, 1.002469e+01, 9.597398e+00, 9.984777e+00},  // seg 1
-    {9.794817e+00, 9.032530e+00, 9.604148e+00, 9.305942e+00},  // seg 2
-    {8.935510e+00, 8.566897e+00, 9.156487e+00, 9.693401e+00},  // seg 3
-    {9.405720e+00, 8.864464e+00, 9.281763e+00, 9.215651e+00},  // seg 4
-    {9.293611e+00, 1.002469e+01, 9.597398e+00, 9.984777e+00},  // seg 5
-    {9.794817e+00, 9.032530e+00, 9.604148e+00, 9.305942e+00},  // seg 6
-    {8.935510e+00, 8.566897e+00, 9.156487e+00, 9.693401e+00},  // seg 7
+    {9.405706e+00, 8.864464e+00, 9.281772e+00, 9.215651e+00},  // seg 0
+    {9.293556e+00, 1.002469e+01, 9.597402e+00, 9.984764e+00},  // seg 1
+    {9.795198e+00, 9.032621e+00, 9.604158e+00, 9.305986e+00},  // seg 2
+    {8.935581e+00, 8.566910e+00, 9.156602e+00, 9.693400e+00},  // seg 3
+    {9.659708e+00, 8.805366e+00, 9.812270e+00, 8.840765e+00},  // seg 4
+    {9.527567e+00, 8.864076e+00, 9.257219e+00, 8.911572e+00},  // seg 5
+    {9.066824e+00, 8.718685e+00, 9.867835e+00, 8.810722e+00},  // seg 6
+    {8.710268e+00, 8.893992e+00, 8.840014e+00, 8.946527e+00},  // seg 7
 };
 
 void analyze(Int_t run_num){
