@@ -1,108 +1,93 @@
-from re import U
-import uproot
+"""HDPRM rows {"CId-PlId-SegId-AorT-UorD": [values]} from the Hodo fit outputs (results/root).
+
+AorT: 0 = ADC (values pedestal, gain), 1 = TDC (values offset, TDC_GAIN).
+The detector is given by the caller (update_param.py); CId and the number of UorD rows come from
+lib/config.py.
+"""
 import sys
-import numpy as np
+from pathlib import Path
 
-detector_id_list = {
-    "BHT":  1,
-    "T0":   2,
-    "BH2":  3,
-    "BAC":  4,
-    "HTOF": 5,
-    "KVC":  6,
-    "T1":   7, 
-    "CVC":  8,
-    "SAC3": 9,
-    "SFV": 10,
-}
+import uproot
 
-detector_n_ud_list = {
-    "BHT":  2,
-    "T0":   2,
-    "BH2":  2,
-    "BAC":  1,
-    "HTOF": -1,
-    "KVC":  5,
-    "T1":   1, 
-    "CVC":  2,
-    "SAC3": 1,
-    "SFV":  1,
-}
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from lib import config  # noqa: E402
 
-# -- prepare HDPRM data  -----------------------------------
-def make_dictdata(root_file_path, good_ch_range = [-np.inf, np.inf], is_t0_offset = False):
+TDC_GAIN = -0.0009765625  # ns per TDC channel (-1/1024), written as the TDC gain column
 
-    file = uproot.open(root_file_path)
-    tree = file["tree"].arrays(library="np")
-    detector_id = -1
-    n_ud = -1
-    for key, det_id in detector_id_list.items():
-        if key in root_file_path:
-            detector_id = det_id
-            n_ud = detector_n_ud_list[key]
-            break
 
-    if detector_id == -1:
-        print("something wrong")
-        sys.exit()
+def read_tree(root_file_path):
+    return uproot.open(root_file_path)["tree"].arrays(library="np")
 
-    data = dict()
-    if is_t0_offset:
-        detector_id = detector_id_list["BH2"]
-        for i in range(len(tree["offset_p0_val"])):
-            # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
-            ch = tree["ch"][i]
-            key = f"{detector_id}-0-{ch:.0f}-1-2"
-            data[key] = [ tree["offset_p0_val"][i][0], 1.0 ]
-    else:
-        for i in range(len(tree["ch"])):
-            # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
-            ch = tree["ch"][i]
-            if n_ud != -1:
-                if detector_id == detector_id_list["BAC"]:
-                    if "tdc_p0_val" in tree.keys():
-                        key = f"{detector_id}-0-4-1-0"
-                        data[key] = [ tree["tdc_p0_val"][0][0], -0.0009765625 ]
-                elif detector_id == detector_id_list["KVC"]:
-                    if "tdc_p0_val" in tree.keys():
-                        key = f"{detector_id}-0-{ch:.0f}-1-4"
-                        data[key] = [ tree["tdc_p0_val"][i][0], -0.0009765625 ]
 
-                for UorD in range(n_ud):
-                    if detector_id in [detector_id_list["BAC"], detector_id_list["KVC"]] :
-                        if "adc_p0_val" in tree.keys():
-                            key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
-                            data[key] = [ tree["adc_p0_val"][i][UorD] ]
-                    else:
-                        # -- ADC -----
-                        if "adc_p0_val" in tree.keys():
-                            key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
-                            data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
-
-                        # -- TDC -----
-                        if "tdc_p0_val" in tree.keys():
-                            key = f"{detector_id}-0-{ch:.0f}-1-{UorD:.0f}"
-                            data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ]
-            else:
-                if detector_id == detector_id_list["HTOF"]:
-                    # HTOF HDPRM (this function/param_type) is TDC-only (All-event input,
-                    # 3 UorD entries: U, D, S). HTOF ADC is handled separately by
-                    # make_htofprm_dictdata() below (param_type "htofprm"), which uses the
-                    # dE/dx-tagged DstTPCHelixHTOF output instead of the Hodo-level tree.
-                    for UorD in range(3):
-                        if "tdc_p0_val" in tree.keys():
-                            key = f"{detector_id}-0-{ch:.0f}-1-{UorD:.0f}"
-                            data[key] = [ tree["tdc_p0_val"][i][UorD], -0.0009765625 ]
-
+def ud_counter_rows(tree, cid, n_ud):
+    """Counters with U/D (or single) ADC and TDC per segment: ADC (pedestal, gain), TDC offset."""
+    data = {}
+    for i, ch in enumerate(tree["ch"]):
+        for ud in range(n_ud):
+            if "adc_p0_val" in tree:
+                data[f"{cid}-0-{ch:.0f}-0-{ud}"] = [tree["adc_p0_val"][i][ud], tree["adc_p1_val"][i][ud]]
+            if "tdc_p0_val" in tree:
+                data[f"{cid}-0-{ch:.0f}-1-{ud}"] = [tree["tdc_p0_val"][i][ud], TDC_GAIN]
     return data
-# ---------------------------------------------------------------------------
+
+
+def bac_rows(tree, cid):
+    """BAC: ADC pedestal per segment (gain kept); one TDC offset on the sum channel (seg 4)."""
+    data = {}
+    for i, ch in enumerate(tree["ch"]):
+        if "tdc_p0_val" in tree:
+            data[f"{cid}-0-4-1-0"] = [tree["tdc_p0_val"][0][0], TDC_GAIN]
+        if "adc_p0_val" in tree:
+            data[f"{cid}-0-{ch:.0f}-0-0"] = [tree["adc_p0_val"][i][0]]
+    return data
+
+
+def kvc_rows(tree, cid, n_ud):
+    """KVC: ADC pedestal of a-d and SUM (one-photon gain kept); TDC offset on SUM (UorD 4)."""
+    data = {}
+    for i, ch in enumerate(tree["ch"]):
+        if "tdc_p0_val" in tree:
+            data[f"{cid}-0-{ch:.0f}-1-4"] = [tree["tdc_p0_val"][i][0], TDC_GAIN]
+        for ud in range(n_ud):
+            if "adc_p0_val" in tree:
+                data[f"{cid}-0-{ch:.0f}-0-{ud}"] = [tree["adc_p0_val"][i][ud]]
+    return data
+
+
+def htof_tdc_rows(tree, cid):
+    """HTOF TDC offsets of U, D, S (ADC is make_htofprm_dictdata)."""
+    data = {}
+    for i, ch in enumerate(tree["ch"]):
+        for ud in range(3):
+            if "tdc_p0_val" in tree:
+                data[f"{cid}-0-{ch:.0f}-1-{ud}"] = [tree["tdc_p0_val"][i][ud], TDC_GAIN]
+    return data
+
+
+def make_dictdata(root_file_path, det):
+    """HDPRM rows of one detector's *_HDPRM fit output."""
+    tree, cid = read_tree(root_file_path), config.DETECTOR_I_LIST[det]
+    if det == "HTOF":
+        return htof_tdc_rows(tree, cid)
+    if det == "BAC":
+        return bac_rows(tree, cid)
+    if det == "KVC":
+        return kvc_rows(tree, cid, config.DETECTOR_N_UD_LIST[det])
+    return ud_counter_rows(tree, cid, config.DETECTOR_N_UD_LIST[det])
+
+
+def make_t0_offset_dictdata(root_file_path):
+    """BH2 time-zero offset per segment (UorD 2) from the T0_Offset output."""
+    tree, cid = read_tree(root_file_path), config.DETECTOR_I_LIST["BH2"]
+    return {f"{cid}-0-{ch:.0f}-1-2": [tree["offset_p0_val"][i][0], 1.0] for i, ch in enumerate(tree["ch"])}
+
 
 # -- prepare HTOF ADC data (param_type "htofprm") -----------------------------
 def make_htofprm_dictdata(root_file_path):
     """HTOF ADC pedestal / MIP (HDPRM "gain" column) from the HTOF_Calib ADC output
     (run{run}_HTOF_ADC_Pi.root; MIP from dE/dx pion-tagged DstTPCHelixHTOF tracks).
-    UorD: 0=U, 1=D, 2=S (see update_hdprm.py detector_n_ud_list / AorT=0 rows)."""
-    detector_id = detector_id_list["HTOF"]
+    UorD: 0=U, 1=D, 2=S."""
+    detector_id = config.DETECTOR_I_LIST["HTOF"]
     file = uproot.open(root_file_path)
     tree = file["tree"].arrays(library="np")
 
@@ -158,34 +143,4 @@ def htof_phc_quality_report(root_file_path, min_offset_n=100):
         if "tof_offset_n" in tree and int(tree["tof_offset_n"][i]) < min_offset_n:
             off.append((ch, int(tree["tof_offset_n"][i])))
     return lim, off
-# ---------------------------------------------------------------------------
-
-# -- write HDPRM file  -----------------------------------
-def update_file(target_file, data):
-    buf = []
-    n_update = 0
-    with open(target_file) as f:
-        for line in f:
-            s_list = line.split()
-            if s_list[0][0] == "#":
-                buf.append(s_list)
-                continue
-            # key structure
-            # CId - PlId - SegId - AorT(0:adc, 1:tdc) - UorD(0:u, 1:d)
-            key_length = 5
-            key = s_list[0]
-            for i in range(1, key_length):
-                key += "-"+s_list[i]
-            if key in data.keys():
-                for i in range(len(data[key])):
-                    s_list[i+key_length] = data[key][i]
-                n_update += 1               
-            buf.append(s_list)
-
-    with open(target_file, mode='w') as f:
-        for l in buf:
-            f.write('\t'.join(str(item) for item in l))
-            f.write("\n")
-
-    return len(data) == n_update
 # ---------------------------------------------------------------------------

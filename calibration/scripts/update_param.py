@@ -76,7 +76,6 @@ import update_phc
 import update_dctdc
 import update_residual
 import phc_conf
-import hdprm_conf
 
 def get_root_file(run_num, det, suffix, type_str):
     """Search for ROOT file in scratch, decode, or local output dirs."""
@@ -184,20 +183,12 @@ if args.param_type == "hdprm":
     detectors = config.hodo_detectors("hdprm", args.ftof)
     results = require_fresh_results([(d, d, args.suffix, "HDPRM") for d in detectors], [hodo_decode()])
     for det in detectors:
-        suf = args.suffix
         root_file = results.get(det)
         if root_file is None:
             continue
-        # Get limits
-        det_lower = det.lower()
-        conf_key = f"{args.run_num:05d}_{suf}_{det_lower}"
-        good_range = [-np.inf, np.inf]
-        if hasattr(hdprm_conf, 'limits_dict') and conf_key in hdprm_conf.limits_dict:
-             good_range = hdprm_conf.limits_dict[conf_key]
-             
-        data = update_hdprm.make_dictdata(str(root_file), good_ch_range=good_range)
+        data = update_hdprm.make_dictdata(str(root_file), det)
         all_new_data.update(data)
-        print(f"  - {det:<6}: {color_ok()} {len(data)} entries found (Range: {good_range}, suffix={suf})")
+        print(f"  - {det:<6}: {color_ok()} {len(data)} entries found")
 
 elif args.param_type == "htofprm":
     # HTOF TDC + ADC (pedestal/MIP) from HTOF_Calib (run_hodo.py mode "htof").
@@ -206,15 +197,9 @@ elif args.param_type == "htofprm":
                                      ("HTOF ADC", "HTOF", args.suffix, "ADC")], htof_inputs())
     root_file = results.get("HTOF TDC")
     if root_file:
-        conf_key = f"{args.run_num:05d}_All_htof"
-        good_range = [-np.inf, np.inf]
-        if hasattr(hdprm_conf, 'limits_dict') and conf_key in hdprm_conf.limits_dict:
-             good_range = hdprm_conf.limits_dict[conf_key]
-        data = update_hdprm.make_dictdata(str(root_file), good_ch_range=good_range)
+        data = update_hdprm.make_dictdata(str(root_file), "HTOF")
         all_new_data.update(data)
-        print(f"  - HTOF TDC: {color_ok()} {len(data)} entries found (Range: {good_range})")
-    else:
-        print(colored(f"  - HTOF TDC: no run{args.run_num:05d}_HTOF_HDPRM_All.root found", "yellow"))
+        print(f"  - HTOF TDC: {color_ok()} {len(data)} entries found")
     # ADC: dE/dx pion-tagged MIP (Pi only; see HTOF_Calib.cpp).
     root_file = results.get("HTOF ADC")
     if root_file:
@@ -226,13 +211,11 @@ elif args.param_type == "htofprm":
             print(colored(f"  - HTOF ADC: {len(flagged)} channel(s) with a fit-quality flag (written anyway):", "yellow"))
             for seg, side, flag, mip in flagged:
                 print(colored(f"      seg{seg}{side}: flag {flag}, MIP {mip:.1f}", "yellow"))
-    else:
-        print(colored(f"  - HTOF ADC: no run{args.run_num:05d}_HTOF_ADC_{args.suffix}.root found", "yellow"))
 
 elif args.param_type == "t0":
     root_file = require_fresh_results([("T0_Offset", "T0_Offset", args.suffix, "")], [hodo_decode()]).get("T0_Offset")
     if root_file:
-        data = update_hdprm.make_dictdata(str(root_file), is_t0_offset=True)
+        data = update_hdprm.make_t0_offset_dictdata(str(root_file))
         all_new_data.update(data)
         print(f"  - T0_Offset : {color_ok()} {len(data)} entries found")
 
@@ -254,7 +237,7 @@ elif args.param_type in ("hdphc", "htofphc"):
         if hasattr(phc_conf, 'limits_dict') and conf_key in phc_conf.limits_dict:
              good_range = phc_conf.limits_dict[conf_key]
 
-        data = update_phc.make_dictdata(str(root_file), good_ch_range=good_range)
+        data = update_phc.make_dictdata(str(root_file), det, good_ch_range=good_range)
         all_new_data.update(data)
         print(f"  - {det:<6}: {color_ok()} {len(data)} entries found (Range: {good_range})")
         if det == "HTOF":
