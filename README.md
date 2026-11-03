@@ -17,6 +17,7 @@ cp lib/paths_example.py lib/paths.py   # analyzer・param・データ置き場�
 | パス | 中身 |
 |---|---|
 | `calibration/scripts/` | 較正のフロントエンド（`create_runlist.py`、`set_tdc_window.py`、`run_hodo.py`、`run_dcprm.py`、`run_d5.py`、`run_tpc.py`、`update_param.py` など） |
+| `calibration/tdc_window_web/` | TDC window をブラウザで決めるツール（自分の PC から ssh のトンネル越しに使う。Wiki の TDC-Window） |
 | `calibration/src/` | 較正の fit 本体（C++） |
 | `analysis/` | 較正以外の解析・確認用（C++ / Python） |
 | `common/` | 共通部品。`common/include/params.h` に fit 範囲のヒントや run 固有の設定 |

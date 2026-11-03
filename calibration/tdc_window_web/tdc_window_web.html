@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>TDC window</title>
+<script src="/plotly.min.js"></script>
+<style>
+  body { font-family: sans-serif; margin: 12px; }
+  #tabs button { margin: 2px; padding: 4px 10px; }
+  #tabs button.on { background: #333; color: #fff; }
+  #tabs button.done { border: 2px solid #c00; }
+  #bar { margin: 8px 0; }
+  #bar button { padding: 4px 14px; margin-right: 6px; }
+  #status { font-family: monospace; white-space: pre; }
+  #plot { width: 100%; height: 70vh; }
+  #runbar { margin-bottom: 6px; }
+  #runbar input { width: 7em; font-size: 110%; }
+  #head { font-family: monospace; font-size: 90%; white-space: pre; }
+  .warn { color: #c00; }
+  .hint { color: #666; font-size: 90%; }
+</style>
+</head>
+<body>
+<div id="runbar">
+  run <input id="run" list="runlist" placeholder="番号"> <datalist id="runlist"></datalist>
+  <button id="prevrun">◀ 前の run</button> <button id="nextrun">次の run ▶</button>
+  <span id="runmsg" class="warn"></span>
+</div>
+<div id="head"></div>
+<div id="tabs"></div>
+<div id="bar">
+  <button id="reset">やり直し (r)</button>
+  <button id="write" disabled>書く (w)</button>
+  <label id="seplabel"><input type="checkbox" id="sep" checked> π/K の境目も決める（3 回目のクリック）</label>
+</div>
+<div id="status"></div>
+<div id="plot"></div>
+<div class="hint">クリック: 左右の端（BHT は 3 回目が π/K の境目）。ドラッグで拡大、ダブルクリックで全体。←/→ で検出器、run は上の欄（番号を打つか一覧から選ぶ）か ◀ ▶ で切り替え。灰色 = 今の window、赤 = 新しく選んだもの。</div>
+<script>
+let D = null, det = null, clicks = [], written = new Set(), RUNS = [];
+const plot = document.getElementById("plot");
+const runInput = document.getElementById("run");
+
+async function init() {
+  const r = await (await fetch("/runs")).json();
+  RUNS = r.runs.map(x => x.run);
+  document.getElementById("runlist").innerHTML =
+    r.runs.map(x => `<option value="${x.run}">${x.decode}</option>`).join("");
+  const first = r.first ?? RUNS[0];
+  if (first !== undefined) await load(first);
+}
+
+async function load(run) {
+  document.getElementById("runmsg").textContent = `run ${run} を読んでいます…`;
+  const d = await (await fetch(`/data?run=${run}`)).json();
+  if (d.error) { document.getElementById("runmsg").textContent = d.error; return; }
+  document.getElementById("runmsg").textContent = "";
+  D = d; runInput.value = D.run;
+  const decode = D.decode.split("/").pop();
+  const notZero = !/_Hodo_0\.root$/.test(decode);
+  const head = document.getElementById("head");
+  head.innerHTML = "";
+  head.append(`decode: ${D.decode}`);
+  if (notZero) { const w = document.createElement("span"); w.className = "warn"; w.textContent = "  （_0 の decode ではない）"; head.append(w); }
+  head.append(`\n書き込み先: ${D.target}` + (D.shown !== D.target ? `\n（まだ無いので、表示している今の値は ${D.shown}）` : ""));
+  const tabs = document.getElementById("tabs");
+  tabs.innerHTML = "";
+  for (const d of Object.keys(D.dets)) {
+    const b = document.createElement("button");
+    b.textContent = d; b.id = "tab_" + d;
+    b.onclick = () => show(d);
+    tabs.appendChild(b);
+  }
+  show(det && D.dets[det] ? det : Object.keys(D.dets)[0]);
+}
+
+function stepRun(k) {
+  const i = RUNS.indexOf(D ? D.run : -1);
+  const j = i < 0 ? 0 : i + k;
+  if (j >= 0 && j < RUNS.length) load(RUNS[j]);
+}
+
+function needSep() { return det === "BHT" && document.getElementById("sep").checked; }
+function nClicks() { return needSep() ? 3 : 2; }
+
+const PI_COLOR = "#2ca02c", K_COLOR = "#9467bd";
+
+function rect(x0, x1, color, op) {
+  return {type: "rect", xref: "x", yref: "paper", x0, x1, y0: 0, y1: 1, fillcolor: color, opacity: op, line: {width: 0}};
+}
+function vline(x, color, dash, width) {
+  return {type: "line", xref: "x", yref: "paper", x0: x, x1: x, y0: 0, y1: 1, line: {color, dash, width}};
+}
+function label(x, text, color, y) {
+  return {x, y, xref: "x", yref: "paper", text, showarrow: false, font: {color, size: 14},
+          bgcolor: "rgba(255,255,255,0.8)"};
+}
+
+// Edges sorted, and the pi/K boundary when the third click exists.
+function selection() {
+  const [lo, hi] = clicks.slice(0, 2).sort((a, b) => a - b);
+  return {lo, hi, sep: clicks.length === 3 ? clicks[2] : null};
+}
+function sepInside() {
+  const s = selection();
+  return s.sep === null || (s.lo < s.sep && s.sep < s.hi);
+}
+
+function overlay() {
+  const s = [], a = [], cur = D.current[det + "_TDC"], pi = D.current[det + "_TDC_Pi"];
+  if (cur) s.push(rect(cur[0], cur[1], "gray", 0.2));
+  if (det === "BHT" && pi) { s.push(vline(pi[1], "gray", "dot", 2)); a.push(label(pi[1], "今の境目", "gray", 0.03)); }
+  clicks.forEach((x, i) => {
+    const isSep = i === 2;
+    s.push(vline(x, isSep ? "black" : "red", isSep ? "solid" : "dash", isSep ? 3 : 2));
+    a.push(label(x, isSep ? "π/K 境目" : "端", isSep ? "black" : "red", 1.04));
+  });
+  if (clicks.length >= 2) {
+    const {lo, hi, sep} = selection();
+    if (sep !== null && sepInside()) {
+      s.push(rect(lo, sep, PI_COLOR, 0.25), rect(sep, hi, K_COLOR, 0.25));
+      a.push(label(0.5 * (lo + sep), "π", PI_COLOR, 0.95), label(0.5 * (sep + hi), "K", K_COLOR, 0.95));
+    } else {
+      s.push(rect(lo, hi, "red", 0.15));
+    }
+  }
+  return {shapes: s, annotations: a};
+}
+
+function initialRange(edges) {
+  const cur = D.current[det + "_TDC"];
+  if (!cur) return [edges[0], edges[edges.length - 1]];
+  const w = cur[1] - cur[0];
+  return [cur[0] - w, cur[1] + w];
+}
+
+function show(d) {
+  det = d; clicks = [];
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.id === "tab_" + d));
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("done", written.has(`${D.run}:${b.id.slice(4)}`)));
+  document.getElementById("seplabel").style.display = d === "BHT" ? "" : "none";
+  const h = D.dets[d], x = h.edges.slice(0, -1).map((e, i) => 0.5 * (e + h.edges[i + 1]));
+  const colors = {U: "#e07000", D: "#1f6fc0", sum: "#333"};
+  const traces = Object.entries(h.lines).map(([k, y]) => ({
+    x, y: y.map(v => v > 0 ? v : null), mode: "lines", line: {shape: "hvh", color: colors[k], width: 1.5},
+    name: k, connectgaps: false}));
+  Plotly.newPlot(plot, traces, {
+    title: `run ${D.run}  ${d} TDC`, hovermode: "x", dragmode: "zoom",
+    xaxis: {title: "TDC [ch]", range: initialRange(h.edges), showspikes: true, spikemode: "across", spikethickness: 1},
+    yaxis: {type: "log", title: "counts"}, ...overlay(), margin: {t: 50}
+  }, {displaylogo: false, responsive: true});
+  plot.on("plotly_click", ev => { if (ev.points.length) addClick(ev.points[0].x); });
+  status();
+}
+
+function addClick(x) {
+  if (clicks.length >= nClicks()) clicks = [];
+  clicks.push(x);
+  Plotly.relayout(plot, overlay());
+  status();
+}
+
+function status() {
+  const cur = D.current[det + "_TDC"], pi = D.current[det + "_TDC_Pi"];
+  let t = `今: ${cur ? cur.map(Math.round).join(" – ") : "なし"}`;
+  if (det === "BHT" && pi) t += `   π/K 境目 ${Math.round(pi[1])}`;
+  if (clicks.length) {
+    const s = clicks.slice(0, 2).sort((a, b) => a - b).map(Math.round);
+    t += `\n新: ${s.join(" – ")}` + (clicks.length === 3 ? `   π/K 境目 ${Math.round(clicks[2])}` : "");
+  }
+  const next = clicks.length >= nClicks() ? null : clicks.length < 2 ? "端" : "π/K 境目";
+  if (next) t += `\n次のクリック: ${next}`;
+  if (!sepInside()) t += `\n⚠ 境目が両端の外にあります。やり直してください。`;
+  document.getElementById("status").textContent = t;
+  document.getElementById("write").disabled = clicks.length !== nClicks() || !sepInside();
+}
+
+async function write() {
+  if (clicks.length !== nClicks() || !sepInside()) return;
+  const body = {run: D.run, det, ...selection()};
+  const res = await (await fetch("/write", {method: "POST", body: JSON.stringify(body)})).json();
+  if (res.updated_rows !== res.expected_rows)
+    alert(`書けた行が ${res.updated_rows}/${res.expected_rows} です。UserParam にその行があるか確かめてください。`);
+  written.add(`${D.run}:${det}`);
+  await load(D.run);
+}
+
+document.getElementById("reset").onclick = () => { clicks = []; Plotly.relayout(plot, overlay()); status(); };
+document.getElementById("write").onclick = write;
+document.getElementById("sep").onchange = () => { clicks = []; Plotly.relayout(plot, overlay()); status(); };
+runInput.addEventListener("change", () => { if (/^\d+$/.test(runInput.value)) load(parseInt(runInput.value)); });
+document.getElementById("prevrun").onclick = () => stepRun(-1);
+document.getElementById("nextrun").onclick = () => stepRun(+1);
+document.addEventListener("keydown", e => {
+  if (e.target === runInput || !D) return;
+  const names = Object.keys(D.dets), i = names.indexOf(det);
+  if (e.key === "ArrowRight") show(names[(i + 1) % names.length]);
+  else if (e.key === "ArrowLeft") show(names[(i - 1 + names.length) % names.length]);
+  else if (e.key === "w") write();
+  else if (e.key === "r") document.getElementById("reset").click();
+});
+init();
+</script>
+</body>
+</html>
