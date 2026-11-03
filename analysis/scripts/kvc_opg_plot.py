@@ -78,10 +78,12 @@ def print_missing(opg):
 
 
 def print_hdprm_lines(gain):
-    # CId=6 (KVC), PlId=0, SegId=seg, AorT=0 (ADC), UorD=ch, p0=placeholder, p1=OPG
+    # CId=6 (KVC), PlId=0, SegId=seg, AorT=0 (ADC), UorD=ch, p0=placeholder, p1=OPG.
+    # UorD=4 (SUM) has no LED fit; its p1 is the mean OPG of a-d of the segment.
     for seg in range(N_SEG):
         for ch in range(N_CH):
             print(f"6\t0\t{seg}\t0\t{ch}\t{0.0:.6e}\t{gain[seg, ch, 0]:.6e}")
+        print(f"6\t0\t{seg}\t0\t{N_CH}\t{0.0:.6e}\t{np.mean(gain[seg, :, 0]):.6e}")
 
 
 def plot(opg, gain, img_dir):
