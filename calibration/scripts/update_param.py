@@ -113,15 +113,17 @@ def get_root_file(run_num, det, suffix, type_str):
     return None
 
 def require_fresh_results(items, inputs):
-    """Paths of the fit outputs items = [(label, det, suffix, type_str)]; exit without writing
-    if one is missing or older than one of the decoded inputs (a leftover of an earlier fit)."""
+    """{label: path} of the fit outputs items = [(label, det, suffix, type_str)].
+    A missing output is skipped with a warning (its param rows keep their current values);
+    an output older than one of the decoded inputs (a leftover of an earlier fit) stops
+    everything without writing."""
     t_input = max(p.resolve().stat().st_mtime for p in inputs if p.exists()) if any(p.exists() for p in inputs) else 0.0
     found, problems = {}, []
     for label, det, suffix, type_str in items:
         path = get_root_file(args.run_num, det, suffix, type_str)
         if path is None:
             name = "_".join(x for x in (f"run{args.run_num:05d}", det, type_str, suffix) if x) + ".root"
-            problems.append(f"{label}: no fit output ({name})")
+            print(colored(f"  - {label}: no fit output ({name}); its rows keep their current values", "yellow"))
         elif path.stat().st_mtime < t_input:
             problems.append(f"{label}: {path.name} is older than the decode (fit again)")
         else:
@@ -183,7 +185,9 @@ if args.param_type == "hdprm":
     results = require_fresh_results([(d, d, args.suffix, "HDPRM") for d in detectors], [hodo_decode()])
     for det in detectors:
         suf = args.suffix
-        root_file = results[det]
+        root_file = results.get(det)
+        if root_file is None:
+            continue
         # Get limits
         det_lower = det.lower()
         conf_key = f"{args.run_num:05d}_{suf}_{det_lower}"
@@ -200,7 +204,7 @@ elif args.param_type == "htofprm":
     # TDC: run{run}_HTOF_HDPRM_All.root (all-event, suffix-independent).
     results = require_fresh_results([("HTOF TDC", "HTOF", "All", "HDPRM"),
                                      ("HTOF ADC", "HTOF", args.suffix, "ADC")], htof_inputs())
-    root_file = results["HTOF TDC"]
+    root_file = results.get("HTOF TDC")
     if root_file:
         conf_key = f"{args.run_num:05d}_All_htof"
         good_range = [-np.inf, np.inf]
@@ -212,7 +216,7 @@ elif args.param_type == "htofprm":
     else:
         print(colored(f"  - HTOF TDC: no run{args.run_num:05d}_HTOF_HDPRM_All.root found", "yellow"))
     # ADC: dE/dx pion-tagged MIP (Pi only; see HTOF_Calib.cpp).
-    root_file = results["HTOF ADC"]
+    root_file = results.get("HTOF ADC")
     if root_file:
         data = update_hdprm.make_htofprm_dictdata(str(root_file))
         all_new_data.update(data)
@@ -226,7 +230,7 @@ elif args.param_type == "htofprm":
         print(colored(f"  - HTOF ADC: no run{args.run_num:05d}_HTOF_ADC_{args.suffix}.root found", "yellow"))
 
 elif args.param_type == "t0":
-    root_file = require_fresh_results([("T0_Offset", "T0_Offset", args.suffix, "")], [hodo_decode()])["T0_Offset"]
+    root_file = require_fresh_results([("T0_Offset", "T0_Offset", args.suffix, "")], [hodo_decode()]).get("T0_Offset")
     if root_file:
         data = update_hdprm.make_dictdata(str(root_file), is_t0_offset=True)
         all_new_data.update(data)
@@ -240,7 +244,9 @@ elif args.param_type in ("hdphc", "htofphc"):
         detectors, inputs = config.hodo_detectors("hdphc", args.ftof), [hodo_decode()]
     results = require_fresh_results([(d, d, args.suffix, "PHC") for d in detectors], inputs)
     for det in detectors:
-        root_file = results[det]
+        root_file = results.get(det)
+        if root_file is None:
+            continue
         # Get limits
         det_lower = det.lower()
         conf_key = f"{args.run_num:05d}_{args.suffix}_{det_lower}"
