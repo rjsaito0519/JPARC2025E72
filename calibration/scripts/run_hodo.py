@@ -23,6 +23,16 @@ def run_command(cmd, exit_on_error=True):
             sys.exit(ret)
     return ret
 
+def run_fits(bin_dir, names, input_root_file, suffix):
+    """Run every fit binary; stop before any fit if one of them is not built."""
+    missing = [n for n in names if not (bin_dir / n).exists()]
+    if missing:
+        print(colored(f"[Error] not built: {', '.join(missing)} (run build.sh)", "red"))
+        sys.exit(1)
+    for n in names:
+        run_command(f"{bin_dir / n} {input_root_file} {suffix}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Automate Hodoscope Calibration for HDPRM, T0 Offset, HDPHC, and HTOF (TDC/ADC/PHC)."
@@ -35,9 +45,8 @@ def main():
     parser.add_argument(
         '--ftof',
         action="store_true",
-        help="FTOF-only detector set for hdprm/hdphc "
-             "(hdprm: BHT,BH2,BAC,CVC,SFV,SAC3; hdphc: BHT,BH2,CVC). "
-             "Not an add-on to the default beam-Hodo list. "
+        help="FTOF detector set for hdprm/hdphc instead of the default one (lib/config.py "
+             f"HODO_DETECTORS: {config.HODO_DETECTORS}). "
              "t0 is unchanged (T0_Offset). HTOF uses mode 'htof', not this flag.",
     )
     parser.add_argument(
@@ -125,20 +134,10 @@ def main():
     # --- Mode Dispatch ---
 
     if mode == "hdprm":
-        # Default: beam Hodo. --ftof: FTOF set only (no KVC/T1).
         # HTOF is handled by mode "htof" (HTOF_Calib).
-        if args.ftof:
-            detectors = ["BHT", "BH2", "BAC", "CVC", "SFV", "SAC3"]
-        else:
-            detectors = ["BHT", "BH2", "BAC", "KVC", "T1"]
-
+        detectors = config.hodo_detectors("hdprm", args.ftof)
         print(colored(f">>> Step 1: Running HDPRM for {detectors}", "cyan"))
-        for det in detectors:
-            binary = bin_dir / f"{det}_HDPRM"
-            if binary.exists():
-                run_command(f"{binary} {input_root_file} {suffix}")
-            else:
-                print(colored(f"[Warning] Binary {binary.name} not found. Skipping.", "yellow"))
+        run_fits(bin_dir, [f"{det}_HDPRM" for det in detectors], input_root_file, suffix)
 
         if not args.debug:
             print(colored(">>> Step 2: Updating Parameters (HDPRM)", "cyan"))
@@ -185,20 +184,10 @@ def main():
             print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
 
     elif mode == "hdphc":
-        # Default: BHT, BH2, T1. --ftof: BHT, BH2, CVC (PHC binaries that exist).
         # HTOF PHC is handled by mode "htof".
-        if args.ftof:
-            detectors = ["BHT", "BH2", "CVC"]
-        else:
-            detectors = ["BHT", "BH2", "T1"]
-
+        detectors = config.hodo_detectors("hdphc", args.ftof)
         print(colored(f">>> Step 1: Running PHC for {detectors}", "cyan"))
-        for det in detectors:
-            binary = bin_dir / f"{det}_PHC"
-            if binary.exists():
-                run_command(f"{binary} {input_root_file} {suffix}")
-            else:
-                print(colored(f"[Warning] Binary {binary.name} not found. Skipping.", "yellow"))
+        run_fits(bin_dir, [f"{det}_PHC" for det in detectors], input_root_file, suffix)
 
         if not args.debug:
             print(colored(">>> Step 2: Updating Parameters (HDPHC)", "cyan"))

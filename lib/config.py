@@ -36,6 +36,20 @@ DETECTOR_N_UD_LIST = {
     "SFV":  1,
 }
 
+# Detectors fitted (run_hodo.py) and written back (update_param.py) per Hodo mode.
+# "beam": default set; "ftof": the FTOF set chosen with --ftof (replaces the default, not added).
+HODO_DETECTORS = {
+    "hdprm": {"beam": ["BHT", "BH2", "BAC", "KVC", "T1"],
+              "ftof": ["BHT", "BH2", "BAC", "CVC", "SFV", "SAC3"]},
+    "hdphc": {"beam": ["BHT", "BH2", "T1"],
+              "ftof": ["BHT", "BH2", "CVC"]},
+}
+
+
+def hodo_detectors(mode, ftof):
+    return HODO_DETECTORS[mode]["ftof" if ftof else "beam"]
+
+
 NUM_OF_CH = dict(
     BHT = 63,
     T0 = 5,
