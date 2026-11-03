@@ -16,9 +16,9 @@
 struct FitResult {
     std::vector<Double_t> par;
     std::vector<Double_t> err;
-    Double_t chi_square;
-    Int_t ndf;
-    Int_t migrad_stats;
+    Double_t chi_square = 0.0;
+    Int_t ndf = 0;
+    Int_t migrad_stats = -1;
     std::vector<Double_t> additional; // 何か追加で値を返したいときのコンテナ
 };
 

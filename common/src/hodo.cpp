@@ -1,5 +1,7 @@
 #include "ana_helper.h"
 #include <TGraphErrors.h>
+#include <TFile.h>
+#include <TTree.h>
 
 namespace ana_helper {
 
@@ -1434,6 +1436,39 @@ namespace ana_helper {
     }
     
     // ____________________________________________________________________________________________
+    // PHC fit outputs, one entry per segment; each vector has one value per side in sides
+    // (U, D or U only). n_fit: entries used by the fit, fit_status: Fit() return value (0 = ok).
+    void write_phc_tree(const std::vector<std::vector<FitResult>>& sides, TFile* fout) {
+        TTree* tree = new TTree("tree", "");
+        Int_t ch;
+        std::vector<Double_t> val[3], err[3], n_fit, chi2_ndf;
+        std::vector<Int_t> fit_status;
+        tree->Branch("ch", &ch, "ch/I");
+        for (Int_t j = 0; j < 3; j++) {
+            tree->Branch(Form("p%d_val", j), &val[j]);
+            tree->Branch(Form("p%d_err", j), &err[j]);
+        }
+        tree->Branch("n_fit", &n_fit);
+        tree->Branch("chi2_ndf", &chi2_ndf);
+        tree->Branch("fit_status", &fit_status);
+
+        for (ch = 0; ch < static_cast<Int_t>(sides[0].size()); ch++) {
+            for (Int_t j = 0; j < 3; j++) { val[j].clear(); err[j].clear(); }
+            n_fit.clear(); chi2_ndf.clear(); fit_status.clear();
+            for (const auto& side : sides) {
+                const FitResult& r = side[ch];
+                for (Int_t j = 0; j < 3; j++) { val[j].push_back(r.par[j]); err[j].push_back(r.err[j]); }
+                n_fit.push_back(r.additional.empty() ? 0.0 : r.additional[0]);
+                chi2_ndf.push_back(r.ndf > 0 ? r.chi_square / r.ndf : -1.0);
+                fit_status.push_back(r.migrad_stats);
+            }
+            tree->Fill();
+        }
+        fout->cd();
+        tree->Write();
+    }
+
+    // ____________________________________________________________________________________________
     FitResult phc_fit(TH2D *h, TCanvas *c, Int_t n_c) {
         Config& conf = Config::getInstance();
 
@@ -1466,13 +1501,18 @@ namespace ana_helper {
         f_fit->SetParameter(1, fit_range.first - (fit_range.second - fit_range.first)*0.005);
         f_fit->SetLineColor(kOrange);
         f_fit->SetLineWidth(1);
-        pf->Fit(f_fit, fit_option.Data(), "", fit_range.first, fit_range.second);
+        Int_t status = pf->Fit(f_fit, fit_option.Data(), "", fit_range.first, fit_range.second);
 
         // -- fill result -----
         for (Int_t i = 0, n_par = f_fit->GetNpar(); i < n_par; i++) {
             result.par.push_back(f_fit->GetParameter(i));
             result.err.push_back(f_fit->GetParError(i));
         }
+        result.chi_square   = f_fit->GetChisquare();
+        result.ndf          = f_fit->GetNDF();
+        result.migrad_stats = status;
+        // additional[0]: entries inside the time window and the dE fit range
+        result.additional.push_back(de_proj->Integral(de_proj->FindBin(fit_range.first), de_proj->FindBin(fit_range.second)));
 
         // draw
         h->Draw("colz");

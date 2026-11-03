@@ -131,46 +131,7 @@ void analyze(TString path, TString particle){
     // +-------+
     // | Write |
     // +-------+
-    TTree* tree = new TTree("tree", "");
-    Int_t ch;
-    std::vector<Double_t> p0_val, p1_val, p2_val; 
-    std::vector<Double_t> p0_err, p1_err, p2_err; 
-    tree->Branch("ch", &ch, "ch/I");
-    tree->Branch("p0_val", &p0_val);
-    tree->Branch("p1_val", &p1_val);
-    tree->Branch("p2_val", &p2_val);
-    tree->Branch("p0_err", &p0_err);
-    tree->Branch("p1_err", &p1_err);
-    tree->Branch("p2_err", &p2_err);
-    
-    for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++) {
-        ch = i;
-        p0_val.clear(); p1_val.clear(); p2_val.clear();
-        p0_err.clear(); p1_err.clear(); p2_err.clear();
-
-        // -- p0 -----
-        p0_val.push_back(phc_up[i].par[0]);
-        p0_val.push_back(phc_down[i].par[0]);
-        p0_err.push_back(phc_up[i].err[0]);
-        p0_err.push_back(phc_down[i].err[0]);
-    
-        // -- p1 -----
-        p1_val.push_back(phc_up[i].par[1]);
-        p1_val.push_back(phc_down[i].par[1]);
-        p1_err.push_back(phc_up[i].err[1]);
-        p1_err.push_back(phc_down[i].err[1]);
-    
-        // -- p2 -----
-        p2_val.push_back(phc_up[i].par[2]);
-        p2_val.push_back(phc_down[i].par[2]);
-        p2_err.push_back(phc_up[i].err[2]);
-        p2_err.push_back(phc_down[i].err[2]);
-    
-        tree->Fill();
-    }
-    
-    fout->cd();
-    tree->Write();
+    ana_helper::write_phc_tree({phc_up, phc_down}, fout);
     fout->Close(); 
 }
 

@@ -1,5 +1,6 @@
 limits_dict = {
-    # key : [good ch min, good ch max]
+    # Optional hand choice of the PHC segments: "RUN_SUFFIX_det": [first used seg, last used seg].
+    # A run/detector not listed here uses the automatic choice of update_phc.py (fit statistics).
     "00344_Pi_bht" : [12, 47],
 
     "00351_Pi_bht" : [13, 47],

@@ -230,16 +230,18 @@ elif args.param_type in ("hdphc", "htofphc"):
         root_file = results.get(det)
         if root_file is None:
             continue
-        # Get limits
-        det_lower = det.lower()
-        conf_key = f"{args.run_num:05d}_{args.suffix}_{det_lower}"
-        good_range = [-np.inf, np.inf]
-        if hasattr(phc_conf, 'limits_dict') and conf_key in phc_conf.limits_dict:
-             good_range = phc_conf.limits_dict[conf_key]
-
-        data = update_phc.make_dictdata(str(root_file), det, good_ch_range=good_range)
+        # Segments used: hand range of phc_conf.py if any, else automatic (HTOF: all; it has its own checks)
+        good_range = phc_conf.limits_dict.get(f"{args.run_num:05d}_{args.suffix}_{det.lower()}")
+        if good_range is None and det == "HTOF":
+            good_range = [-np.inf, np.inf]
+        try:
+            data, not_used = update_phc.make_dictdata(str(root_file), det, good_ch_range=good_range)
+        except RuntimeError as e:
+            print(colored(f"[Error] {det}: {e}; nothing written", "red"))
+            sys.exit(1)
         all_new_data.update(data)
-        print(f"  - {det:<6}: {color_ok()} {len(data)} entries found (Range: {good_range})")
+        how = f"hand range {good_range}" if good_range is not None else "automatic"
+        print(f"  - {det:<6}: {color_ok()} {len(data)} entries found ({how}; mean of used segments for {not_used})")
         if det == "HTOF":
             lim, off = update_hdprm.htof_phc_quality_report(str(root_file))
             for seg, side, p0, p1 in lim:
