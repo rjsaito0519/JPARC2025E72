@@ -276,7 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Fill pads without a fit; with --mode hit, shift them by the fitted pads' dp0 "
                         "(see the module help).")
     p.add_argument("--common", action="store_true",
-                   help="--mode hit only, instead of --ave: shift every pad of an AsAd by the median dp0 of its "
+                   help="Instead of --ave: shift every pad of an AsAd by the median dp0 of its "
                         "fitted pads (global median for AsAds with too few), keeping the pad-to-pad differences.")
     p.add_argument("--ywin", type=float, default=None, metavar="Y",
                    help="--mode trk only: fit only the hits with |y| < Y mm (the height of the BcOut beam).")

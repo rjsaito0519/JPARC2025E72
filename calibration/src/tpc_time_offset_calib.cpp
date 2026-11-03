@@ -147,8 +147,10 @@ int main(Int_t argc, char** argv) {
     TString mode = "hit";
     Bool_t debug_mode = kFALSE;
     Bool_t use_fill = kFALSE;
-    // --common (hit mode): BcOut sets only a common shift per AsAd (median Δp0 of its fitted pads, or the
-    // global median when an AsAd has too few); the pad-to-pad differences are left to the trk mode.
+    // --common: set only a common shift per AsAd (median Δp0 of its fitted pads, or the global median when an
+    // AsAd has too few), keeping the pad-to-pad differences of the input param. Hit mode: BcOut sets the AsAd
+    // heights and the trk mode the pad-to-pad differences. Trk mode: per-run AsAd alignment on top of a
+    // copied param (after the CoBo phase).
     Bool_t common_only = kFALSE;
     const Int_t common_min_pads = 5;
     // --ywin Y (trk mode): use only the hits with |y| < Y mm (projection of TPCTrk_ResY_vs_Y per pad), so the
@@ -189,8 +191,8 @@ int main(Int_t argc, char** argv) {
         std::cerr << "Error: --mode must be hit or trk (got " << mode << ")" << std::endl;
         return EXIT_FAILURE;
     }
-    if (common_only && (mode != "hit" || use_fill)) {
-        std::cerr << "Error: --common is for --mode hit and replaces --ave" << std::endl;
+    if (common_only && use_fill) {
+        std::cerr << "Error: --common replaces --ave" << std::endl;
         return EXIT_FAILURE;
     }
     if (ywin > 0.0 && mode != "trk") {
