@@ -218,6 +218,32 @@ namespace ana_helper {
     }
 
     // ____________________________________________________________________________________________
+    // adc_fit with few events above the pedestal: the MIP is the mean between the adc_mip_qlo and
+    // adc_mip_qhi quantiles of the window (unbiased within a few % against the full-statistics fit,
+    // where the plain mean is pulled up by the Landau tail). The fit is used from adc_mip_min_fit events.
+    // An empty window returns empty_value (the caller passes pedestal + the typical pedestal-to-MIP).
+    static const Double_t adc_mip_min_fit = 3000.0;
+    static const Double_t adc_mip_qlo     = 0.2;
+    static const Double_t adc_mip_qhi     = 0.5;
+
+    static Double_t quantile_mean(TH1D *h, Double_t lo, Double_t hi, Double_t qlo, Double_t qhi, Double_t empty_value) {
+        Int_t b_lo = h->FindBin(lo), b_hi = h->FindBin(hi);
+        Double_t n = h->Integral(b_lo, b_hi);
+        if (n <= 0.0) return empty_value;
+        Double_t cum = 0.0, sum = 0.0, w = 0.0;
+        for (Int_t b = b_lo; b <= b_hi; ++b) {
+            Double_t v = h->GetBinContent(b);
+            Double_t q_in = cum/n, q_out = (cum + v)/n;
+            cum += v;
+            Double_t part = std::min(q_out, qhi) - std::max(q_in, qlo); // fraction of this bin inside [qlo, qhi]
+            if (part <= 0.0) continue;
+            sum += part*n*h->GetBinCenter(b);
+            w   += part*n;
+        }
+        return w > 0.0 ? sum/w : empty_value;
+    }
+
+    // ____________________________________________________________________________________________
     FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin) {
         Config& conf = Config::getInstance();
         h = (TH1D*)h->Rebin(n_rebin, h->GetName());
@@ -267,7 +293,7 @@ namespace ana_helper {
             h->FindBin(h->GetXaxis()->GetXmax())
         );
         
-        if (evnum_within_range > 500. || conf.hdprm_typical_value.par.empty()) {
+        if (evnum_within_range >= adc_mip_min_fit || conf.hdprm_typical_value.par.empty()) {
             Int_t mip_peak_bin     = h->GetMaximumBin();
             Double_t mip_pos      = h->GetBinCenter(mip_peak_bin);
             Double_t mip_peak_h   = h->GetBinContent(mip_peak_bin);
@@ -406,19 +432,18 @@ namespace ana_helper {
             }
         } else {
             Double_t ped_to_mip = conf.hdprm_typical_value.par[4] - conf.hdprm_typical_value.par[1];
-            h->GetXaxis()->SetRangeUser(
-                mip_range_left, 
-                result.par[1] + ped_to_mip + 10.0*conf.hdprm_typical_value.par[5]
-            );
+            Double_t window_right = result.par[1] + ped_to_mip + 10.0*conf.hdprm_typical_value.par[5];
+            h->GetXaxis()->SetRangeUser(mip_range_left, window_right);
 
             Double_t err_value = 9999.0;
             // -- fill result -----
             result.par.push_back(evnum_within_range);
             result.err.push_back(err_value);
 
-            result.par.push_back(h->GetMean());
+            result.par.push_back(quantile_mean(h, mip_range_left, window_right, adc_mip_qlo, adc_mip_qhi,
+                                               result.par[1] + ped_to_mip));
             result.err.push_back(h->GetMeanError());
-            
+
             result.par.push_back(h->GetStdDev());
             result.err.push_back(h->GetStdDevError());
 
@@ -431,7 +456,7 @@ namespace ana_helper {
             TLatex* commnet = new TLatex();
             commnet->SetNDC();  // NDC座標（0〜1の正規化）を使う
             commnet->SetTextSize(0.04);
-            commnet->DrawLatex(0.7, 0.85, "not fitting");
+            commnet->DrawLatex(0.55, 0.85, Form("quantile mean %.0f-%.0f%%", 100*adc_mip_qlo, 100*adc_mip_qhi));
         }
 
         f_fit_ped->Draw("same");
