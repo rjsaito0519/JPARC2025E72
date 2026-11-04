@@ -90,6 +90,7 @@ namespace ana_helper {
     FitResult htof_phc_fit(TH2D *h, TCanvas *c, Int_t n_c, const FitResult *ref = nullptr, Int_t fix_mask = 0,
                            Double_t dense_ratio = 0.10);
     FitResult pedestal_fit(TH1D *h, TCanvas *c, Int_t n_c);
+    FitResult pedestal_mode(TH1D *h, TCanvas *c, Int_t n_c); // smoothed maximum, no fit
     FitResult bht_tot_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult t0_offset_fit(TH1D *h, TCanvas *c, Int_t n_c);
     std::pair<Double_t, Double_t> find_phc_range(TH1D* h, Double_t ratio);

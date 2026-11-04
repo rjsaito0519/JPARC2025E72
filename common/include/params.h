@@ -96,6 +96,12 @@ namespace param
     // the beam hits are few and dropping them only costs statistics.
     static const std::vector<Int_t> htof_phc_exclude_beam_segs{ 20, 21, 22 };
 
+    // KVC_HDPRM: the SUM ADC pedestal is the broad pedestal distribution itself, taken at its smoothed
+    // maximum (ana_helper::pedestal_mode). On these segments the SUM distribution is cut on the left
+    // (a spike at the cut, flat or falling to the right), so the maximum is undefined there and
+    // ana_helper::pedestal_fit is used instead.
+    static const std::vector<Int_t> kvc_sum_pedestal_fit_segs{ 5, 6 };
+
     static const std::unordered_map<std::string, std::vector<Double_t>> kvc_opg_fit{
         // key        n_gauss fisrt_peak left right
         {"default",  { 5.0, 100.0, 80.0, 160.0}},

@@ -149,7 +149,10 @@ void analyze(TString path, TString particle){
             TString key = Form("kvc-%d-%s", i, suffix[j].c_str());
             conf.hdprm_pedestal_range_right = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : 2048.0;
 
-            FitResult aRes = ana_helper::pedestal_fit(h_adc[j][i], c_kvc, nth_pad);
+            const auto& fit_segs = param::kvc_sum_pedestal_fit_segs;
+            Bool_t use_mode = (j == 4) && std::find(fit_segs.begin(), fit_segs.end(), i) == fit_segs.end();
+            FitResult aRes = use_mode ? ana_helper::pedestal_mode(h_adc[j][i], c_kvc, nth_pad)
+                                      : ana_helper::pedestal_fit(h_adc[j][i], c_kvc, nth_pad);
             adc_res[i].push_back(aRes);
             nth_pad++;
         }

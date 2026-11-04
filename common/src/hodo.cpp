@@ -1172,6 +1172,36 @@ namespace ana_helper {
     }
 
     // ____________________________________________________________________________________________
+    // Pedestal as the maximum of the histogram after a moving average of pedestal_mode_smooth bins,
+    // below hdprm_pedestal_range_right. For broad, asymmetric pedestals (KVC SUM).
+    static const Int_t pedestal_mode_smooth = 21;
+
+    FitResult pedestal_mode(TH1D *h, TCanvas *c, Int_t n_c) {
+        Config& conf = Config::getInstance();
+        c->cd(n_c);
+        gPad->SetLogy(1);
+        Int_t b_lo = 1, b_hi = std::min(h->FindBin(conf.hdprm_pedestal_range_right), h->GetNbinsX());
+        Int_t half = pedestal_mode_smooth/2, b_max = b_lo;
+        Double_t s_max = -1.0;
+        for (Int_t b = b_lo; b <= b_hi; ++b) {
+            Double_t s = h->Integral(std::max(b - half, 1), std::min(b + half, h->GetNbinsX()));
+            if (s > s_max) { s_max = s; b_max = b; }
+        }
+        FitResult result;
+        result.par = {h->Integral(b_lo, b_hi), h->GetBinCenter(b_max), h->GetStdDev()};
+        result.err = {0.0, h->GetBinWidth(b_max), 0.0};
+
+        h->GetXaxis()->SetRangeUser(result.par[1] - 80.0, result.par[1] + 150.0);
+        h->Draw();
+        TLine *ped_line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
+        ped_line->SetLineStyle(2);
+        ped_line->SetLineColor(kRed);
+        ped_line->Draw("same");
+        c->Update();
+        return result;
+    }
+
+    // ____________________________________________________________________________________________
     FitResult pedestal_fit(TH1D *h, TCanvas *c, Int_t n_c) {
         Config& conf = Config::getInstance();
 
