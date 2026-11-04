@@ -76,6 +76,7 @@ import update_phc
 import update_dctdc
 import update_residual
 import phc_conf
+import dc_convergence as dcc
 
 def get_root_file(run_num, det, suffix, type_str):
     """Search for ROOT file in scratch, decode, or local output dirs."""
@@ -175,6 +176,7 @@ param_file = ParamFile.create_from_template(template_file, target_file)
 all_new_data = {}
 skip_write = False
 reso_meta = None
+dc_states = []  # resi/reso: state per group (dc_convergence)
 
 print(colored(f"\n>>> Collecting results for {args.param_type} <<<", "cyan"))
 
@@ -260,6 +262,9 @@ elif args.param_type == "dctdc":
         print(f"  - {detector} TDC: {color_ok()} {len(data)} entries found")
 
 elif args.param_type == "residual":
+    RESI_CONV_MM = 0.010  # converged when every plane's correction is below this
+    RESI_IMPROVE = 0.8    # a pass improves when the largest correction shrinks below this fraction
+
     # Helper to apply additive update
     def prepare_additive_residuals(r_file):
         d = update_residual.make_dictdata(str(r_file))
@@ -296,6 +301,11 @@ elif args.param_type == "residual":
             all_new_data.update(data)
             print(f"  - {detector} Residuals: {color_ok()} {len(data)} entries found (Additive Update)")
             found_any = True
+            max_corr = max(abs(v[1]) for v in data.values() if len(v) >= 2)
+            state = dcc.judge(args.run_num, blc_det, "resi", args.suffix, max_corr, max_corr < RESI_CONV_MM,
+                              lambda a, b: b > RESI_IMPROVE * a)
+            dc_states.append(state)
+            skip_write = state != dcc.WRITTEN
     
     if not found_any:
         print(colored(f"  - {detector} Residuals: not found (run{args.run_num:05d}_{blc_det}_residual_{args.suffix})", "red"))
@@ -305,6 +315,7 @@ elif args.param_type == "resolution":
     import uproot
 
     RES_CONV_THRESHOLD = 0.05  # |p-1| below this => CONVERGED for that group
+    RES_STABLE_DP = 0.01       # a pass does not change p when |dp| is below this
 
     def layer_keys(group_name):
         """Return DCGEO Id keys for a Res group."""
@@ -424,8 +435,15 @@ elif args.param_type == "resolution":
             "label": group_name,
             "updated": False,
         }
-        if abs(float(p) - 1.0) < RES_CONV_THRESHOLD:
+        state = dcc.judge(args.run_num, group_name, "reso", args.suffix, float(p),
+                          abs(float(p) - 1.0) < RES_CONV_THRESHOLD, lambda a, b: abs(b - a) < RES_STABLE_DP)
+        dc_states.append(state)
+        if state == dcc.CONVERGED:
             report_reso_convergence(float(p), float(mean_chi2), None, None, False, group_name)
+            return False, meta
+        if state == dcc.SETTLED:
+            print(colored(f"  - {group_name}: [SETTLED] p={float(p):.4f} not changing over {dcc.SETTLE_PASSES} passes "
+                          f"but |p-1| >= {RES_CONV_THRESHOLD}; not written, look at the pull PDF", "red", attrs=["bold"]))
             return False, meta
         data, r0, res_new = set_common_res(keys, p, group_name)
         all_new_data.update(data)
@@ -560,16 +578,22 @@ def report_convergence(data):
     print(f"  - Maximum Correction:   {max_c:.4f} mm")
     print(f"  - Average Resolution:   {avg_sig:.4f} mm")
     
-    threshold = 0.01 # 10 um
-    if rms < threshold:
-        print(colored(f"  - Status: [CONVERGED] (RMS < {threshold}mm)", "green", attrs=["bold"]))
+    state = dc_states[-1] if dc_states else None
+    if state == dcc.CONVERGED:
+        print(colored(f"  - Status: [CONVERGED] (every |correction| < {RESI_CONV_MM * 1e3:.0f} um); not written",
+                      "green", attrs=["bold"]))
+    elif state == dcc.SETTLED:
+        print(colored(f"  - Status: [SETTLED] max correction not shrinking over {dcc.SETTLE_PASSES} passes; "
+                      "not written, look at the residual PDF", "red", attrs=["bold"]))
     else:
-        print(colored(f"  - Status: [IN PROGRESS] (Needs more iteration)", "yellow", attrs=["bold"]))
+        print(colored("  - Status: [IN PROGRESS] written; decode again and run resi again", "yellow", attrs=["bold"]))
     print()
 
 # Perform update
-if args.param_type == "resolution" and skip_write:
-    # Already reported CONVERGED per group; nothing to write
+if skip_write and args.param_type == "residual":
+    report_convergence(all_new_data)
+elif skip_write:
+    # resolution: already reported per group; nothing to write
     pass
 elif all_new_data:
     # Ensure all_new_data only has one value per key for the file update 
@@ -600,3 +624,6 @@ elif all_new_data:
     print(f"File: {target_file.relative_to(config.ANALYZER_DIR)}\n")
 else:
     print(colored(f"\n[SKIP] No results found for Run {args.run_num} {args.suffix} {args.param_type}.", "yellow"))
+
+if dc_states:
+    sys.exit(dcc.exit_code(dc_states))

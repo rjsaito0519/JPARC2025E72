@@ -9,7 +9,9 @@ Usage: run_dcprm.py <run...> {t0,drift,resi,reso} [--bcout|--bcin|--all] [--sepa
          (default one Res for a+b; --separate one each for a and b; --all one for BLC1+BLC2).
          Iterate: decode BcIn/BcOut -> reso -> decode.
 Chamber: BcOut by default, --bcin for BcIn. Input: DATA_DIR/runXXXXX_<BcIn|BcOut>.root (create_runlist.py).
-Runs are processed one by one.
+Runs are processed one by one. resi and reso judge convergence (calibration/scripts/dc_convergence.py);
+the exit code is the worst of the runs: 0 converged, 2 written (decode again and repeat), 3 no longer
+improving (look at it), 1 failed.
 """
 import sys
 from pathlib import Path
@@ -32,15 +34,15 @@ def fit_and_update(run, suffix, args, exe_name, ptype):
     root = runner.input_root(run, chamber(args), suffix, args.force)
     runner.step(f"run{run:05d}: {exe_name} ({chamber(args)})")
     runner.sh(f"{exe} {root} {suffix}")
-    runner.update_param(run, suffix, ptype, chamber_flag(args), debug=args.debug)
+    return runner.update_param(run, suffix, ptype, chamber_flag(args), debug=args.debug)
 
 
 def do_t0(run, suffix, args):
-    fit_and_update(run, suffix, args, "BLC_TDC", "dctdc")
+    return fit_and_update(run, suffix, args, "BLC_TDC", "dctdc")
 
 
 def do_resi(run, suffix, args):
-    fit_and_update(run, suffix, args, "BLC_residual", "residual")
+    return fit_and_update(run, suffix, args, "BLC_residual", "residual")
 
 
 def do_drift(run, suffix, args):
@@ -51,6 +53,7 @@ def do_drift(run, suffix, args):
         runner.backup_file(config.PARAM_DIR / "DCDRFT" / config.SUB_DIR / f"DCDriftParam_run{run:05d}_{suffix}.root")
     runner.step(f"run{run:05d}: BLC_DRFT ({chamber(args)})")
     runner.sh(f"{exe} {root} {suffix}" + (" --debug" if args.debug else ""))
+    return runner.EXIT_OK
 
 
 def do_reso(run, suffix, args):
@@ -61,7 +64,7 @@ def do_reso(run, suffix, args):
         runner.step(f"run{run:05d}: BLC_pull ({d})")
         runner.sh(f"{exe} {root} {suffix}")
     opts = ["--all" if args.all else chamber_flag(args)] + (["--separate"] if args.separate else [])
-    runner.update_param(run, suffix, "resolution", *opts, debug=args.debug)
+    return runner.update_param(run, suffix, "resolution", *opts, debug=args.debug)
 
 
 MODES = {"t0": do_t0, "drift": do_drift, "resi": do_resi, "reso": do_reso}
@@ -82,9 +85,9 @@ def main():
     suffix = runner.suffix_of(args)
     runner.info(f"mode {args.mode}, suffix {suffix}, " + ("BcIn+BcOut" if args.all else chamber(args))
                 + (", --debug (no param written)" if args.debug else ""))
-    for run in args.runs:
-        MODES[args.mode](run, suffix, args)
-    runner.info(f"done: {args.mode} for {' '.join(map(str, args.runs))}")
+    codes = {run: MODES[args.mode](run, suffix, args) for run in args.runs}
+    runner.info(f"done: {args.mode}; exit code per run {codes}")
+    sys.exit(runner.worst(codes.values()))
 
 
 if __name__ == "__main__":

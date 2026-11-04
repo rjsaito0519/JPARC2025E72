@@ -5,6 +5,7 @@ one. Exit codes for a driver:
   EXIT_OK            done (params written, or nothing to write)
   EXIT_FAIL          stopped; nothing more was written after the failure
   EXIT_NOT_CONVERGED params written, another decode + iteration is needed
+  EXIT_CHECK         not converged and no longer improving; nothing written, a person looks
 """
 import argparse
 import subprocess
@@ -21,7 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BIN_DIR = PROJECT_ROOT / "bin"
 SCRIPT_DIR = PROJECT_ROOT / "calibration" / "scripts"
 
-EXIT_OK, EXIT_FAIL, EXIT_NOT_CONVERGED = 0, 1, 2
+EXIT_OK, EXIT_FAIL, EXIT_NOT_CONVERGED, EXIT_CHECK = 0, 1, 2, 3
 
 # keep our lines in order with the output of the commands we run (logs, pipes, batch jobs)
 sys.stdout.reconfigure(line_buffering=True)
@@ -44,12 +45,12 @@ def fail(msg):
     sys.exit(EXIT_FAIL)
 
 
-def sh(cmd, capture=False, check=True):
-    """Run a shell command; (return code, output if capture). check=True stops on a failure."""
+def sh(cmd, capture=False, check=True, ok=(EXIT_OK,)):
+    """Run a shell command; (return code, output if capture). check=True stops unless the code is in ok."""
     print(colored(f"Running: {cmd}", "cyan"))
     res = subprocess.run(cmd, shell=True, capture_output=capture, text=True)
     out = (res.stdout or "") + (res.stderr or "")
-    if check and res.returncode != 0:
+    if check and res.returncode not in ok:
         if out:
             print(out)
         fail(f"command failed with exit code {res.returncode}")
@@ -100,9 +101,17 @@ def input_root(run, tag, suffix, force):
 
 
 def update_param(run, suffix, ptype, *opts, debug=False):
-    """update_param.py <run> <suffix> <ptype> [opts]; skipped with --debug."""
+    """update_param.py <run> <suffix> <ptype> [opts]; skipped with --debug. Its exit code (0, 2 or 3)."""
     if debug:
         warn(f"--debug: {ptype} params not written")
-        return
+        return EXIT_OK
     step(f"update params ({ptype})")
-    sh(" ".join(["python3", str(SCRIPT_DIR / "update_param.py"), str(run), suffix, ptype, *opts]))
+    rc, _ = sh(" ".join(["python3", str(SCRIPT_DIR / "update_param.py"), str(run), suffix, ptype, *opts]),
+               ok=(EXIT_OK, EXIT_NOT_CONVERGED, EXIT_CHECK))
+    return rc
+
+
+def worst(codes):
+    """Exit code for several runs: EXIT_CHECK over EXIT_NOT_CONVERGED over EXIT_OK."""
+    order = (EXIT_OK, EXIT_NOT_CONVERGED, EXIT_CHECK)
+    return max(codes, key=order.index, default=EXIT_OK)
