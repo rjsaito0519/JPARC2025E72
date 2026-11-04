@@ -4,7 +4,7 @@ One text file per run, chamber (or ALL), mode and particle in OUTPUT_DIR/calib/r
   dc_<BLC1|BLC2|ALL>_<resi|reso>_<K|Pi>.txt (update_param.py), d5_pos_<K|Pi>.txt (run_d5.py)
 one line per pass and group: time, group, measured value, state[, details].
 
-States (lib/runner.py exit codes):
+States (lib/runner.py exit codes; several groups or runs give the worst, settled > written > converged):
   converged  within the criterion; nothing written (0)
   settled    outside the criterion but not getting better over SETTLE_PASSES passes; nothing
              written, a person looks (3)
@@ -69,9 +69,5 @@ def judge(run, group, mode, suffix, value, within, not_better):
 
 
 def exit_code(states):
-    """Worst state of the groups: written > settled > converged."""
-    if WRITTEN in states:
-        return EXIT_CODE[WRITTEN]
-    if SETTLED in states:
-        return EXIT_CODE[SETTLED]
-    return EXIT_CODE[CONVERGED]
+    """Exit code of several groups (runner.worst; 0 when there are none)."""
+    return runner.worst(EXIT_CODE[s] for s in states)

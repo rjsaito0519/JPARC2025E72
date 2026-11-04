@@ -57,9 +57,20 @@ def sh(cmd, capture=False, check=True, ok=(EXIT_OK,)):
     return res.returncode, out
 
 
+class Parser(argparse.ArgumentParser):
+    """ArgumentParser whose usage errors exit with EXIT_FAIL (argparse's own 2 means EXIT_NOT_CONVERGED here)."""
+
+    def __init__(self, description):
+        super().__init__(description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        fail(message)
+
+
 def base_parser(description, modes):
     """Parser with the arguments every front end shares."""
-    p = argparse.ArgumentParser(description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = Parser(description)
     p.add_argument("runs", type=int, nargs="+", help="run number(s), processed one by one")
     p.add_argument("mode", choices=modes)
     p.add_argument("--kaon", action="store_true", help="K (param suffix _K) instead of pi (_Pi)")
@@ -112,6 +123,6 @@ def update_param(run, suffix, ptype, *opts, debug=False):
 
 
 def worst(codes):
-    """Exit code for several runs: EXIT_CHECK over EXIT_NOT_CONVERGED over EXIT_OK."""
+    """Exit code for several groups or runs: EXIT_CHECK over EXIT_NOT_CONVERGED over EXIT_OK."""
     order = (EXIT_OK, EXIT_NOT_CONVERGED, EXIT_CHECK)
     return max(codes, key=order.index, default=EXIT_OK)

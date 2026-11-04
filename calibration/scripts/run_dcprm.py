@@ -9,9 +9,9 @@ Usage: run_dcprm.py <run...> {t0,drift,resi,reso} [--bcout|--bcin|--all] [--sepa
          (default one Res for a+b; --separate one each for a and b; --all one for BLC1+BLC2).
          Iterate: decode BcIn/BcOut -> reso -> decode.
 Chamber: BcOut by default, --bcin for BcIn. Input: DATA_DIR/runXXXXX_<BcIn|BcOut>.root (create_runlist.py).
-Runs are processed one by one. resi and reso judge convergence (calibration/scripts/dc_convergence.py);
-the exit code is the worst of the runs: 0 converged, 2 written (decode again and repeat), 3 no longer
-improving (look at it), 1 failed.
+Runs are processed one by one. resi and reso judge convergence (calibration/scripts/calib_convergence.py);
+the exit code is the worst of the runs: 3 no longer improving (look at it) over 2 written (decode again
+and repeat) over 0 converged; 1 failed.
 """
 import sys
 from pathlib import Path

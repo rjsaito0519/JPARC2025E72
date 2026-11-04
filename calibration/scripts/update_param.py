@@ -1,629 +1,338 @@
 #!/usr/bin/env python3
+"""Write the fit results of run_hodo.py / run_dcprm.py into the per-run param files.
 
-import argparse
+Usage: update_param.py <run> {K,Pi} <ptype> [--bcin|--bcout|--all] [--separate] [--ftof]
+  hdprm, t0, hdphc   hodoscopes (detector set of lib/config.py HODO_DETECTORS; --ftof the FTOF set)
+  htofprm, htofphc   HTOF_Calib -> HDPRM / HDPHC
+  dctdc              BLC_TDC -> DCTDC
+  residual           BLC_residual -> DCGEO Ofs (the correction is added to the current Ofs)
+  resolution         BLC_pull -> DCGEO Res: Res_new = p * mean(Res in group) for every layer of the group
+                     (default one group per chamber, --separate a and b, --all BLC1+BLC2 with p averaged)
+Chamber: --bcout (default) or --bcin.
+Fit outputs: OUTPUT_DIR/root/runXXXXX/runXXXXX_<det>[_<kind>]_<S>.root. A fit output older than its decode
+stops everything (exit 1). A missing hodo output is skipped (its rows keep their values); a missing DC
+output stops (exit 1).
+residual and resolution judge each group (calib_convergence.py) and write only the groups still moving;
+exit code 0 converged, 2 written, 3 settled (lib/runner.py).
+"""
 import sys
-import os
-import shutil
-import numpy as np
-from termcolor import colored
 from pathlib import Path
 
-# Add shared library path
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.append(str(project_root))
+import numpy as np
+from termcolor import colored
 
-from lib import config
-from lib.param import ParamFile
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from lib import config, runner  # noqa: E402
+from lib.param import ParamFile  # noqa: E402
+import calib_convergence as conv  # noqa: E402
+import phc_conf  # noqa: E402
+import update_dctdc  # noqa: E402
+import update_hdprm  # noqa: E402
+import update_phc  # noqa: E402
+import update_residual  # noqa: E402
 
-parser = argparse.ArgumentParser(
-    prog="update_param",
-    description="Update parameter files from ROOT analysis results",
-    add_help=True,
-)
-parser.add_argument("run_num", type=int, help="Input run number")
-parser.add_argument("suffix", type=str, help="Input suffix (K or Pi)")
-parser.add_argument("param_type", type=str, help="Input parameter type (hdprm, htofprm, t0, hdphc, htofphc, dctdc, residual, resolution)")
-group = parser.add_mutually_exclusive_group()
-group.add_argument("--bcout", action="store_true", help="Set detector to BcOut")
-group.add_argument("--bcin", action="store_true", help="Set detector to BcIn")
-group.add_argument(
-    "--all",
-    action="store_true",
-    help="resolution only: one common Res for BLC1+BLC2 (p=mean of both pull σ)",
-)
-parser.add_argument(
-    "--separate",
-    action="store_true",
-    help="resolution only: write common Res per a/b (or 4 groups with --all) instead of a+b",
-)
-parser.add_argument(
-    "--ftof",
-    action="store_true",
-    help="hdprm/hdphc only: the FTOF detector set of lib/config.py HODO_DETECTORS "
-         "(the same set run_hodo.py --ftof fits)",
-)
-args = parser.parse_args()
+CATEGORIES = {
+    "hdprm":      {"dir": "HDPRM", "tpl": "HodoParam_e72_example",    "prefix": "HodoParam",    "key_len": 5, "start_col": 5},
+    "htofprm":    {"dir": "HDPRM", "tpl": "HodoParam_e72_example",    "prefix": "HodoParam",    "key_len": 5, "start_col": 5},
+    "t0":         {"dir": "HDPRM", "tpl": "HodoParam_e72_example",    "prefix": "HodoParam",    "key_len": 5, "start_col": 5},
+    "hdphc":      {"dir": "HDPHC", "tpl": "HodoPHCParam_e72_example", "prefix": "HodoPHCParam", "key_len": 4, "start_col": 4},
+    "htofphc":    {"dir": "HDPHC", "tpl": "HodoPHCParam_e72_example", "prefix": "HodoPHCParam", "key_len": 4, "start_col": 4},
+    "dctdc":      {"dir": "DCTDC", "tpl": "DCTdcParam_e72_example",   "prefix": "DCTdcParam",   "key_len": 3, "start_col": 3},
+    # DCGEO columns (0-based): Id Name X Y Z TA RA1 RA2 L Res(9) ... Ofs(12)
+    "residual":   {"dir": "DCGEO", "tpl": "DCGeomParam_e72_example",  "prefix": "DCGeomParam",  "key_len": 1, "start_col": 12},
+    "resolution": {"dir": "DCGEO", "tpl": "DCGeomParam_e72_example",  "prefix": "DCGeomParam",  "key_len": 1, "start_col": 9},
+}
 
-detector = "BcOut"
-if args.bcin:
-    detector = "BcIn"
-elif args.bcout:
-    detector = "BcOut"
-# else: detector = "BcOut" (default); --all handled in resolution branch
+RESI_CONV_MM = 0.010   # residual converged when every plane's |correction| is below this
+RESI_IMPROVE = 0.8     # a residual pass improves when the largest correction shrinks below this fraction
+RES_CONV = 0.05        # resolution converged when |p - 1| is below this
+RES_STABLE_DP = 0.01   # a resolution pass does not change p when |dp| is below this
 
-if args.suffix not in ["K", "Pi"]:
-    print("suffix should be K or Pi")
-    sys.exit()
+RES_GROUPS = {  # DCGEO Ids of each Res group
+    "BLC1": range(1, 17), "BLC1a": range(1, 9), "BLC1b": range(9, 17),
+    "BLC2": range(1001, 1017), "BLC2a": range(1001, 1009), "BLC2b": range(1009, 1017),
+    "ALL": [*range(1, 17), *range(1001, 1017)],
+}
 
-if args.ftof and args.param_type not in ("hdprm", "hdphc", "t0"):
-    print(colored(
-        f"Error: --ftof is only valid with hdprm/hdphc (or ignored for t0); "
-        f"got param_type={args.param_type}",
-        "red",
-    ))
-    sys.exit(1)
 
-if args.all and args.param_type != "resolution":
-    print(colored("[Error] --all is only supported for param_type=resolution", "red"))
-    sys.exit(1)
+def parse_args():
+    p = runner.Parser(__doc__)
+    p.add_argument("run", type=int)
+    p.add_argument("suffix", help="K or Pi")
+    p.add_argument("ptype", choices=list(CATEGORIES))
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--bcout", action="store_true", help="BcOut (default)")
+    g.add_argument("--bcin", action="store_true", help="BcIn")
+    g.add_argument("--all", action="store_true", help="resolution only: one Res for BLC1+BLC2")
+    p.add_argument("--separate", action="store_true", help="resolution only: one Res each for a and b")
+    p.add_argument("--ftof", action="store_true", help="hdprm/hdphc: the FTOF detector set")
+    a = p.parse_args()
+    if a.suffix not in ("K", "Pi"):
+        runner.fail(f"suffix should be K or Pi, not {a.suffix}")
+    if a.ftof and a.ptype not in ("hdprm", "hdphc", "t0"):
+        runner.fail("--ftof is for hdprm/hdphc only")
+    if (a.all or a.separate) and a.ptype != "resolution":
+        runner.fail("--all and --separate are for resolution only")
+    a.chamber = "BcIn" if a.bcin else "BcOut"
+    a.blc = "BLC1" if a.bcin else "BLC2"
+    return a
 
-if args.separate and args.param_type != "resolution":
-    print(colored("[Error] --separate is only supported for param_type=resolution", "red"))
-    sys.exit(1)
 
-import update_hdprm
-import update_phc
-import update_dctdc
-import update_residual
-import phc_conf
-import dc_convergence as dcc
+# -- fit outputs -----------------------------------------------------------------
+def fit_output(run, det, kind, suffix):
+    name = "_".join(x for x in (f"run{run:05d}", det, kind, suffix) if x) + ".root"
+    return config.OUTPUT_DIR / "root" / f"run{run:05d}" / name
 
-def get_root_file(run_num, det, suffix, type_str):
-    """Search for ROOT file in scratch, decode, or local output dirs."""
-    patterns = []
-    
-    # Construct base file name components
-    parts = [f"run{run_num:0=5}", det]
-    if type_str: parts.append(type_str)
-    if suffix: parts.append(suffix)
-    
-    # 1. Preferred pattern (components joined by underscore)
-    patterns.append("_".join(parts) + ".root")
-    
-    # 2. Alternative patterns for robustness
-    if type_str and suffix:
-        # Try swapping type and suffix if needed
-        alt_parts = [f"run{run_num:0=5}", det, suffix, type_str]
-        patterns.append("_".join(alt_parts) + ".root")
-    
-    # 3. Simplest pattern
-    if suffix:
-        patterns.append(f"run{run_num:0=5}_{det}_{suffix}.root")
-    else:
-        patterns.append(f"run{run_num:0=5}_{det}.root")
 
-    for root_file_name in patterns:
-        search_paths = [
-            config.OUTPUT_DIR / "root" / f"run{run_num:05d}" / root_file_name,
-            config.SCRATCH_DIR / f"run{run_num:05d}" / root_file_name,
-        ]
-        for root_file in search_paths:
-            if root_file.exists():
-                return root_file
-    return None
+def decode(run, tag):
+    return config.DATA_DIR / f"run{run:05d}_{tag}.root"
 
-def require_fresh_results(items, inputs):
-    """{label: path} of the fit outputs items = [(label, det, suffix, type_str)].
-    A missing output is skipped with a warning (its param rows keep their current values);
-    an output older than one of the decoded inputs (a leftover of an earlier fit) stops
-    everything without writing."""
-    t_input = max(p.resolve().stat().st_mtime for p in inputs if p.exists()) if any(p.exists() for p in inputs) else 0.0
+
+def fresh_outputs(run, items, inputs, required=False):
+    """{label: path} of items = [(label, det, kind, suffix)]. Stops if one is older than the newest input
+    decode, or missing when required; a missing optional one is skipped with a warning."""
+    t_input = max((p.resolve().stat().st_mtime for p in inputs if p.exists()), default=0.0)
     found, problems = {}, []
-    for label, det, suffix, type_str in items:
-        path = get_root_file(args.run_num, det, suffix, type_str)
-        if path is None:
-            name = "_".join(x for x in (f"run{args.run_num:05d}", det, type_str, suffix) if x) + ".root"
-            print(colored(f"  - {label}: no fit output ({name}); its rows keep their current values", "yellow"))
+    for label, det, kind, suffix in items:
+        path = fit_output(run, det, kind, suffix)
+        if not path.exists():
+            if required:
+                problems.append(f"{label}: no fit output {path.name}")
+            else:
+                runner.warn(f"{label}: no fit output ({path.name}); its rows keep their current values")
         elif path.stat().st_mtime < t_input:
             problems.append(f"{label}: {path.name} is older than the decode (fit again)")
         else:
             found[label] = path
     if problems:
-        print(colored("[Error] nothing written:\n  " + "\n  ".join(problems), "red"))
-        sys.exit(1)
+        runner.fail("nothing written:\n  " + "\n  ".join(problems))
     return found
 
 
-def hodo_decode():
-    return config.DATA_DIR / f"run{args.run_num:05d}_Hodo.root"
+def ok(label, n, note=""):
+    print(f"  - {label}: [{colored('OK', 'green', attrs=['bold'])}] {n} entries found{note}")
 
 
-def htof_inputs():
-    return [hodo_decode(), config.DATA_DIR / f"run{args.run_num:05d}_TPCHelixHTOF.root"]
+# -- hodoscopes --------------------------------------------------------------------
+def collect_hdprm(a, pf):
+    dets = config.hodo_detectors("hdprm", a.ftof)
+    found = fresh_outputs(a.run, [(d, d, "HDPRM", a.suffix) for d in dets], [decode(a.run, "Hodo")])
+    data = {}
+    for det, path in found.items():
+        d = update_hdprm.make_dictdata(str(path), det)
+        data.update(d)
+        ok(f"{det:<6}", len(d))
+    return data, []
 
 
-def color_ok():
-    # Force green [OK] for visibility even if redirected
-    return f"[{colored('OK', 'green', attrs=['bold'])}]"
+def collect_t0(a, pf):
+    found = fresh_outputs(a.run, [("T0_Offset", "T0_Offset", "", a.suffix)], [decode(a.run, "Hodo")])
+    if "T0_Offset" not in found:
+        return {}, []
+    data = update_hdprm.make_t0_offset_dictdata(str(found["T0_Offset"]))
+    ok("T0_Offset ", len(data))
+    return data, []
 
-# Dispatch configurations and Key Lengths
-CATEGORIES = {
-    "hdprm":    {"dir": "HDPRM", "tpl": "HodoParam_e72_example",      "prefix": "HodoParam",    "key_len": 5, "start_col": 5},
-    "htofprm":  {"dir": "HDPRM", "tpl": "HodoParam_e72_example",      "prefix": "HodoParam",    "key_len": 5, "start_col": 5},
-    "t0":       {"dir": "HDPRM", "tpl": "HodoParam_e72_example",      "prefix": "HodoParam",    "key_len": 5, "start_col": 5},
-    "hdphc":    {"dir": "HDPHC", "tpl": "HodoPHCParam_e72_example",   "prefix": "HodoPHCParam", "key_len": 4, "start_col": 4},
-    "htofphc":  {"dir": "HDPHC", "tpl": "HodoPHCParam_e72_example",   "prefix": "HodoPHCParam", "key_len": 4, "start_col": 4},
-    "dctdc":    {"dir": "DCTDC", "tpl": "DCTdcParam_e72_example",     "prefix": "DCTdcParam",   "key_len": 3, "start_col": 3},
-    "residual": {"dir": "DCGEO", "tpl": "DCGeomParam_e72_example",    "prefix": "DCGeomParam",  "key_len": 1, "start_col": 12},
-    # Res column (0-based index 9): Id Name X Y Z TA RA1 RA2 L Res ...
-    "resolution": {"dir": "DCGEO", "tpl": "DCGeomParam_e72_example",  "prefix": "DCGeomParam",  "key_len": 1, "start_col": 9},
+
+def htof_inputs(run):
+    return [decode(run, "Hodo"), decode(run, "TPCHelixHTOF")]
+
+
+def collect_htofprm(a, pf):
+    """HTOF TDC (all events, suffix-independent) and ADC (pion-tagged MIP) from HTOF_Calib."""
+    found = fresh_outputs(a.run, [("HTOF TDC", "HTOF", "HDPRM", "All"), ("HTOF ADC", "HTOF", "ADC", a.suffix)],
+                          htof_inputs(a.run))
+    data = {}
+    if "HTOF TDC" in found:
+        d = update_hdprm.make_dictdata(str(found["HTOF TDC"]), "HTOF")
+        data.update(d)
+        ok("HTOF TDC", len(d))
+    if "HTOF ADC" in found:
+        path = str(found["HTOF ADC"])
+        d = update_hdprm.make_htofprm_dictdata(path)
+        data.update(d)
+        ok("HTOF ADC", len(d))
+        for seg, side, flag, mip in update_hdprm.htof_adc_quality_report(path):
+            runner.warn(f"HTOF ADC seg{seg}{side}: fit-quality flag {flag}, MIP {mip:.1f} (written anyway)")
+    return data, []
+
+
+def phc_range(a, det):
+    """Hand range of phc_conf.py; None = automatic choice in update_phc (HTOF: every segment)."""
+    rng = phc_conf.limits_dict.get(f"{a.run:05d}_{a.suffix}_{det.lower()}")
+    return [-np.inf, np.inf] if rng is None and det == "HTOF" else rng
+
+
+def htof_phc_report(path):
+    lim, off = update_hdprm.htof_phc_quality_report(path)
+    for seg, side, p0, p1 in lim:
+        runner.warn(f"HTOF seg{seg}{side}: PHC at fit limit (p0 {p0:.3f}, p1 {p1:.3f}), written anyway")
+    for seg, n in off:
+        print(colored(f"      HTOF seg{seg}: absolute TOF offset NOT applied (only {n} pion entries); "
+                      "TOF of this segment is off", "red"))
+
+
+def collect_phc(a, dets, inputs):
+    found = fresh_outputs(a.run, [(d, d, "PHC", a.suffix) for d in dets], inputs)
+    data = {}
+    for det, path in found.items():
+        rng = phc_range(a, det)
+        try:
+            d, not_used = update_phc.make_dictdata(str(path), det, good_ch_range=rng)
+        except RuntimeError as e:
+            runner.fail(f"{det}: {e}; nothing written")
+        data.update(d)
+        how = f"hand range {rng}" if rng is not None else "automatic"
+        ok(f"{det:<6}", len(d), f" ({how}; mean of used segments for {not_used})")
+        if det == "HTOF":
+            htof_phc_report(str(path))
+    return data, []
+
+
+def collect_hdphc(a, pf):
+    return collect_phc(a, config.hodo_detectors("hdphc", a.ftof), [decode(a.run, "Hodo")])
+
+
+def collect_htofphc(a, pf):
+    return collect_phc(a, ["HTOF"], htof_inputs(a.run))
+
+
+# -- DC ----------------------------------------------------------------------------
+def collect_dctdc(a, pf):
+    path = fresh_outputs(a.run, [(a.blc, a.blc, "TDC", a.suffix)], [decode(a.run, a.chamber)], required=True)[a.blc]
+    data = update_dctdc.make_dictdata(str(path))
+    ok(f"{a.chamber} TDC", len(data))
+    return data, []
+
+
+def report_residual(corr, sigma, state):
+    c = np.array(list(corr.values()))
+    print(colored("\n>>> Convergence Report (Residual) <<<", "white", attrs=["bold"]))
+    print(f"  - Correction (RMS):     {np.sqrt(np.mean(c ** 2)):.4f} mm")
+    print(f"  - Maximum Correction:   {np.max(np.abs(c)):.4f} mm")
+    print(f"  - Average Resolution:   {np.mean(list(sigma.values())):.4f} mm")
+    status = {
+        conv.CONVERGED: (f"[CONVERGED] (every |correction| < {RESI_CONV_MM * 1e3:.0f} um); not written", "green"),
+        conv.SETTLED: (f"[SETTLED] max correction not shrinking over {conv.SETTLE_PASSES} passes; "
+                       "not written, look at the residual PDF", "red"),
+        conv.WRITTEN: ("[IN PROGRESS] written; decode again and run resi again", "yellow"),
+    }[state]
+    print(colored(f"  - Status: {status[0]}\n", status[1], attrs=["bold"]))
+
+
+def collect_residual(a, pf):
+    """New Ofs = current Ofs + correction (BLC_residual, relative to plane U1a)."""
+    path = fresh_outputs(a.run, [(a.blc, a.blc, "residual", a.suffix)], [decode(a.run, a.chamber)],
+                         required=True)[a.blc]
+    fit = update_residual.make_dictdata(str(path))
+    current = pf.get_data_dict(key_len=1)
+    col = CATEGORIES["residual"]["start_col"] - 1
+    missing = sorted(k for k in fit if k not in current)
+    if not fit or missing:
+        runner.fail(f"{path.name}: no planes, or Ids not in the DCGEO: {missing}")
+    corr = {k: float(v[0]) for k, v in fit.items()}
+    ok(f"{a.chamber} Residuals", len(corr), " (Additive Update)")
+    max_corr = max(abs(c) for c in corr.values())
+    state = conv.judge(a.run, a.blc, "resi", a.suffix, max_corr, max_corr < RESI_CONV_MM,
+                       lambda prev, new: new > RESI_IMPROVE * prev)
+    report_residual(corr, {k: float(v[1]) for k, v in fit.items()}, state)
+    if state != conv.WRITTEN:
+        return {}, [state]
+    return {k: [float(current[k][col]) + c] for k, c in corr.items()}, [state]
+
+
+def read_pull(path, need_ab):
+    """pull_sigma, mean_chi2 (and pull_sigma_a/b) of a BLC_pull output."""
+    import uproot
+    branches = ["pull_sigma", "mean_chi2"] + (["pull_sigma_a", "pull_sigma_b"] if need_ab else [])
+    f = uproot.open(str(path))
+    tree = f["tree"] if "tree" in f else None
+    missing = [b for b in branches if tree is None or b not in tree.keys()]
+    if missing:
+        runner.fail(f"{path.name}: no {missing} (rebuild BLC_pull and fit again)")
+    arr = tree.arrays(branches, library="np")
+    if len(arr["pull_sigma"]) < 1:
+        runner.fail(f"{path.name}: empty tree")
+    return {b: float(arr[b][0]) for b in branches}
+
+
+def pull_groups(a):
+    """[(group, p, mean_chi2)] of the Res groups chosen by --all / --separate."""
+    blcs, tags = (["BLC1", "BLC2"], ["BcIn", "BcOut"]) if a.all else ([a.blc], [a.chamber])
+    found = fresh_outputs(a.run, [(b, b, "pull", a.suffix) for b in blcs], [decode(a.run, t) for t in tags],
+                          required=True)
+    pulls = {b: read_pull(found[b], a.separate) for b in blcs}
+    for b, v in pulls.items():
+        ab = f" p_a={v['pull_sigma_a']:.4f} p_b={v['pull_sigma_b']:.4f}" if a.separate else ""
+        runner.info(f"{b}: p={v['pull_sigma']:.4f}{ab} mean_chi2={v['mean_chi2']:.4f}")
+    if a.separate:
+        return [(f"{b}{s}", pulls[b][f"pull_sigma_{s}"], pulls[b]["mean_chi2"]) for b in blcs for s in "ab"]
+    if a.all:
+        return [("ALL", float(np.mean([v["pull_sigma"] for v in pulls.values()])),
+                 float(np.mean([v["mean_chi2"] for v in pulls.values()])))]
+    return [(a.blc, pulls[a.blc]["pull_sigma"], pulls[a.blc]["mean_chi2"])]
+
+
+def report_resolution(group, p, chi2, state, r0, res_new):
+    print(colored(f"\n>>> Convergence Report (Resolution / exclusive Pull) ({group}) <<<", "white", attrs=["bold"]))
+    print(f"  - pull σ (p):           {p:.4f}  (target ≈ 1)")
+    print(f"  - mean χ²_ν (monitor):  {chi2:.4f}")
+    if r0 is not None:
+        print(f"  - R0 / Res_new:         {r0:.6g} -> {res_new:.6g} mm")
+    status = {
+        conv.CONVERGED: (f"[CONVERGED] (|p-1|={abs(p - 1):.4f} < {RES_CONV}); not written", "green"),
+        conv.SETTLED: (f"[SETTLED] p not changing over {conv.SETTLE_PASSES} passes but |p-1| >= {RES_CONV}; "
+                       "not written, look at the pull PDF", "red"),
+        conv.WRITTEN: (f"[IN PROGRESS] (|p-1|={abs(p - 1):.4f}) written; decode again and run reso again", "yellow"),
+    }[state]
+    print(colored(f"  - Status: {status[0]}\n", status[1], attrs=["bold"]))
+
+
+def collect_resolution(a, pf):
+    """Per group: judge p; if still moving, every layer gets Res_new = p * mean(current Res of the group)."""
+    current = pf.get_data_dict(key_len=1)
+    col = CATEGORIES["resolution"]["start_col"] - 1
+    data, states = {}, []
+    for group, p, chi2 in pull_groups(a):
+        state = conv.judge(a.run, group, "reso", a.suffix, p, abs(p - 1.0) < RES_CONV,
+                           lambda prev, new: abs(new - prev) < RES_STABLE_DP)
+        states.append(state)
+        r0 = res_new = None
+        if state == conv.WRITTEN:
+            keys = [str(i) for i in RES_GROUPS[group]]
+            missing = [k for k in keys if k not in current]
+            if missing:
+                runner.fail(f"DCGEO has no Ids {missing} of {group}")
+            r0 = float(np.mean([float(current[k][col]) for k in keys]))
+            res_new = p * r0
+            data.update({k: [f"{res_new:.6g}"] for k in keys})
+        report_resolution(group, p, chi2, state, r0, res_new)
+    return data, states
+
+
+COLLECT = {
+    "hdprm": collect_hdprm, "t0": collect_t0, "htofprm": collect_htofprm,
+    "hdphc": collect_hdphc, "htofphc": collect_htofphc,
+    "dctdc": collect_dctdc, "residual": collect_residual, "resolution": collect_resolution,
 }
 
-if args.param_type not in CATEGORIES:
-    print(colored(f"Error: Unknown param_type {args.param_type}", "red"))
-    sys.exit(1)
 
-cat = CATEGORIES[args.param_type]
-SUB_DIR = config.SUB_DIR
-target_dir = config.PARAM_DIR / cat["dir"] / SUB_DIR
-target_dir.mkdir(parents=True, exist_ok=True)
-target_file = target_dir / f"{cat['prefix']}_run{args.run_num:0=5}_{args.suffix}"
-template_file = config.PARAM_DIR / cat["dir"] / cat["tpl"]
+def main():
+    a = parse_args()
+    cat = CATEGORIES[a.ptype]
+    target = config.PARAM_DIR / cat["dir"] / config.SUB_DIR / f"{cat['prefix']}_run{a.run:05d}_{a.suffix}"
+    pf = ParamFile.create_from_template(config.PARAM_DIR / cat["dir"] / cat["tpl"], target)
+    print(colored(f"\n>>> Collecting results for {a.ptype} <<<", "cyan"))
+    data, states = COLLECT[a.ptype](a, pf)
+    if data:
+        n = pf.update(data, key_len=cat["key_len"], start_col=cat["start_col"])
+        pf.write()
+        print(colored(f"\n[SUCCESS] Updated {n} entries total for Run {a.run} {a.suffix}", "green", attrs=["bold"]))
+        print(f"File: {target.relative_to(config.ANALYZER_DIR)}\n")
+    elif not states:
+        runner.warn(f"no results for run {a.run} {a.suffix} {a.ptype}; nothing written")
+    sys.exit(conv.exit_code(states))
 
-param_file = ParamFile.create_from_template(template_file, target_file)
 
-# Collect new data
-all_new_data = {}
-skip_write = False
-reso_meta = None
-dc_states = []  # resi/reso: state per group (dc_convergence)
-
-print(colored(f"\n>>> Collecting results for {args.param_type} <<<", "cyan"))
-
-if args.param_type == "hdprm":
-    # HTOF is handled separately by "htofprm" (TDC + ADC from HTOF_Calib).
-    detectors = config.hodo_detectors("hdprm", args.ftof)
-    results = require_fresh_results([(d, d, args.suffix, "HDPRM") for d in detectors], [hodo_decode()])
-    for det in detectors:
-        root_file = results.get(det)
-        if root_file is None:
-            continue
-        data = update_hdprm.make_dictdata(str(root_file), det)
-        all_new_data.update(data)
-        print(f"  - {det:<6}: {color_ok()} {len(data)} entries found")
-
-elif args.param_type == "htofprm":
-    # HTOF TDC + ADC (pedestal/MIP) from HTOF_Calib (run_hodo.py mode "htof").
-    # TDC: run{run}_HTOF_HDPRM_All.root (all-event, suffix-independent).
-    results = require_fresh_results([("HTOF TDC", "HTOF", "All", "HDPRM"),
-                                     ("HTOF ADC", "HTOF", args.suffix, "ADC")], htof_inputs())
-    root_file = results.get("HTOF TDC")
-    if root_file:
-        data = update_hdprm.make_dictdata(str(root_file), "HTOF")
-        all_new_data.update(data)
-        print(f"  - HTOF TDC: {color_ok()} {len(data)} entries found")
-    # ADC: dE/dx pion-tagged MIP (Pi only; see HTOF_Calib.cpp).
-    root_file = results.get("HTOF ADC")
-    if root_file:
-        data = update_hdprm.make_htofprm_dictdata(str(root_file))
-        all_new_data.update(data)
-        print(f"  - HTOF ADC: {color_ok()} {len(data)} entries found")
-        flagged = update_hdprm.htof_adc_quality_report(str(root_file))
-        if flagged:
-            print(colored(f"  - HTOF ADC: {len(flagged)} channel(s) with a fit-quality flag (written anyway):", "yellow"))
-            for seg, side, flag, mip in flagged:
-                print(colored(f"      seg{seg}{side}: flag {flag}, MIP {mip:.1f}", "yellow"))
-
-elif args.param_type == "t0":
-    root_file = require_fresh_results([("T0_Offset", "T0_Offset", args.suffix, "")], [hodo_decode()]).get("T0_Offset")
-    if root_file:
-        data = update_hdprm.make_t0_offset_dictdata(str(root_file))
-        all_new_data.update(data)
-        print(f"  - T0_Offset : {color_ok()} {len(data)} entries found")
-
-elif args.param_type in ("hdphc", "htofphc"):
-    # htofphc: HTOF only (HTOF_Calib, run_hodo.py mode "htof"); hdphc: the other counters
-    if args.param_type == "htofphc":
-        detectors, inputs = ["HTOF"], htof_inputs()
-    else:
-        detectors, inputs = config.hodo_detectors("hdphc", args.ftof), [hodo_decode()]
-    results = require_fresh_results([(d, d, args.suffix, "PHC") for d in detectors], inputs)
-    for det in detectors:
-        root_file = results.get(det)
-        if root_file is None:
-            continue
-        # Segments used: hand range of phc_conf.py if any, else automatic (HTOF: all; it has its own checks)
-        good_range = phc_conf.limits_dict.get(f"{args.run_num:05d}_{args.suffix}_{det.lower()}")
-        if good_range is None and det == "HTOF":
-            good_range = [-np.inf, np.inf]
-        try:
-            data, not_used = update_phc.make_dictdata(str(root_file), det, good_ch_range=good_range)
-        except RuntimeError as e:
-            print(colored(f"[Error] {det}: {e}; nothing written", "red"))
-            sys.exit(1)
-        all_new_data.update(data)
-        how = f"hand range {good_range}" if good_range is not None else "automatic"
-        print(f"  - {det:<6}: {color_ok()} {len(data)} entries found ({how}; mean of used segments for {not_used})")
-        if det == "HTOF":
-            lim, off = update_hdprm.htof_phc_quality_report(str(root_file))
-            for seg, side, p0, p1 in lim:
-                print(colored(f"      HTOF seg{seg}{side}: PHC at fit limit (p0 {p0:.3f}, p1 {p1:.3f}), written anyway", "yellow"))
-            for seg, n in off:
-                print(colored(f"      HTOF seg{seg}: absolute TOF offset NOT applied (only {n} pion entries); TOF of this segment is off", "red"))
-
-elif args.param_type == "dctdc":
-    # C++ (BLC_TDC) outputs: runXXXXX_BLC1_TDC_Pi.root (BcIn) or runXXXXX_BLC2_TDC_Pi.root (BcOut)
-    blc_det = "BLC1" if detector == "BcIn" else "BLC2" if detector == "BcOut" else detector
-    
-    root_file = get_root_file(args.run_num, blc_det, args.suffix, "TDC")
-    if root_file:
-        data = update_dctdc.make_dictdata(str(root_file))
-        all_new_data.update(data)
-        print(f"  - {detector} TDC: {color_ok()} {len(data)} entries found")
-
-elif args.param_type == "residual":
-    RESI_CONV_MM = 0.010  # converged when every plane's correction is below this
-    RESI_IMPROVE = 0.8    # a pass improves when the largest correction shrinks below this fraction
-
-    # Helper to apply additive update
-    def prepare_additive_residuals(r_file):
-        d = update_residual.make_dictdata(str(r_file))
-        if not d: return {}
-        
-        # Get current values to ADD
-        c_data = param_file.get_data_dict(key_len=cat["key_len"])
-        ofs_idx = cat["start_col"] - cat["key_len"]
-        
-        for k in d.keys():
-            if k in c_data:
-                try:
-                    vals = c_data[k]
-                    if len(vals) > ofs_idx:
-                        old_val = float(vals[ofs_idx])
-                        res_val = float(d[k][0])
-                        # [new Ofs, correction, residual sigma]; only the first is written
-                        d[k] = [old_val + res_val] + list(d[k])
-                    else:
-                        print(colored(f"    [Warning] Key {k}: Data row too short.", "yellow"))
-                except ValueError:
-                    print(colored(f"    [Warning] Key {k}: Invalid float conversion.", "yellow"))
-        return d
-
-    # C++ (BLC_residual) outputs: runXXXXX_BLC1_residual_Pi.root (BcIn) or runXXXXX_BLC2_residual_Pi.root (BcOut)
-    blc_det = "BLC1" if detector == "BcIn" else "BLC2" if detector == "BcOut" else detector
-    
-    root_file = get_root_file(args.run_num, blc_det, args.suffix, "residual")
-    found_any = False
-    
-    if root_file:
-        data = prepare_additive_residuals(root_file)
-        if data:
-            all_new_data.update(data)
-            print(f"  - {detector} Residuals: {color_ok()} {len(data)} entries found (Additive Update)")
-            found_any = True
-            max_corr = max(abs(v[1]) for v in data.values() if len(v) >= 2)
-            state = dcc.judge(args.run_num, blc_det, "resi", args.suffix, max_corr, max_corr < RESI_CONV_MM,
-                              lambda a, b: b > RESI_IMPROVE * a)
-            dc_states.append(state)
-            skip_write = state != dcc.WRITTEN
-    
-    if not found_any:
-        print(colored(f"  - {detector} Residuals: not found (run{args.run_num:05d}_{blc_det}_residual_{args.suffix})", "red"))
-
-elif args.param_type == "resolution":
-    # exclusive Pull width p from BLC_pull -> common Res_new = p * mean(Res in group)
-    import uproot
-
-    RES_CONV_THRESHOLD = 0.05  # |p-1| below this => CONVERGED for that group
-    RES_STABLE_DP = 0.01       # a pass does not change p when |dp| is below this
-
-    def layer_keys(group_name):
-        """Return DCGEO Id keys for a Res group."""
-        table = {
-            "BLC1": [str(i) for i in range(1, 17)],
-            "BLC1a": [str(i) for i in range(1, 9)],
-            "BLC1b": [str(i) for i in range(9, 17)],
-            "BLC2": [str(i) for i in range(1001, 1017)],
-            "BLC2a": [str(i) for i in range(1001, 1009)],
-            "BLC2b": [str(i) for i in range(1009, 1017)],
-            "ALL": [str(i) for i in range(1, 17)] + [str(i) for i in range(1001, 1017)],
-        }
-        return table.get(group_name)
-
-    def find_pull_root(blc_name):
-        return get_root_file(args.run_num, blc_name, args.suffix, "pull")
-
-    def read_pull_sigma(r_file, need_ab=False):
-        """Return dict with pull_sigma / optionally a,b; mean_chi2 (or None)."""
-        try:
-            file = uproot.open(str(r_file))
-            if "tree" not in file:
-                print(colored(f"  [Warning] 'tree' not found in {r_file}", "yellow"))
-                return None
-            branches = ["pull_sigma", "mean_chi2"]
-            if need_ab:
-                branches += ["pull_sigma_a", "pull_mean_a", "pull_sigma_b", "pull_mean_b"]
-            keys = set(file["tree"].keys())
-            if need_ab:
-                missing = [b for b in ("pull_sigma_a", "pull_sigma_b") if b not in keys]
-                if missing:
-                    print(colored(
-                        f"  [Error] {r_file.name} missing {missing}; rebuild BLC_pull for --separate",
-                        "red",
-                    ))
-                    return None
-            arr = file["tree"].arrays(branches, library="np")
-            if len(arr["pull_sigma"]) < 1:
-                return None
-            out = {
-                "pull_sigma": float(arr["pull_sigma"][0]),
-                "mean_chi2": float(arr["mean_chi2"][0]),
-            }
-            if need_ab:
-                out["pull_sigma_a"] = float(arr["pull_sigma_a"][0])
-                out["pull_sigma_b"] = float(arr["pull_sigma_b"][0])
-            return out
-        except Exception as e:
-            print(colored(f"  [Error] Reading {r_file}: {e}", "red"))
-            return None
-
-    def set_common_res(keys, p, label=""):
-        """R0=mean(Res in group); Res_new=p*R0; write same value to all keys."""
-        c_data = param_file.get_data_dict(key_len=cat["key_len"])
-        res_idx = cat["start_col"] - cat["key_len"]
-        vals_old = []
-        for k in keys:
-            if k not in c_data:
-                print(colored(f"    [Warning] Key {k} not in DCGEO", "yellow"))
-                continue
-            row = c_data[k]
-            if len(row) <= res_idx:
-                print(colored(f"    [Warning] Key {k}: row too short for Res", "yellow"))
-                continue
-            try:
-                vals_old.append(float(row[res_idx]))
-            except ValueError:
-                print(colored(f"    [Warning] Key {k}: bad Res value", "yellow"))
-                continue
-        if not vals_old:
-            return {}, None, None
-        r0 = float(np.mean(vals_old))
-        res_new = float(p) * r0
-        res_str = f"{res_new:.6g}"
-        out = {k: [res_str] for k in keys if k in c_data and len(c_data[k]) > res_idx}
-        tag = f" [{label}]" if label else ""
-        print(colored(
-            f"  [INFO]{tag} R0={r0:.6g}  p={float(p):.4f}  Res_new={res_str}  n={len(out)}",
-            "cyan",
-        ))
-        return out, r0, res_new
-
-    def report_reso_convergence(pull_sigma, mean_chi2, sample_old, sample_new, updated, label=""):
-        tag = f" ({label})" if label else ""
-        print(colored(f"\n>>> Convergence Report (Resolution / exclusive Pull){tag} <<<",
-                      "white", attrs=["bold"]))
-        print(f"  - pull σ (p):           {pull_sigma:.4f}  (target ≈ 1)")
-        print(f"  - mean χ²_ν (monitor):  {mean_chi2:.4f}")
-        if sample_old is not None:
-            print(f"  - R0 / Res_new:         {sample_old:.6g} -> {sample_new:.6g} mm")
-        dp = abs(pull_sigma - 1.0)
-        if dp < RES_CONV_THRESHOLD:
-            print(colored(
-                f"  - Status: [CONVERGED] (|p-1|={dp:.4f} < {RES_CONV_THRESHOLD})",
-                "green",
-                attrs=["bold"],
-            ))
-            if not updated:
-                print(colored("  - Res not modified for this group (already converged)", "green"))
-        else:
-            print(colored(
-                f"  - Status: [IN PROGRESS] (|p-1|={dp:.4f} >= {RES_CONV_THRESHOLD})",
-                "yellow",
-                attrs=["bold"],
-            ))
-            print(colored("  - Next: decode BcIn/BcOut again, then reso again", "yellow"))
-        print()
-
-    def apply_group(group_name, p, mean_chi2):
-        """Update one group if |p-1| >= threshold. Returns (updated_bool, meta_dict)."""
-        keys = layer_keys(group_name)
-        meta = {
-            "pull_sigma": float(p),
-            "mean_chi2": float(mean_chi2),
-            "sample_old": None,
-            "sample_new": None,
-            "label": group_name,
-            "updated": False,
-        }
-        state = dcc.judge(args.run_num, group_name, "reso", args.suffix, float(p),
-                          abs(float(p) - 1.0) < RES_CONV_THRESHOLD, lambda a, b: abs(b - a) < RES_STABLE_DP)
-        dc_states.append(state)
-        if state == dcc.CONVERGED:
-            report_reso_convergence(float(p), float(mean_chi2), None, None, False, group_name)
-            return False, meta
-        if state == dcc.SETTLED:
-            print(colored(f"  - {group_name}: [SETTLED] p={float(p):.4f} not changing over {dcc.SETTLE_PASSES} passes "
-                          f"but |p-1| >= {RES_CONV_THRESHOLD}; not written, look at the pull PDF", "red", attrs=["bold"]))
-            return False, meta
-        data, r0, res_new = set_common_res(keys, p, group_name)
-        all_new_data.update(data)
-        meta["sample_old"] = r0
-        meta["sample_new"] = res_new
-        meta["updated"] = True
-        print(f"  - {group_name} Resolution: {color_ok()} {len(data)} layers (common Res_new)")
-        return True, meta
-
-    found_any = False
-    group_metas = []
-
-    if args.all and args.separate:
-        # 4 groups: BLC1a/1b/2a/2b
-        for blc_name, ga, gb in (("BLC1", "BLC1a", "BLC1b"), ("BLC2", "BLC2a", "BLC2b")):
-            root_file = find_pull_root(blc_name)
-            if not root_file:
-                print(colored(f"  [Error] No pull ROOT for {blc_name} (needed by --all --separate).", "red"))
-                sys.exit(1)
-            info = read_pull_sigma(root_file, need_ab=True)
-            if not info:
-                print(colored(f"  [Error] Cannot read pull a/b from {root_file}", "red"))
-                sys.exit(1)
-            print(colored(
-                f"  [INFO] {blc_name}: p_a={info['pull_sigma_a']:.4f} p_b={info['pull_sigma_b']:.4f} "
-                f"from {root_file.name}",
-                "cyan",
-            ))
-            for gname, p in ((ga, info["pull_sigma_a"]), (gb, info["pull_sigma_b"])):
-                updated, meta = apply_group(gname, p, info["mean_chi2"])
-                group_metas.append(meta)
-                found_any = True
-        if not any(m["updated"] for m in group_metas):
-            skip_write = True
-        # report after write for updated groups
-        reso_meta = group_metas  # list; handled below
-
-    elif args.all:
-        # one common Res for all 32 layers; p = mean(p_BLC1, p_BLC2)
-        pulls = []
-        means = []
-        for blc_name in ("BLC1", "BLC2"):
-            root_file = find_pull_root(blc_name)
-            if not root_file:
-                print(colored(f"  [Error] No pull ROOT for {blc_name} (needed by --all).", "red"))
-                sys.exit(1)
-            info = read_pull_sigma(root_file)
-            if not info:
-                print(colored(f"  [Error] Cannot read pull_sigma from {root_file}", "red"))
-                sys.exit(1)
-            print(colored(
-                f"  [INFO] {blc_name}: p={info['pull_sigma']:.4f} from {root_file.name}",
-                "cyan",
-            ))
-            pulls.append(info["pull_sigma"])
-            means.append(info["mean_chi2"])
-
-        pull_sigma = float(np.mean(pulls)) if pulls else 0.0
-        mean_chi2 = float(np.mean(means)) if means else 0.0
-        print(colored(f"  [INFO] ALL mean p={pull_sigma:.4f}", "cyan"))
-        updated, meta = apply_group("ALL", pull_sigma, mean_chi2)
-        group_metas.append(meta)
-        found_any = True
-        if not updated:
-            skip_write = True
-        reso_meta = meta
-
-    elif args.separate:
-        blc_det = "BLC1" if detector == "BcIn" else "BLC2"
-        root_file = find_pull_root(blc_det)
-        if not root_file:
-            print(colored(f"  [Error] No pull ROOT for {blc_det}. Run BLC_pull first.", "red"))
-            sys.exit(1)
-        info = read_pull_sigma(root_file, need_ab=True)
-        if not info:
-            print(colored(f"  [Error] Cannot read pull a/b from {root_file}", "red"))
-            sys.exit(1)
-        print(colored(
-            f"  [INFO] {blc_det}: p_a={info['pull_sigma_a']:.4f} p_b={info['pull_sigma_b']:.4f} "
-            f"mean_chi2={info['mean_chi2']:.4f}",
-            "cyan",
-        ))
-        ga, gb = (f"{blc_det}a", f"{blc_det}b")
-        for gname, p in ((ga, info["pull_sigma_a"]), (gb, info["pull_sigma_b"])):
-            updated, meta = apply_group(gname, p, info["mean_chi2"])
-            group_metas.append(meta)
-            found_any = True
-        if not any(m["updated"] for m in group_metas):
-            skip_write = True
-        reso_meta = group_metas
-
-    else:
-        blc_det = "BLC1" if detector == "BcIn" else "BLC2"
-        root_file = find_pull_root(blc_det)
-        if not root_file:
-            print(colored(f"  [Error] No pull ROOT for {blc_det}. Run BLC_pull first.", "red"))
-            sys.exit(1)
-        info = read_pull_sigma(root_file)
-        if not info:
-            print(colored(f"  [Error] Cannot read pull_sigma from {root_file}", "red"))
-            sys.exit(1)
-
-        pull_sigma = info["pull_sigma"]
-        mean_chi2 = info["mean_chi2"]
-        print(colored(
-            f"  [INFO] {blc_det}: p={pull_sigma:.4f} mean_chi2={mean_chi2:.4f}",
-            "cyan",
-        ))
-        updated, meta = apply_group(blc_det, pull_sigma, mean_chi2)
-        group_metas.append(meta)
-        found_any = True
-        if not updated:
-            skip_write = True
-        reso_meta = meta
-
-# Helper to report convergence for residuals
-def report_convergence(data):
-    if not data: return
-    
-    # entries are [new Ofs, correction, sigma]; judge on the correction, not on the Ofs
-    rows = [v for v in data.values() if len(v) >= 2]
-    if not rows: return
-    corrs = [v[1] for v in rows]
-    sigs = [v[2] for v in rows if len(v) > 2]
-    
-    rms = np.sqrt(np.mean(np.square(corrs)))
-    max_c = np.max(np.abs(corrs))
-    avg_sig = np.mean(sigs) if sigs else 0.0
-    
-    print(colored("\n>>> Convergence Report (Residual) <<<", "white", attrs=["bold"]))
-    print(f"  - Correction (RMS):     {rms:.4f} mm")
-    print(f"  - Maximum Correction:   {max_c:.4f} mm")
-    print(f"  - Average Resolution:   {avg_sig:.4f} mm")
-    
-    state = dc_states[-1] if dc_states else None
-    if state == dcc.CONVERGED:
-        print(colored(f"  - Status: [CONVERGED] (every |correction| < {RESI_CONV_MM * 1e3:.0f} um); not written",
-                      "green", attrs=["bold"]))
-    elif state == dcc.SETTLED:
-        print(colored(f"  - Status: [SETTLED] max correction not shrinking over {dcc.SETTLE_PASSES} passes; "
-                      "not written, look at the residual PDF", "red", attrs=["bold"]))
-    else:
-        print(colored("  - Status: [IN PROGRESS] written; decode again and run resi again", "yellow", attrs=["bold"]))
-    print()
-
-# Perform update
-if skip_write and args.param_type == "residual":
-    report_convergence(all_new_data)
-elif skip_write:
-    # resolution: already reported per group; nothing to write
-    pass
-elif all_new_data:
-    # Ensure all_new_data only has one value per key for the file update 
-    # (stripping extra info like sigma used for reporting)
-    if args.param_type == "residual":
-        # report_convergence uses sigma (v[1]) if present
-        report_convergence(all_new_data)
-        # Stripping extra info (like sigma) for the file update
-        cleaned_data = {k: [v[0]] if isinstance(v, list) else [v] for k, v in all_new_data.items()}
-    else:
-        cleaned_data = all_new_data
-        
-    success_count = param_file.update(cleaned_data, key_len=cat["key_len"], start_col=cat["start_col"])
-    param_file.write()
-    if args.param_type == "resolution" and reso_meta is not None:
-        metas = reso_meta if isinstance(reso_meta, list) else [reso_meta]
-        for m in metas:
-            if m.get("updated"):
-                report_reso_convergence(
-                    m["pull_sigma"],
-                    m["mean_chi2"],
-                    m["sample_old"],
-                    m["sample_new"],
-                    True,
-                    m.get("label", ""),
-                )
-    print(colored(f"\n[SUCCESS] Updated {success_count} entries total for Run {args.run_num} {args.suffix}", "green", attrs=["bold"]))
-    print(f"File: {target_file.relative_to(config.ANALYZER_DIR)}\n")
-else:
-    print(colored(f"\n[SKIP] No results found for Run {args.run_num} {args.suffix} {args.param_type}.", "yellow"))
-
-if dc_states:
-    sys.exit(dcc.exit_code(dc_states))
+if __name__ == "__main__":
+    main()
