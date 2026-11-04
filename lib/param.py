@@ -1,6 +1,23 @@
-from pathlib import Path
+import datetime
 import shutil
 import sys
+from pathlib import Path
+
+from . import config
+
+
+def backup_file(path):
+    """Copy path to BACKUP_DIR/param/<date>/<name>.<time> before it is overwritten; the copy, or None."""
+    path = Path(path)
+    if not path.exists():
+        return None
+    now = datetime.datetime.now()
+    dst = config.BACKUP_DIR / "param" / f"{now:%Y%m%d}" / f"{path.name}.{now:%H%M%S}.{now.microsecond // 1000:03d}"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, dst)
+    print(f"backup: {dst}")
+    return dst
+
 
 class ParamFile:
     def __init__(self, path: Path):
@@ -64,7 +81,7 @@ class ParamFile:
         """Write records back to file."""
         if target_path is None:
             target_path = self.path
-        
+        backup_file(target_path)
         with open(target_path, 'w') as f:
             for is_comment, parts in self.records:
                 if is_comment:

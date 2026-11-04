@@ -20,31 +20,25 @@ One cycle:
   ref -> myrun D5 (normal, BLC2-referenced) -> pos -> myrun BcIn -> run_dcprm.py <run> resi --bcin
   -> ref -> ... until pos reports converged.
 Converged: |dy| < max(--tol, 2 * statistical error) and |s| < --tol.
+Exit code of pos (lib/runner.py): 0 all converged (or --debug), 2 Ofs written for runs not converged,
+1 failed.
 The common x shift of BLC1 is degenerate with delta and is left unchanged.
 """
 
-import argparse
-import datetime
 import re
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 from termcolor import colored
 
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.append(str(project_root))
-
-from lib import config
-from lib.input_check import check_input
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from lib import config, runner  # noqa: E402
 
 DCGEO_DIR = config.PARAM_DIR / "DCGEO" / config.SUB_DIR
 CONF_DIR = config.PARAM_DIR / "conf" / config.SUB_DIR
 RUNLIST_DIR = config.ANALYZER_DIR / "runmanager" / "runlist"
-BIN_DIR = project_root / "bin"
-APPLY_SCRIPT = Path(__file__).resolve().parent / "apply_dcgeo_offset.py"
-BACKUP_BASE = Path("/group/had/sks/Users/sryuta/backup")
-SUMMARY_DIR = Path("/group/had/sks/Users/sryuta/tmp/d5_align")  # number files (not in results/img)
+BIN_DIR = runner.BIN_DIR
+APPLY_SCRIPT = runner.SCRIPT_DIR / "apply_dcgeo_offset.py"
+SUMMARY_DIR = config.WORK_DIR / "d5_align"  # number files (not in results/img)
 REF_DIR = SUMMARY_DIR / "ref"  # throw-away DCGEO copy and conf of the BLC2-referenced fit
 CONF_FILE_KEYS = ("UNPACK", "DIGIT", "CMAP", "USER", "HDPRM", "HDPHC", "DCGEO", "DCTDC", "DCDRFT",
                   "TPCPRM", "TPCPOS", "FLDMAP", "D5MTX")
@@ -84,14 +78,6 @@ def chamber_root(run, det):
 
 def txt_dir(run):
     return SUMMARY_DIR / run_tag(run)
-
-
-def run_cmd(cmd, capture=False):
-    print(colored(f"Running: {cmd}", "cyan"))
-    if capture:
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        return res.returncode, res.stdout + res.stderr
-    return subprocess.call(cmd, shell=True), ""
 
 
 def runs_label(runs):
@@ -212,8 +198,8 @@ def parse_kv(path):
 
 def measure(run):
     res = {"run": run}
-    rc, _ = run_cmd(f"{BIN_DIR}/d5_pos_review {run} {BEAM_FLAG} --d5 {d5_root(run)} "
-                    f"--d5ref {d5_root(run, TAG)} --dcgeo {dcgeo_path(run)}", capture=True)
+    rc, _ = runner.sh(f"{BIN_DIR}/d5_pos_review {run} {BEAM_FLAG} --d5 {d5_root(run)} "
+                    f"--d5ref {d5_root(run, TAG)} --dcgeo {dcgeo_path(run)}", capture=True, check=False)
     txt = txt_dir(run) / f"d5_pos_review_{run_tag(run)}_{SUFFIX}.txt"
     if rc != 0 or not txt.exists():
         return res
@@ -238,24 +224,18 @@ def fmt(v, f="{:+.4f}"):
 
 
 def write_ofs(rows):
-    backup = BACKUP_BASE / f"dcgeo_d5pos_{datetime.datetime.now():%Y%m%d_%H%M%S}"
-    backup.mkdir(parents=True, exist_ok=False)
     for r in rows:
         run = r["run"]
-        shutil.copy2(dcgeo_path(run), backup / dcgeo_path(run).name)
+        runner.backup_file(dcgeo_path(run))
         opt = (f"--skip-xy --residual-offset BLC1a:{r['s']:.5f},{r['dy_a']:.5f} "
                f"--residual-offset BLC1b:{-r['s']:.5f},{r['dy_b']:.5f} --write")
-        rc, out = run_cmd(f"python3 {APPLY_SCRIPT} {dcgeo_path(run)} {opt}", capture=True)
+        _, out = runner.sh(f"python3 {APPLY_SCRIPT} {dcgeo_path(run)} {opt}", capture=True)
         print(out.strip().splitlines()[-1] if out.strip() else "")
-        if rc != 0:
-            print(colored(f"[Error] writing Ofs failed for {run_tag(run)}", "red"))
-            sys.exit(rc)
-    print(colored(f"[INFO] DCGEO backup: {backup}", "green"))
 
 
 def make_check_pdf(run):
-    run_cmd(f"{BIN_DIR}/d5_plane_resi_qa {run} {BEAM_FLAG} --d5 {d5_root(run)} "
-            f"--bcin {chamber_root(run, 'BcIn')} --bcout {chamber_root(run, 'BcOut')}")
+    runner.sh(f"{BIN_DIR}/d5_plane_resi_qa {run} {BEAM_FLAG} --d5 {d5_root(run)} "
+            f"--bcin {chamber_root(run, 'BcIn')} --bcout {chamber_root(run, 'BcOut')}", check=False)
 
 
 def do_pos(args):
@@ -268,11 +248,7 @@ def do_pos(args):
                           f"(DCGEO changed after ref): run 'run_d5.py {run} ref' and decode again", "red"))
             sys.exit(1)
         for root in (d5_root(run), d5_root(run, TAG)):
-            if not root.exists():
-                print(colored(f"[Error] {root} not found", "red"))
-                sys.exit(1)
-            if not check_input(root, SUFFIX, args.force):
-                sys.exit(1)
+            runner.checked_root(root, SUFFIX, args.force)
 
     rows = [measure(run) for run in args.runs]
     lines = ["run      dy_a[mm]  dy_b[mm]  err[mm]   s[mm]     ddxu[%]   dv[mrad]  converged"]
@@ -306,19 +282,15 @@ def do_pos(args):
     for r in done:
         print(colored(f"[INFO] {run_tag(r['run'])} converged: check PDF", "green"))
         make_check_pdf(r["run"])
+    if todo:
+        sys.exit(runner.EXIT_NOT_CONVERGED)
 
 
 def main():
     global SUFFIX, BEAM_FLAG
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("runs", type=int, nargs="+", help="run numbers (processed one by one)")
-    parser.add_argument("mode", choices=["ref", "pos"])
-    parser.add_argument("--kaon", action="store_true", help="K (param suffix _K, K window); default pi")
+    parser = runner.base_parser(__doc__, ["ref", "pos"])
     parser.add_argument("--factor", type=float, default=1000.0, help="ref: BLC1 Res multiplier (default 1000)")
     parser.add_argument("--tol", type=float, default=0.01, help="pos: convergence tolerance [mm] (default 0.01)")
-    parser.add_argument("--debug", action="store_true", help="pos: measure and print only")
-    parser.add_argument("--force", action="store_true",
-                        help="pos: run even if a D5 decode is older than its params")
     args = parser.parse_args()
     if args.kaon:
         SUFFIX, BEAM_FLAG = "K", "--kaon"

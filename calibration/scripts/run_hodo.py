@@ -1,201 +1,96 @@
 #!/usr/bin/env python3
+"""Hodoscope calibration: fit, then write the params (update_param.py).
 
-import argparse
+Usage: run_hodo.py <run...> {hdprm,t0,hdphc,htof} [--kaon] [--ftof] [--debug] [--force]
+  hdprm  <det>_HDPRM for the detector set of lib/config.py HODO_DETECTORS -> HDPRM
+  t0     T0_Offset -> HDPRM (BH2 T0 offsets)
+  hdphc  <det>_PHC for the detector set -> HDPHC
+  htof   HTOF_Calib (TDC, ADC, PHC in one pass) -> HDPRM and HDPHC
+Input: DATA_DIR/runXXXXX_Hodo.root (create_runlist.py --hodo); htof also DATA_DIR/runXXXXX_TPCHelixHTOF.root.
+Runs are processed one by one, except htof, which merges the runs and labels the result with the
+first run.
+"""
 import sys
-import os
-import subprocess
 from pathlib import Path
-from termcolor import colored
 
-# Add shared library path to find config
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.append(str(project_root))
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from lib import config, runner  # noqa: E402
 
-from lib import config
-from lib.input_check import check_input
 
-def run_command(cmd, exit_on_error=True):
-    print(colored(f"Running: {cmd}", "cyan"))
-    ret = subprocess.call(cmd, shell=True)
-    if ret != 0:
-        print(colored(f"[Error] Command failed with exit code {ret}", "red"))
-        if exit_on_error:
-            sys.exit(ret)
-    return ret
+def fit_and_update(run, suffix, args, mode, bin_suffix):
+    """Fit every detector of the set of `mode`, then write that mode's params."""
+    dets = config.hodo_detectors(mode, args.ftof)
+    bins = runner.require_bins(*[f"{d}_{bin_suffix}" for d in dets])
+    root = runner.input_root(run, "Hodo", suffix, args.force)
+    runner.step(f"run{run:05d}: {bin_suffix} fit for {dets}")
+    for b in bins:
+        runner.sh(f"{b} {root} {suffix}")
+    runner.update_param(run, suffix, mode, *(["--ftof"] if args.ftof else []), debug=args.debug)
 
-def run_fits(bin_dir, names, input_root_file, suffix):
-    """Run every fit binary; stop before any fit if one of them is not built."""
-    missing = [n for n in names if not (bin_dir / n).exists()]
-    if missing:
-        print(colored(f"[Error] not built: {', '.join(missing)} (run build.sh)", "red"))
-        sys.exit(1)
-    for n in names:
-        run_command(f"{bin_dir / n} {input_root_file} {suffix}")
+
+def do_hdprm(run, suffix, args):
+    fit_and_update(run, suffix, args, "hdprm", "HDPRM")
+
+
+def do_hdphc(run, suffix, args):
+    fit_and_update(run, suffix, args, "hdphc", "PHC")
+
+
+def do_t0(run, suffix, args):
+    (exe,) = runner.require_bins("T0_Offset")
+    root = runner.input_root(run, "Hodo", suffix, args.force)
+    runner.step(f"run{run:05d}: T0_Offset")
+    runner.sh(f"{exe} {root} {suffix}")
+    runner.update_param(run, suffix, "t0", debug=args.debug)
+
+
+def htof_dst(run):
+    """DstTPCHelixHTOF output of the run (dE/dx-tagged helix x HTOF match); it must follow the Hodo decode."""
+    dst = config.DATA_DIR / f"run{run:05d}_TPCHelixHTOF.root"
+    if not dst.exists():
+        runner.fail(f"{dst} not found (dst_create_runlist.py {run} --tpchelixhtof, then run the job)")
+    hodo = config.DATA_DIR / f"run{run:05d}_Hodo.root"
+    if hodo.exists() and dst.resolve().stat().st_mtime < hodo.resolve().stat().st_mtime:
+        runner.warn(f"{dst.name} is older than {hodo.name}; regenerate it after the Hodo re-decode")
+    runner.info(f"input: {dst}")
+    return dst
+
+
+def do_htof(runs, suffix, args):
+    """HTOF_Calib on all runs merged; params labeled with the first run."""
+    if args.kaon:
+        runner.fail("htof supports Pi only (TPC dE/dx pion tag); --kaon is not implemented")
+    if args.ftof:
+        runner.warn("--ftof does not apply to htof; ignored")
+    (exe,) = runner.require_bins("HTOF_Calib")
+    pairs = [(runner.input_root(r, "Hodo", suffix, args.force), htof_dst(r)) for r in runs]
+    if len(runs) > 1:
+        runner.info(f"merging {len(runs)} runs; results/params labeled with run {runs[0]:05d}")
+    runner.step("HTOF_Calib")
+    runner.sh(f"{exe} " + " ".join(f"{h} {d}" for h, d in pairs))
+    runner.update_param(runs[0], suffix, "htofprm", debug=args.debug)
+    runner.update_param(runs[0], suffix, "htofphc", debug=args.debug)
+
+
+PER_RUN = {"hdprm": do_hdprm, "t0": do_t0, "hdphc": do_hdphc}
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Automate Hodoscope Calibration for HDPRM, T0 Offset, HDPHC, and HTOF (TDC/ADC/PHC)."
-    )
-    parser.add_argument("run_nums", type=int, nargs="+",
-                        help="Run Number(s). Several runs are merged (htof only); "
-                             "results/params are labeled with the first run")
-    parser.add_argument("mode", type=str, choices=["hdprm", "htof", "t0", "hdphc"], help="Calibration Mode")
-    parser.add_argument('--kaon', action="store_true", help='Use Kaon (K) suffix instead of Pion (Pi)')
-    parser.add_argument(
-        '--ftof',
-        action="store_true",
-        help="FTOF detector set for hdprm/hdphc instead of the default one (lib/config.py "
-             f"HODO_DETECTORS: {config.HODO_DETECTORS}). "
-             "t0 is unchanged (T0_Offset). HTOF uses mode 'htof', not this flag.",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Run even if the input ROOT is older than its params or is a decode of the other particle",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Skip parameter update; run analysis and produce PDFs only",
-    )
-
+    parser = runner.base_parser(__doc__, ["hdprm", "t0", "hdphc", "htof"])
+    parser.add_argument("--ftof", action="store_true",
+                        help="hdprm/hdphc: the FTOF detector set instead of the default one "
+                             f"(lib/config.py HODO_DETECTORS: {config.HODO_DETECTORS}); t0 is unchanged")
     args = parser.parse_args()
+    suffix = runner.suffix_of(args)
+    runner.info(f"mode {args.mode}, suffix {suffix}" + (", FTOF set" if args.ftof else "")
+                + (", --debug (no param written)" if args.debug else ""))
+    if args.mode == "htof":
+        do_htof(args.runs, suffix, args)
+    else:
+        for run in args.runs:
+            PER_RUN[args.mode](run, suffix, args)
+    runner.info(f"done: {args.mode} for {' '.join(map(str, args.runs))}")
 
-    run_nums = args.run_nums
-    run_num = run_nums[0]  # representative run (output/param labeling)
-    mode = args.mode
-    suffix = "K" if args.kaon else "Pi"
-
-    if len(run_nums) > 1 and mode != "htof":
-        print(colored(f"[Error] Multiple runs are supported only for htof (got mode={mode}).", "red"))
-        sys.exit(1)
-
-    if mode == "htof" and args.kaon:
-        print(colored("[Error] htof only supports Pi (TPC dE/dx pion bit set, proton bit excluded); "
-                       "--kaon is not implemented.", "red"))
-        sys.exit(1)
-
-    # 1. Locate the Input Root File(s) (Symbolic link in DATA_DIR)
-    # create_runlist.py creates runXXXXX_Hodo.root
-    hodo_root_files = []
-    for r in run_nums:
-        hodo_root_file = config.DATA_DIR / f"run{r:05d}_Hodo.root"
-        if not hodo_root_file.exists():
-            print(colored(f"[Error] Symlink/File not found: {hodo_root_file}", "red"))
-            print(f"Ensure create_runlist.py was run for Hodo.")
-            sys.exit(1)
-        hodo_root_files.append(hodo_root_file)
-    input_root_file = hodo_root_files[0]
-
-    htof_dst_files = []
-    if mode == "htof":
-        # HTOF_Calib also needs the DstTPCHelixHTOF output (dE/dx-tagged TPC helix x
-        # HTOF match) for the pion-selected MIP histogram; Hodo.root alone supplies
-        # the all-event pedestal histograms. Produce via:
-        #   dst_create_runlist.py <run...> --tpchelixhtof
-        # (tag: run{run}_TPCHelixHTOF.root).
-        for r in run_nums:
-            htof_dst_file = config.DATA_DIR / f"run{r:05d}_TPCHelixHTOF.root"
-            if not htof_dst_file.exists():
-                print(colored(f"[Error] Symlink/File not found: {htof_dst_file}", "red"))
-                print("Run dst_create_runlist.py <run> --tpchelixhtof (and submit the job) first.")
-                sys.exit(1)
-            htof_dst_files.append(htof_dst_file)
-            print(colored(f"[INFO] Using DstTPCHelixHTOF File: {htof_dst_file}", "green"))
-            # The calibration sample (HTOF cluster match, PID tag) depends on the Hodo decode, so
-            # the DST should be regenerated after every Hodo re-decode.
-            hodo_file = config.DATA_DIR / f"run{r:05d}_Hodo.root"
-            if hodo_file.exists() and htof_dst_file.resolve().stat().st_mtime < hodo_file.resolve().stat().st_mtime:
-                print(colored(f"[Warning] {htof_dst_file.name} is older than {hodo_file.name}; "
-                              "regenerate it (dst_create_runlist.py --tpchelixhtof) after the Hodo re-decode.", "yellow"))
-
-    if not all([check_input(f, suffix, args.force) for f in hodo_root_files]):
-        sys.exit(1)
-    for f in hodo_root_files:
-        print(colored(f"[INFO] Using Input File: {f}", "green"))
-    if len(run_nums) > 1:
-        print(colored(f"[INFO] Merging {len(run_nums)} runs; results/params labeled with run {run_num:05d}", "green"))
-    print(colored(f"[INFO] Mode: {mode} (Suffix: {suffix})", "green"))
-    if args.ftof:
-        if mode == "htof":
-            print(colored("[Warning] --ftof does not apply to mode htof "
-                          "(use mode htof for HTOF; ignore --ftof here).", "yellow"))
-        else:
-            print(colored("[INFO] FTOF detector set (--ftof)", "green"))
-    if args.debug:
-        print(colored("[INFO] DEBUG mode: parameter update will be skipped", "yellow"))
-
-    bin_dir = project_root / "bin"
-    script_dir = Path(__file__).resolve().parent
-    update_script = script_dir / "update_param.py"
-    ftof_opt = " --ftof" if args.ftof else ""
-
-    # --- Mode Dispatch ---
-
-    if mode == "hdprm":
-        # HTOF is handled by mode "htof" (HTOF_Calib).
-        detectors = config.hodo_detectors("hdprm", args.ftof)
-        print(colored(f">>> Step 1: Running HDPRM for {detectors}", "cyan"))
-        run_fits(bin_dir, [f"{det}_HDPRM" for det in detectors], input_root_file, suffix)
-
-        if not args.debug:
-            print(colored(">>> Step 2: Updating Parameters (HDPRM)", "cyan"))
-            run_command(f"python3 {update_script} {run_num} {suffix} hdprm{ftof_opt}")
-        else:
-            print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
-
-    elif mode == "htof":
-        # Run HTOF_Calib (TDC + ADC pedestal/MIP + PHC in one pass; PHC uses DeltaE
-        # recomputed from raw ADC with the ADC parameters of the same pass, so no re-decoding is
-        # needed in between) -> update_param.py htofprm (HDPRM: TDC+ADC) and
-        # htofphc (HDPHC). One PDF per segment: run{run}_HTOF_Calib_{suffix}.pdf.
-        executable = bin_dir / "HTOF_Calib"
-        if not executable.exists():
-            print(colored(f"[Error] HTOF_Calib not found. Please compile.", "red"))
-            sys.exit(1)
-
-        print(colored(">>> Step 1: Running HTOF_Calib", "cyan"))
-        pairs = " ".join(f"{h} {d}" for h, d in zip(hodo_root_files, htof_dst_files))
-        run_command(f"{executable} {pairs}")
-
-        if not args.debug:
-            print(colored(">>> Step 2: Updating Parameters (HTOF HDPRM: TDC + ADC)", "cyan"))
-            run_command(f"python3 {update_script} {run_num} {suffix} htofprm")
-            print(colored(">>> Step 3: Updating Parameters (HTOF HDPHC)", "cyan"))
-            run_command(f"python3 {update_script} {run_num} {suffix} htofphc")
-        else:
-            print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
-
-    elif mode == "t0":
-        # Run T0_Offset -> update_param.py t0 (same with or without --ftof).
-        executable = bin_dir / "T0_Offset"
-        if not executable.exists():
-            print(colored(f"[Error] T0_Offset not found. Please compile.", "red"))
-            sys.exit(1)
-
-        print(colored(">>> Step 1: Running T0_Offset", "cyan"))
-        run_command(f"{executable} {input_root_file} {suffix}")
-
-        if not args.debug:
-            print(colored(">>> Step 2: Updating Parameters (T0)", "cyan"))
-            run_command(f"python3 {update_script} {run_num} {suffix} t0")
-        else:
-            print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
-
-    elif mode == "hdphc":
-        # HTOF PHC is handled by mode "htof".
-        detectors = config.hodo_detectors("hdphc", args.ftof)
-        print(colored(f">>> Step 1: Running PHC for {detectors}", "cyan"))
-        run_fits(bin_dir, [f"{det}_PHC" for det in detectors], input_root_file, suffix)
-
-        if not args.debug:
-            print(colored(">>> Step 2: Updating Parameters (HDPHC)", "cyan"))
-            run_command(f"python3 {update_script} {run_num} {suffix} hdphc{ftof_opt}")
-        else:
-            print(colored(">>> [DEBUG] Skipping parameter update", "yellow"))
-
-    print(colored(f"\n[DONE] Hodo Calibration Complete for mode: {mode}", "green", attrs=["bold"]))
 
 if __name__ == "__main__":
     main()
