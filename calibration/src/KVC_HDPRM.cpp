@@ -155,7 +155,7 @@ void analyze(TString path, TString particle){
         }
 
         // -- TDC Fit --
-        FitResult tRes = ana_helper::tdc_fit(h_tdc[i], c_kvc, nth_pad);
+        FitResult tRes = ana_helper::kvc_tdc_fit(h_tdc[i], c_kvc, nth_pad);
         tdc_res.push_back(tRes);
         nth_pad++;
 
@@ -172,13 +172,15 @@ void analyze(TString path, TString particle){
     std::vector<Double_t> adc_p0_val;
     std::vector<Double_t> adc_p0_err; 
     std::vector<Double_t> tdc_p0_val; 
-    std::vector<Double_t> tdc_p0_err; 
+    std::vector<Double_t> tdc_p0_err;
+    Int_t tdc_ok;
 
     tree->Branch("ch", &ch, "ch/I");
     tree->Branch("adc_p0_val", &adc_p0_val);
     tree->Branch("adc_p0_err", &adc_p0_err);
     tree->Branch("tdc_p0_val", &tdc_p0_val);
     tree->Branch("tdc_p0_err", &tdc_p0_err);
+    tree->Branch("tdc_ok", &tdc_ok, "tdc_ok/I"); // 0: too few hits around the peak, not written
     
     for (Int_t i = 0; i < num_ch; i++) {
         ch = i;
@@ -196,6 +198,7 @@ void analyze(TString path, TString particle){
         // -- tdc (1 value) -----
         tdc_p0_val.push_back(tdc_res[i].par[1]);
         tdc_p0_err.push_back(tdc_res[i].err[1]);
+        tdc_ok = static_cast<Int_t>(tdc_res[i].additional.at(0));
 
         tree->Fill();
     }

@@ -136,6 +136,88 @@ namespace ana_helper {
     }
 
     // ____________________________________________________________________________________________
+    // KVC TDC: small pulses are late (slewing) and form a broad hump below the sharp peak of large
+    // pulses. The offset is taken from the sharp peak only: the highest-channel (earliest) local
+    // maximum above kvc_tdc_seed_frac * maximum, after rebinning, within tdc_search_range.
+    static const Int_t    kvc_tdc_seed_rebin   = 50;     // 10-ch bins -> 500 ch
+    static const Double_t kvc_tdc_seed_frac    = 0.3;
+    static const Double_t kvc_tdc_seed_sigma   = 700.0;  // ch, start width of the peak
+    static const Double_t kvc_tdc_count_window = 1500.0; // ch, +- around the seed
+    static const Double_t kvc_tdc_min_count    = 1000.0;
+
+    static Double_t kvc_tdc_seed(TH1D *h, Double_t lo, Double_t hi) {
+        TH1D *hr = (TH1D*)h->Rebin(kvc_tdc_seed_rebin, Form("%s_seed", h->GetName()));
+        Int_t b_lo = std::max(hr->FindBin(lo), 2), b_hi = std::min(hr->FindBin(hi), hr->GetNbinsX() - 1);
+        Double_t vmax = 0.0;
+        for (Int_t b = b_lo; b <= b_hi; ++b) vmax = std::max(vmax, hr->GetBinContent(b));
+        Double_t seed = 0.5*(lo + hi);
+        for (Int_t b = b_lo; b <= b_hi; ++b) {
+            Double_t v = hr->GetBinContent(b);
+            if (v > 0.0 && v >= kvc_tdc_seed_frac*vmax && v >= hr->GetBinContent(b-1) && v >= hr->GetBinContent(b+1))
+                seed = hr->GetBinCenter(b);
+        }
+        delete hr;
+        return seed;
+    }
+
+    static FitResult kvc_tdc_low_stat(TH1D *h, Double_t seed, Double_t n) {
+        FitResult result;
+        result.par = {n, seed, 0.0};
+        result.err = {9999.0, 9999.0, 9999.0};
+        result.additional = {0.0};
+        h->GetXaxis()->SetRangeUser(seed - 15.0*kvc_tdc_seed_sigma, seed + 15.0*kvc_tdc_seed_sigma);
+        h->Draw();
+        TLatex* comment = new TLatex();
+        comment->SetNDC();
+        comment->SetTextSize(0.04);
+        comment->DrawLatex(0.5, 0.85, "low statistics (not written)");
+        return result;
+    }
+
+    static void kvc_tdc_draw(TH1D *h, TF1 *f, Double_t mu, Double_t sigma) {
+        h->GetXaxis()->SetRangeUser(mu - 15.0*sigma, mu + 10.0*sigma);
+        h->Draw();
+        f->SetLineColor(kOrange);
+        f->SetLineWidth(2);
+        f->SetNpx(1000);
+        f->Draw("same");
+        TLine *line = new TLine(mu, 0, mu, h->GetMaximum());
+        line->SetLineStyle(2);
+        line->SetLineColor(kRed);
+        line->Draw("same");
+    }
+
+    FitResult kvc_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c) {
+        Config& conf = Config::getInstance();
+        c->cd(n_c);
+        gPad->SetLogy(1);
+        auto range = conf.tdc_search_range[conf.detector.Data()];
+        Double_t seed = kvc_tdc_seed(h, range.first, range.second);
+        Double_t n = h->Integral(h->FindBin(seed - kvc_tdc_count_window), h->FindBin(seed + kvc_tdc_count_window));
+        if (n < kvc_tdc_min_count) return kvc_tdc_low_stat(h, seed, n);
+
+        Double_t mu = seed, sigma = kvc_tdc_seed_sigma;
+        TF1 *f_fit = new TF1(Form("gaus_%s", h->GetName()), "gausn", mu - 1.5*sigma, mu + 2.0*sigma);
+        f_fit->SetParameters(n, mu, sigma);
+        for (Int_t iround = 0; iround < 2; ++iround) {
+            f_fit->SetRange(mu - 1.5*sigma, mu + 2.0*sigma);
+            h->Fit(f_fit, "0QEMRL", "", mu - 1.5*sigma, mu + 2.0*sigma);
+            mu = f_fit->GetParameter(1);
+            sigma = std::abs(f_fit->GetParameter(2));
+        }
+        FitResult result;
+        for (Int_t i = 0; i < 3; i++) {
+            result.par.push_back(f_fit->GetParameter(i));
+            result.err.push_back(f_fit->GetParError(i));
+        }
+        result.par[2] = sigma;
+        result.additional = {1.0};
+        kvc_tdc_draw(h, f_fit, mu, sigma);
+        c->Update();
+        return result;
+    }
+
+    // ____________________________________________________________________________________________
     FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin) {
         Config& conf = Config::getInstance();
         h = (TH1D*)h->Rebin(n_rebin, h->GetName());

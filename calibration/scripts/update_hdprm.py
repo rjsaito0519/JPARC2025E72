@@ -10,7 +10,7 @@ from pathlib import Path
 import uproot
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from lib import config  # noqa: E402
+from lib import config, runner  # noqa: E402
 
 TDC_GAIN = -0.0009765625  # ns per TDC channel (-1/1024), written as the TDC gain column
 
@@ -43,11 +43,16 @@ def bac_rows(tree, cid):
 
 
 def kvc_rows(tree, cid, n_ud):
-    """KVC: ADC pedestal of a-d and SUM (one-photon gain kept); TDC offset on SUM (UorD 4)."""
+    """KVC: ADC pedestal of a-d and SUM (one-photon gain kept); TDC offset on SUM (UorD 4).
+    A TDC row with tdc_ok == 0 (too few hits around the peak) is not written; the current value stays."""
+    if "tdc_ok" not in tree:
+        runner.fail("KVC fit output has no tdc_ok (made by an older KVC_HDPRM); run KVC_HDPRM again")
     data = {}
     for i, ch in enumerate(tree["ch"]):
-        if "tdc_p0_val" in tree:
+        if tree["tdc_ok"][i]:
             data[f"{cid}-0-{ch:.0f}-1-4"] = [tree["tdc_p0_val"][i][0], TDC_GAIN]
+        else:
+            runner.warn(f"KVC seg{ch:.0f}S TDC: too few hits around the peak, not written (current value kept)")
         for ud in range(n_ud):
             if "adc_p0_val" in tree:
                 data[f"{cid}-0-{ch:.0f}-0-{ud}"] = [tree["adc_p0_val"][i][ud]]
