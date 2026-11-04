@@ -43,7 +43,7 @@ Config& conf = Config::getInstance();
 // (pid == 3) are left out (they contain kaons with a kaon beam); low-momentum pion-tagged tracks
 // contain electrons, which arrive early; above the cut the e/pi TOF difference is below the
 // resolution. E = t_beam + tof_calc_pi of such a track is the expected BH2 -> vertex -> HTOF time
-// of a pion (independent of HTOF parameters).
+// of a pion (independent of HTOF parameters); tof_calc_pi = t_sec - dt_pi from the DST.
 //
 // - TDC : all-event HTOF_TDC_seg{i}{U|D|S} histograms of Hodo (summed over runs), ana_helper::tdc_fit.
 // - ADC : pedestal from the all-event HTOF_ADC_seg{i}{U|D|S} histograms of Hodo; MIP from the ADC of
@@ -335,13 +335,13 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
         TTreeReaderValue<std::vector<Int_t>> is_beam(reader, "is_beam");
         TTreeReaderValue<std::vector<Int_t>> is_accidental(reader, "is_accidental");
         TTreeReaderValue<std::vector<Double_t>> t_beam(reader, "t_beam");
-        TTreeReaderValue<std::vector<Double_t>> tof_calc_pi(reader, "tof_calc_pi");
+        TTreeReaderValue<std::vector<Double_t>> t_sec(reader, "t_sec");
         TTreeReaderValue<std::vector<Double_t>> dt_pi(reader, "dt_pi");
         TTreeReaderValue<std::vector<Double_t>> p_vtx(reader, "p_vtx");
         TTreeReaderValue<Double_t> time0_seg_corr(reader, "time0_seg_corr");
         if (!all_branches_found(reader, {&event_number, &pid, &seg_match, &vertex_source, &extrap_seg, &match_cl_seg,
                                 &match_raw_seg, &match_hit_seg, &htof_adc_u, &htof_adc_d,
-                                &htof_adc_s, &is_beam, &is_accidental, &t_beam, &tof_calc_pi, &dt_pi, &p_vtx,
+                                &htof_adc_s, &is_beam, &is_accidental, &t_beam, &t_sec, &dt_pi, &p_vtx,
                                 &time0_seg_corr},
                                 dst_paths[k])) return kFALSE;
         while (reader.Next()) {
@@ -406,15 +406,16 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
                     sel_seg_mask[k][*event_number] |= (1ULL << seg_hit);
                 if (has_vtx && !beamlike && it < dt_pi->size() && !TMath::IsNaN((*dt_pi)[it])
                     && it < p_vtx->size() && (*p_vtx)[it] >= tof_offset_min_p) {
+                    const Double_t tof_calc_pi = (*t_sec)[it] - (*dt_pi)[it];
                     auto& m = pi_expect[k][*event_number];
                     if (!m.count(seg_hit)) {
-                        m[seg_hit] = static_cast<Float_t>((*t_beam)[it] + (*tof_calc_pi)[it] + *time0_seg_corr);
+                        m[seg_hit] = static_cast<Float_t>((*t_beam)[it] + tof_calc_pi + *time0_seg_corr);
                         n_pi_tof++;
                     }
                     if (v_pid[it] == 1) {
                         auto& m1 = pi_expect_p1[k][*event_number];
                         if (!m1.count(seg_hit))
-                            m1[seg_hit] = static_cast<Float_t>((*t_beam)[it] + (*tof_calc_pi)[it] + *time0_seg_corr);
+                            m1[seg_hit] = static_cast<Float_t>((*t_beam)[it] + tof_calc_pi + *time0_seg_corr);
                     }
                 }
                 // DST htof_adc_* already come from the matched raw channel; bin by match_raw_seg.
