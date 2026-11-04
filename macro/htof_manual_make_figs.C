@@ -312,15 +312,15 @@ void make_figs(const char* data_dir = "/group/had/sks/Users/sryuta/JPARC2025E72"
     c.Print("weak_example.pdf");
   }
 
-  // ---- PHC: seg20 U, Y_U vs dE_U before and (t_c mean - time0 - expected) after
+  // ---- PHC: seg20 U, R = mean time - time0 - expected pion time vs dE_U before the correction, and dt_pi after
   {
     TFile f(Form("%s/run02601_HTOF_PHC_Pi.root", calib_dir));
-    TH2D* y = (TH2D*)f.Get("HTOF_seg20U_PHC_Y_sel");
+    TH2D* y = (TH2D*)f.Get("HTOF_seg20U_PHC_R_before");
     TH2D* a = (TH2D*)f.Get("HTOF_seg20_dTPi_vs_DeltaEU_calib");
     TCanvas c("c_phc", "", 1400, 550);
     c.Divide(2, 1);
     c.cd(1); gPad->SetLogz();
-    if (y) { y->SetTitle("seg20 U: Y_{U} = (time0 - t_{U}) + (time0 - t_{c,D}) vs #DeltaE_{U};#DeltaE_{U} [MIP];Y_{U} [ns]"); y->GetXaxis()->SetRangeUser(0, 4); y->Draw("colz"); }
+    if (y) { y->SetTitle("seg20 U: R = (t_{U}+t_{D})/2 - time0 - E before the correction;#DeltaE_{U} [MIP];R [ns]"); y->GetXaxis()->SetRangeUser(0, 4); y->Draw("colz"); }
     c.cd(2); gPad->SetLogz();
     if (a) { a->SetTitle("seg20: dt_{#pi} after the correction vs #DeltaE_{U};#DeltaE_{U} [MIP];dt_{#pi} [ns]"); a->GetXaxis()->SetRangeUser(0, 4); a->Draw("colz"); TLine* l = new TLine(0, 0, 4, 0); l->SetLineStyle(2); l->Draw(); }
     c.Print("phc_example.pdf");
