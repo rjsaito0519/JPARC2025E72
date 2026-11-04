@@ -20,8 +20,11 @@ One cycle:
   ref -> myrun D5 (normal, BLC2-referenced) -> pos -> myrun BcIn -> run_dcprm.py <run> resi --bcin
   -> ref -> ... until pos reports converged.
 Converged: |dy| < max(--tol, 2 * statistical error) and |s| < --tol.
-Exit code of pos (lib/runner.py): 0 all converged (or --debug), 2 Ofs written for runs not converged,
-1 failed.
+Settled: outside the criterion, and max(|dy_a|/tol_y, |dy_b|/tol_y, |s|/tol) did not shrink below 0.8 of
+the previous pass in the last 2 of 3 passes (history OUTPUT_DIR/calib/runXXXXX/d5_pos_<S>.txt,
+dc_convergence.py): nothing written, a person looks.
+Exit code of pos (lib/runner.py): 0 all converged (or --debug), 2 Ofs written for some run,
+3 some run settled and none written, 1 failed.
 The common x shift of BLC1 is degenerate with delta and is left unchanged.
 """
 
@@ -32,6 +35,7 @@ from termcolor import colored
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from lib import config, runner  # noqa: E402
+import dc_convergence as conv  # noqa: E402
 
 DCGEO_DIR = config.PARAM_DIR / "DCGEO" / config.SUB_DIR
 CONF_DIR = config.PARAM_DIR / "conf" / config.SUB_DIR
@@ -238,52 +242,76 @@ def make_check_pdf(run):
             f"--bcin {chamber_root(run, 'BcIn')} --bcout {chamber_root(run, 'BcOut')}", check=False)
 
 
+def pos_score(r, tol):
+    """Largest of |dy_a|, |dy_b|, |s| in units of their tolerances (< 1 when converged)."""
+    tol_y = max(tol, 2.0 * r["dy_err"])
+    return max(abs(r["dy_a"]) / tol_y, abs(r["dy_b"]) / tol_y, abs(r["s"]) / tol)
+
+
+def judge_pos(r, tol):
+    path = config.OUTPUT_DIR / "calib" / run_tag(r["run"]) / f"d5_pos_{SUFFIX}.txt"
+    details = f"dy_a={r['dy_a']:+.5f} dy_b={r['dy_b']:+.5f} err={r['dy_err']:.5f} s={r['s']:+.5f}"
+    return conv.judge_at(path, "BLC1", pos_score(r, tol), is_converged(r, tol),
+                         lambda a, b: b > 0.8 * a, details)
+
+
+def summary_table(rows, tol):
+    lines = ["run      dy_a[mm]  dy_b[mm]  err[mm]   s[mm]     ddxu[%]   dv[mrad]  state"]
+    for r in rows:
+        conv_ = r["converged"]
+        state = r.get("state") or ("n/a" if conv_ is None else "yes" if conv_ else "no")
+        lines.append(f"{r['run']:05d}    {fmt(r.get('dy_a'))}   {fmt(r.get('dy_b'))}   {fmt(r.get('dy_err'))}   "
+                     f"{fmt(r.get('s'))}   {fmt(r.get('ddxu'))}   {fmt(r.get('dv'))}   {state}")
+    return "\n".join(lines) + (f"\n(beam {BEAM_FLAG}; converged: |dy| < max({tol} mm, 2 err), |s| < {tol} mm)\n")
+
+
+def check_pos_inputs(run, force):
+    if not dcgeo_path(run).exists():
+        runner.fail(f"{dcgeo_path(run)} not found (suffix {SUFFIX}; --kaon for K)")
+    if not copy_matches(run):
+        runner.fail(f"{ref_dcgeo_path(run)} does not match {dcgeo_path(run).name} "
+                    f"(DCGEO changed after ref): run 'run_d5.py {run} ref' and decode again")
+    for root in (d5_root(run), d5_root(run, TAG)):
+        runner.checked_root(root, SUFFIX, force)
+
+
 def do_pos(args):
     for run in args.runs:
-        if not dcgeo_path(run).exists():
-            print(colored(f"[Error] {dcgeo_path(run)} not found (suffix {SUFFIX}; --kaon for K)", "red"))
-            sys.exit(1)
-        if not copy_matches(run):
-            print(colored(f"[Error] {ref_dcgeo_path(run)} does not match {dcgeo_path(run).name} "
-                          f"(DCGEO changed after ref): run 'run_d5.py {run} ref' and decode again", "red"))
-            sys.exit(1)
-        for root in (d5_root(run), d5_root(run, TAG)):
-            runner.checked_root(root, SUFFIX, args.force)
-
+        check_pos_inputs(run, args.force)
     rows = [measure(run) for run in args.runs]
-    lines = ["run      dy_a[mm]  dy_b[mm]  err[mm]   s[mm]     ddxu[%]   dv[mrad]  converged"]
     for r in rows:
-        conv = is_converged(r, args.tol)
-        r["converged"] = conv
-        lines.append(f"{r['run']:05d}    {fmt(r.get('dy_a'))}   {fmt(r.get('dy_b'))}   {fmt(r.get('dy_err'))}   "
-                     f"{fmt(r.get('s'))}   {fmt(r.get('ddxu'))}   {fmt(r.get('dv'))}   "
-                     f"{'n/a' if conv is None else 'yes' if conv else 'no'}")
+        r["converged"] = is_converged(r, args.tol)
+    failed = any(r["converged"] is None for r in rows)
+    if not (failed or args.debug):
+        for r in rows:
+            r["state"] = judge_pos(r, args.tol)
+
     SUMMARY_DIR.mkdir(parents=True, exist_ok=True)
     label = runs_label(args.runs) + ("" if SUFFIX == "K" else f"_{SUFFIX}")
     summary = SUMMARY_DIR / f"d5_pos_summary_{label}.txt"
-    summary.write_text("\n".join(lines) + f"\n(beam {BEAM_FLAG}; converged: |dy| < max({args.tol} mm, 2 err), "
-                       f"|s| < {args.tol} mm)\n")
-    print("\n".join(lines))
-    print(colored(f"[INFO] summary: {summary}", "green"))
-
-    if any(r["converged"] is None for r in rows):
-        print(colored("[Error] measurement failed for some runs (n/a); nothing written", "red"))
-        sys.exit(1)
-    todo = [r for r in rows if not r["converged"]]
-    done = [r for r in rows if r["converged"]]
+    summary.write_text(summary_table(rows, args.tol))
+    print(summary_table(rows, args.tol), end="")
+    runner.info(f"summary: {summary}")
+    if failed:
+        runner.fail("measurement failed for some runs (n/a); nothing written")
     if args.debug:
-        print(colored("[INFO] --debug: nothing written", "yellow"))
+        runner.warn("--debug: nothing written")
         return
+
+    todo = [r for r in rows if r["state"] == conv.WRITTEN]
     if todo:
         write_ofs(todo)
         rl = " ".join(str(r["run"]) for r in todo)
-        print(colored(f"[INFO] next for {rl}: myrun BcIn -> run_dcprm.py <run> resi --bcin"
-                      + (" --kaon" if SUFFIX == "K" else "") + f" -> run_d5.py {rl} ref", "yellow"))
-    for r in done:
-        print(colored(f"[INFO] {run_tag(r['run'])} converged: check PDF", "green"))
-        make_check_pdf(r["run"])
-    if todo:
-        sys.exit(runner.EXIT_NOT_CONVERGED)
+        runner.warn(f"next for {rl}: myrun BcIn -> run_dcprm.py <run> resi --bcin"
+                    + (" --kaon" if SUFFIX == "K" else "") + f" -> run_d5.py {rl} ref")
+    for r in rows:
+        if r["state"] == conv.SETTLED:
+            print(colored(f"[SETTLED] {run_tag(r['run'])}: not converging over {conv.SETTLE_PASSES} passes; "
+                          "nothing written, look at the d5_pos_review PDF", "red", attrs=["bold"]))
+        elif r["state"] == conv.CONVERGED:
+            runner.info(f"{run_tag(r['run'])} converged: check PDF")
+            make_check_pdf(r["run"])
+    sys.exit(conv.exit_code([r["state"] for r in rows]))
 
 
 def main():

@@ -1,8 +1,8 @@
-"""Pass history and the per-group decision of the iterated DC calibrations (resi, reso).
+"""Pass history and the per-group decision of iterated calibrations (DC resi/reso, D5 pos).
 
-One text file per run, chamber (or ALL), mode and particle:
-  OUTPUT_DIR/calib/runXXXXX/dc_<BLC1|BLC2|ALL>_<resi|reso>_<K|Pi>.txt
-one line per pass and group: time, group, measured value, state.
+One text file per run, chamber (or ALL), mode and particle in OUTPUT_DIR/calib/runXXXXX/:
+  dc_<BLC1|BLC2|ALL>_<resi|reso>_<K|Pi>.txt (update_param.py), d5_pos_<K|Pi>.txt (run_d5.py)
+one line per pass and group: time, group, measured value, state[, details].
 
 States (lib/runner.py exit codes):
   converged  within the criterion; nothing written (0)
@@ -34,7 +34,7 @@ def previous_values(path, group):
         return values
     for line in path.read_text().splitlines():
         f = line.split()
-        if len(f) == 4 and f[1] == group:
+        if len(f) >= 4 and f[1] == group:
             values = [] if f[3] == CONVERGED else values + [float(f[2])]
     return values
 
@@ -49,18 +49,23 @@ def decide(value, within, previous, not_better):
     return WRITTEN
 
 
-def record(path, group, value, state):
+def record(path, group, value, state, details=""):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as f:
-        f.write(f"{datetime.datetime.now():%Y-%m-%dT%H:%M:%S}\t{group}\t{value:.6g}\t{state}\n")
+        f.write(f"{datetime.datetime.now():%Y-%m-%dT%H:%M:%S}\t{group}\t{value:.6g}\t{state}"
+                + (f"\t{details}" if details else "") + "\n")
+
+
+def judge_at(path, group, value, within, not_better, details=""):
+    """decide() with the group's history in path, record the pass, and return the state."""
+    state = decide(value, within, previous_values(path, group), not_better)
+    record(path, group, value, state, details)
+    return state
 
 
 def judge(run, group, mode, suffix, value, within, not_better):
-    """decide() with this group's history, record the pass, and return the state."""
-    path = history_path(run, group, mode, suffix)
-    state = decide(value, within, previous_values(path, group), not_better)
-    record(path, group, value, state)
-    return state
+    """judge_at() on the DC history file of this run, group, mode and particle."""
+    return judge_at(history_path(run, group, mode, suffix), group, value, within, not_better)
 
 
 def exit_code(states):
