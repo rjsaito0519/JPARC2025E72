@@ -32,13 +32,20 @@ def ud_counter_rows(tree, cid, n_ud):
 
 
 def bac_rows(tree, cid):
-    """BAC: ADC pedestal per segment (gain kept); one TDC offset on the sum channel (seg 4)."""
+    """BAC: ADC pedestal per segment (gain kept); one TDC offset on the sum channel (seg 4).
+    Rows with adc_ok / tdc_ok == 0 (not determined, see params.h bac_*) are not written; the current value stays."""
+    if "adc_ok" not in tree or "tdc_ok" not in tree:
+        runner.fail("BAC fit output has no adc_ok/tdc_ok (made by an older BAC_HDPRM); run BAC_HDPRM again")
     data = {}
+    if tree["tdc_ok"][0]:
+        data[f"{cid}-0-4-1-0"] = [tree["tdc_p0_val"][0][0], TDC_GAIN]
+    else:
+        runner.warn(f"BAC TDC: offset {tree['tdc_p0_val'][0][0]:.0f} outside the window, not written (current value kept)")
     for i, ch in enumerate(tree["ch"]):
-        if "tdc_p0_val" in tree:
-            data[f"{cid}-0-4-1-0"] = [tree["tdc_p0_val"][0][0], TDC_GAIN]
-        if "adc_p0_val" in tree:
+        if tree["adc_ok"][i]:
             data[f"{cid}-0-{ch:.0f}-0-0"] = [tree["adc_p0_val"][i][0]]
+        else:
+            runner.warn(f"BAC seg{ch:.0f} ADC: pedestal not determined (signal-dominated), not written (current value kept)")
     return data
 
 

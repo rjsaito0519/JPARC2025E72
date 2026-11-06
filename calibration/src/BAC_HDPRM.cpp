@@ -31,6 +31,17 @@
 
 Config& conf = Config::getInstance();
 
+// A narrow pedestal spike: the maximum below 300 ch stands at least bac_spike_min_contrast times
+// above the mean of the bins 5-15 ch to its right.
+Bool_t has_narrow_pedestal(TH1D *h) {
+    Int_t b_hi = h->FindBin(param::bac_broad_pedestal_right), b_max = 1;
+    for (Int_t b = 1; b <= b_hi; ++b) if (h->GetBinContent(b) > h->GetBinContent(b_max)) b_max = b;
+    Double_t side = 0.0;
+    for (Int_t b = b_max + 5; b <= b_max + 15; ++b) side += h->GetBinContent(b);
+    side /= 11.0;
+    return h->GetBinContent(b_max) >= param::bac_spike_min_contrast*std::max(side, 1.0);
+}
+
 void analyze(TString path, TString particle){    
     // +---------+
     // | setting |
@@ -135,11 +146,23 @@ void analyze(TString path, TString particle){
         FitResult result;
         TString key = (i < 4) ? Form("bac-%d-u", i) : "bac-sum";
         conf.hdprm_pedestal_range_right = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : 120.0;
-        
-        result = ana_helper::pedestal_fit(h_adc[i], c_bac, nth_pad);
+
+        const auto& broad_segs = param::bac_broad_pedestal_segs;
+        Bool_t may_be_broad = std::find(broad_segs.begin(), broad_segs.end(), i) != broad_segs.end();
+        if (may_be_broad && !has_narrow_pedestal(h_adc[i])) {
+            conf.hdprm_pedestal_range_right = param::bac_broad_pedestal_right;
+            result = ana_helper::pedestal_mode(h_adc[i], c_bac, nth_pad);
+            Bool_t at_edge = result.par[1] > param::bac_broad_pedestal_right - 10.0;
+            result.additional = {at_edge ? 0.0 : 1.0};
+        } else {
+            result = ana_helper::pedestal_fit(h_adc[i], c_bac, nth_pad);
+            result.additional = {1.0};
+        }
         adc_res.push_back(result);
         nth_pad++;
     }
+    const auto& win = param::bac_tdc_window;
+    Int_t tdc_ok = (tdc_res.par[1] >= win[0] && tdc_res.par[1] <= win[1]) ? 1 : 0;
     c_bac->Print(pdf_path);
     c_bac->Print(pdf_path + "]"); // end
     delete c_bac;
@@ -152,13 +175,16 @@ void analyze(TString path, TString particle){
     std::vector<Double_t> adc_p0_val;
     std::vector<Double_t> adc_p0_err; 
     std::vector<Double_t> tdc_p0_val; 
-    std::vector<Double_t> tdc_p0_err; 
+    std::vector<Double_t> tdc_p0_err;
+    Int_t adc_ok;
 
     tree->Branch("ch", &ch, "ch/I");
     tree->Branch("adc_p0_val", &adc_p0_val);
     tree->Branch("adc_p0_err", &adc_p0_err);
     tree->Branch("tdc_p0_val", &tdc_p0_val);
     tree->Branch("tdc_p0_err", &tdc_p0_err);
+    tree->Branch("adc_ok", &adc_ok, "adc_ok/I"); // 0: broad pedestal hidden by the signal, not written
+    tree->Branch("tdc_ok", &tdc_ok, "tdc_ok/I"); // 0: offset outside params.h bac_tdc_window, not written
     
     for (Int_t i = 0; i < 5; i++) {
         ch = i;
@@ -170,6 +196,7 @@ void analyze(TString path, TString particle){
         // -- pedestal -----
         adc_p0_val.push_back(adc_res[i].par[1]);
         adc_p0_err.push_back(adc_res[i].err[1]);
+        adc_ok = static_cast<Int_t>(adc_res[i].additional.at(0));
 
         // -- tdc (common) -----
         // BAC TDC is essentially the sum (seg 4). 

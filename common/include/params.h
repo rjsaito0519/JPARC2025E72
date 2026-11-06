@@ -102,6 +102,17 @@ namespace param
     // ana_helper::pedestal_fit is used instead.
     static const std::vector<Int_t> kvc_sum_pedestal_fit_segs{ 5, 6 };
 
+    // BAC_HDPRM: seg 0 has a narrow pedestal spike in some periods (2025-11) and a broad pedestal
+    // (around 210 ch) in others (2026-04). If the spike stands less than bac_spike_min_contrast times
+    // above the mean 5-15 ch to its right, the pedestal is the smoothed maximum below
+    // bac_broad_pedestal_right; a maximum at that edge (signal-dominated runs) is not written.
+    static const std::vector<Int_t> bac_broad_pedestal_segs{ 0 };
+    static const Double_t bac_spike_min_contrast  = 2.0;
+    static const Double_t bac_broad_pedestal_right = 300.0;
+    // BAC TDC (sum): offsets outside this window are not written (K-trigger runs veto BAC, so the
+    // in-time peak is a hole and the fit lands on accidentals).
+    static const std::vector<Double_t> bac_tdc_window{ 709000.0, 715000.0 };
+
     static const std::unordered_map<std::string, std::vector<Double_t>> kvc_opg_fit{
         // key        n_gauss fisrt_peak left right
         {"default",  { 5.0, 100.0, 80.0, 160.0}},
