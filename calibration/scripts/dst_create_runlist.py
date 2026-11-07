@@ -135,14 +135,14 @@ MODES = {
 
 DEFAULTS = {
     "USER:": "param/USER/UserParam_e72_20260403",
-    "TPCPRM:": "param/TPCPRM/TPCParam_example",
-    "TPCPOS:": "param/TPCPOS/e72/TPCPositionCorrectionMap",
+    "TPCPRM:": "param/TPCPRM/e72/TPCParam_e72_example",
+    "TPCPOS:": "param/TPCPOS/TPCPositionCorrectionMap_e72_0",
     "DCGEO:": "param/DCGEO/DCGeomParam_e72_example",
-    "FLDMAP:": "param/FLDMAP/ShsFieldMap_20210526_Extrapolated",
+    "FLDMAP:": "param/FLDMAP/ShsFieldMap_20210526_Extrapolated_TPC0",
 }
 
 HSFLD_DEFAULTS = {
-    "HSFLDCALIB:": "1.059",
+    "HSFLDCALIB:": "1.020",
     "HSFLDCALC:": "1.0",
     "HSFLDHALL:": "1.0",
 }
