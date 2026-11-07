@@ -7,12 +7,13 @@ from . import config
 
 
 def backup_file(path):
-    """Copy path to BACKUP_DIR/param/<date>/<name>.<time> before it is overwritten; the copy, or None."""
+    """Copy path to BACKUP_DIR/param_history/<date>/<name>.<time> before it is overwritten; the copy, or None.
+    (Not BACKUP_DIR/param: that directory is an rsync --delete mirror of param/ and loses anything else.)"""
     path = Path(path)
     if not path.exists():
         return None
     now = datetime.datetime.now()
-    dst = config.BACKUP_DIR / "param" / f"{now:%Y%m%d}" / f"{path.name}.{now:%H%M%S}.{now.microsecond // 1000:03d}"
+    dst = config.BACKUP_DIR / "param_history" / f"{now:%Y%m%d}" / f"{path.name}.{now:%H%M%S}.{now.microsecond // 1000:03d}"
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, dst)
     print(f"backup: {dst}")

@@ -14,7 +14,7 @@ Usage
 -----
 * D5 position alignment: run_d5.py pos calls
   ``--skip-xy --residual-offset BLC1a:s,dy_a --residual-offset BLC1b:-s,dy_b --write``
-  (run_d5.py backs up the DCGEO to BACKUP_DIR/param/ of lib/paths.py before writing).
+  (run_d5.py backs up the DCGEO to BACKUP_DIR/param_history/ of lib/paths.py before writing).
 * Survey input: ``apply_dcgeo_offset.py DCGEO --write`` projects the X,Y columns onto Ofs.
 * Per-layer fine tuning afterwards: run_dcprm.py resi (update_param.py residual).
 
