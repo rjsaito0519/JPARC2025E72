@@ -29,7 +29,7 @@ run_tpc: TPC の較正のフロントエンド
   - offset: tpc_time_offset_calib（パッドごとの時間オフセット、aty=2 の p0）
   - gain  : tpc_gain_calib（TPCCl_dE_* の Landau fit の MPV → aty=0 の gain）
   - drift : tpc_drift_calib（layer ごとの ResY vs Y 傾き → δv を aty=2 の p1 に加算）
-  - pos   : tpc_pos_calib（pad 粒度 TPCPOS。仕様は docs/tpc/TPCPOS_ITER_PREP.ja.md）
+  - pos   : tpc_pos_calib（pad 粒度 TPCPOS。仕様は docs/tpc/archive/TPCPOS_ITER_PREP.ja.md）
 
   --ave（offset・gain）: fit で更新できなかったパッドを、同じ AsAd の両隣（row±1）の平均、
   両隣が揃わなければ同じ layer・AsAd の更新済みパッドの中央値で埋める（中心の枠は対象外）。
@@ -400,7 +400,7 @@ def run_drift(args, bin_dir: Path) -> None:
 
 
 def run_pos(args, bin_dir: Path) -> None:
-    # Spec: docs/tpc/TPCPOS_ITER_PREP.ja.md
+    # Spec: docs/tpc/archive/TPCPOS_ITER_PREP.ja.md
     input_root = require_file(args.root_file)
     exe = require_binary(bin_dir, "tpc_pos_calib")
     cmd = [str(exe), str(input_root), *opt("--model", args.model), *opt("--threshold", args.threshold)]

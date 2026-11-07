@@ -1,5 +1,5 @@
 // TPCPOS pad-level fit from TPCHelix inclusive residuals.
-// Spec: docs/tpc/TPCPOS_ITER_PREP.ja.md
+// Spec: docs/tpc/archive/TPCPOS_ITER_PREP.ja.md
 // formula_id: helix_inclusive_tangent_phi_v1
 //
 // Usage:
