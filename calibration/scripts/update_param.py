@@ -15,6 +15,7 @@ output stops (exit 1).
 residual and resolution judge each group (calib_convergence.py) and write only the groups still moving;
 exit code 0 converged, 2 written, 3 settled (lib/runner.py).
 """
+import re
 import sys
 from pathlib import Path
 
@@ -317,11 +318,31 @@ COLLECT = {
 }
 
 
+def new_param_source(cat, run, suffix):
+    """Source for a run without its own param file: the existing param of the nearest run with the same
+    suffix, else with the other suffix, else the template. Rows that are not written then keep that run's
+    values instead of the template placeholders."""
+    pdir = config.PARAM_DIR / cat["dir"] / config.SUB_DIR
+    for s in (suffix, "Pi" if suffix == "K" else "K"):
+        runs = {}
+        for p in pdir.glob(f"{cat['prefix']}_run*_{s}"):
+            m = re.fullmatch(rf"{cat['prefix']}_run(\d+)_{s}", p.name)
+            if m:
+                runs[int(m.group(1))] = p
+        if runs:
+            return runs[min(runs, key=lambda r: (abs(r - run), r))]
+    return config.PARAM_DIR / cat["dir"] / cat["tpl"]
+
+
 def main():
     a = parse_args()
     cat = CATEGORIES[a.ptype]
     target = config.PARAM_DIR / cat["dir"] / config.SUB_DIR / f"{cat['prefix']}_run{a.run:05d}_{a.suffix}"
-    pf = ParamFile.create_from_template(config.PARAM_DIR / cat["dir"] / cat["tpl"], target)
+    if not target.exists():
+        source = new_param_source(cat, a.run, a.suffix)
+        runner.warn(f"{target.name} does not exist; created from {source.name}")
+        ParamFile.create_from_template(source, target)
+    pf = ParamFile(target)
     print(colored(f"\n>>> Collecting results for {a.ptype} <<<", "cyan"))
     data, states = COLLECT[a.ptype](a, pf)
     if data:
