@@ -41,6 +41,12 @@ static Double_t nu_from_nhit(TH1D* h_nhit)
     return h_nhit->GetBinCenter(imax) - 4.0;
 }
 
+static Bool_t
+pull_sigma_ok(Double_t sigma)
+{
+    return TMath::Finite(sigma) && sigma > 0.0;
+}
+
 static PlanePull
 fit_plane_pull(TH1D* h, TCanvas* c, Int_t pad)
 {
@@ -55,7 +61,7 @@ fit_plane_pull(TH1D* h, TCanvas* c, Int_t pad)
     }
     out.entries = static_cast<Long64_t>(h->GetEntries());
     FitResult fr = ana_helper::residual_fit(h, c, pad);
-    if (fr.par.size() > 2) {
+    if (fr.par.size() > 2 && pull_sigma_ok(fr.par[2])) {
         out.ok = true;
         out.mean = fr.par[1];
         out.sigma = fr.par[2];
@@ -167,19 +173,22 @@ sum_plane_pulls(TH1D** h_plane, Int_t nplane, const char* clone_name)
     return h_sum;
 }
 
-static void
+static Bool_t
 fit_pull_hist(TH1D* h, Double_t& mean, Double_t& sigma)
 {
     mean = 0.0;
     sigma = 0.0;
-    if (!h || h->GetEntries() < 20) return;
+    if (!h || h->GetEntries() < 20) return false;
     auto* c = new TCanvas(Form("c_fit_%s", h->GetName()), "", 800, 600);
     FitResult fr = ana_helper::residual_fit(h, c, 0);
-    if (fr.par.size() > 2) {
+    Bool_t ok = false;
+    if (fr.par.size() > 2 && pull_sigma_ok(fr.par[2])) {
         mean = fr.par[1];
         sigma = fr.par[2];
+        ok = true;
     }
     delete c;
+    return ok;
 }
 
 void analyze(TString path, TString particle)
@@ -294,23 +303,40 @@ void analyze(TString path, TString particle)
     // --- page 1: exclusive pull a+b sum (update input) ---
     auto c_pull = new TCanvas("c_pull", "", 1000, 800);
     c_pull->Print(pdf_path + "[");
-    FitResult fr = ana_helper::residual_fit(h_sum, c_pull, 0);
-    Double_t pull_sigma = (fr.par.size() > 2) ? fr.par[2] : 0.0;
-    Double_t pull_mean = (fr.par.size() > 1) ? fr.par[1] : 0.0;
+    Double_t pull_sigma = 0.0;
+    Double_t pull_mean = 0.0;
+    Int_t pull_fit_ok = 0;
+    const Long64_t n_sum = h_sum ? static_cast<Long64_t>(h_sum->GetEntries()) : 0;
     TLatex latex;
     latex.SetNDC();
     latex.SetTextSize(0.04);
-    latex.DrawLatex(0.55, 0.55, Form("pull #sigma = %.4f", pull_sigma));
-    latex.DrawLatex(0.55, 0.49, Form("pull mean = %.4f", pull_mean));
-    latex.DrawLatex(0.55, 0.43, "(target #sigma #approx 1)");
-    latex.DrawLatex(0.55, 0.37, "(a+b sum; used for Res update)");
+    if (n_sum >= 20) {
+        FitResult fr = ana_helper::residual_fit(h_sum, c_pull, 0);
+        if (fr.par.size() > 2 && pull_sigma_ok(fr.par[2])) {
+            pull_fit_ok = 1;
+            pull_mean = fr.par[1];
+            pull_sigma = fr.par[2];
+        }
+    } else if (h_sum) {
+        h_sum->Draw();
+    }
+    if (pull_fit_ok) {
+        latex.DrawLatex(0.55, 0.55, Form("pull #sigma = %.4f", pull_sigma));
+        latex.DrawLatex(0.55, 0.49, Form("pull mean = %.4f", pull_mean));
+        latex.DrawLatex(0.55, 0.43, "(target #sigma #approx 1)");
+        latex.DrawLatex(0.55, 0.37, "(a+b sum; used for Res update)");
+    } else {
+        latex.DrawLatex(0.55, 0.55, "pull fit FAILED");
+        latex.DrawLatex(0.55, 0.49, Form("entries = %lld (need >= 20)", n_sum));
+        latex.DrawLatex(0.55, 0.43, "pull_fit_ok = 0; do not update Res");
+    }
     c_pull->Print(pdf_path);
     delete c_pull;
 
     Double_t pull_sigma_a = 0.0, pull_mean_a = 0.0;
     Double_t pull_sigma_b = 0.0, pull_mean_b = 0.0;
-    fit_pull_hist(h_sum_a, pull_mean_a, pull_sigma_a);
-    fit_pull_hist(h_sum_b, pull_mean_b, pull_sigma_b);
+    Int_t pull_fit_ok_a = fit_pull_hist(h_sum_a, pull_mean_a, pull_sigma_a) ? 1 : 0;
+    Int_t pull_fit_ok_b = fit_pull_hist(h_sum_b, pull_mean_b, pull_sigma_b) ? 1 : 0;
 
     // --- pages: per-plane pull (a), (b) ---
     auto c_plane = new TCanvas("c_plane_pull", "", 1600, 1000);
@@ -374,9 +400,11 @@ void analyze(TString path, TString particle)
 
     std::cout << Form("[BLC_pull] %s %s: pull_sigma=%.4f pull_mean=%.4f "
                       "sigma_a=%.4f sigma_b=%.4f "
+                      "pull_fit_ok=%d pull_fit_ok_a=%d pull_fit_ok_b=%d "
                       "s=%.4f sqrt(s)=%.4f mean_chi2=%.4f nu=%.1f fit_ok=%d nplane_hist=%d\n",
                       bc_tag.Data(), particle.Data(), pull_sigma, pull_mean,
                       pull_sigma_a, pull_sigma_b,
+                      pull_fit_ok, pull_fit_ok_a, pull_fit_ok_b,
                       scale_s, sqrt_s, mean_chi2, nu_eff, fit_ok, n_found);
 
     TTree* tree = new TTree("tree", "BLC exclusive pull + chi2 monitor");
@@ -390,6 +418,9 @@ void analyze(TString path, TString particle)
     Double_t b_sqrt_s = sqrt_s;
     Double_t b_nu_eff = nu_eff;
     Double_t b_mean_chi2 = mean_chi2;
+    Int_t b_pull_fit_ok = pull_fit_ok;
+    Int_t b_pull_fit_ok_a = pull_fit_ok_a;
+    Int_t b_pull_fit_ok_b = pull_fit_ok_b;
     Int_t b_fit_ok = fit_ok;
     Int_t b_n_hist = n_found;
     tree->Branch("pull_sigma", &b_pull_sigma, "pull_sigma/D");
@@ -398,6 +429,9 @@ void analyze(TString path, TString particle)
     tree->Branch("pull_mean_a", &b_pull_mean_a, "pull_mean_a/D");
     tree->Branch("pull_sigma_b", &b_pull_sigma_b, "pull_sigma_b/D");
     tree->Branch("pull_mean_b", &b_pull_mean_b, "pull_mean_b/D");
+    tree->Branch("pull_fit_ok", &b_pull_fit_ok, "pull_fit_ok/I");
+    tree->Branch("pull_fit_ok_a", &b_pull_fit_ok_a, "pull_fit_ok_a/I");
+    tree->Branch("pull_fit_ok_b", &b_pull_fit_ok_b, "pull_fit_ok_b/I");
     tree->Branch("scale_s", &b_scale_s, "scale_s/D");
     tree->Branch("sqrt_s", &b_sqrt_s, "sqrt_s/D");
     tree->Branch("nu_eff", &b_nu_eff, "nu_eff/D");

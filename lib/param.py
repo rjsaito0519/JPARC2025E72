@@ -50,6 +50,22 @@ class ParamFile:
                 data[key] = parts[key_len:]
         return data
 
+    def key_issues(self, new_data, key_len=1):
+        """Compare new_data keys to this file; return (missing, duplicates).
+
+        missing: keys in new_data with no matching data line
+        duplicates: keys in new_data that appear more than once in the file
+        Does not change records; ParamFile.update keeps its silent skip behavior.
+        """
+        counts = {}
+        for is_comment, parts in self.records:
+            if not is_comment and len(parts) >= key_len:
+                key = "-".join(parts[:key_len])
+                counts[key] = counts.get(key, 0) + 1
+        missing = sorted(k for k in new_data if counts.get(k, 0) == 0)
+        duplicates = sorted(k for k in new_data if counts.get(k, 0) > 1)
+        return missing, duplicates
+
     def update(self, new_data, key_len=1, start_col=None):
         """
         Surgically update existing data with new values.

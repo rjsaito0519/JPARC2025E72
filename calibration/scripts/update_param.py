@@ -15,6 +15,7 @@ output stops (exit 1).
 residual and resolution judge each group (calib_convergence.py) and write only the groups still moving;
 exit code 0 converged, 2 written, 3 settled (lib/runner.py).
 """
+import math
 import re
 import sys
 from pathlib import Path
@@ -243,22 +244,42 @@ def collect_residual(a, pf):
 
 
 def read_pull(path, need_ab):
-    """pull_sigma, mean_chi2 (and pull_sigma_a/b) of a BLC_pull output."""
+    """pull_sigma, mean_chi2 (and pull_sigma_a/b) of a BLC_pull output.
+
+    Optional pull_fit_ok / pull_fit_ok_a / pull_fit_ok_b are included when present
+    (older ROOT files without them remain valid).
+    """
     import uproot
-    branches = ["pull_sigma", "mean_chi2"] + (["pull_sigma_a", "pull_sigma_b"] if need_ab else [])
+    required = ["pull_sigma", "mean_chi2"] + (["pull_sigma_a", "pull_sigma_b"] if need_ab else [])
+    optional = ["pull_fit_ok"] + (["pull_fit_ok_a", "pull_fit_ok_b"] if need_ab else [])
     f = uproot.open(str(path))
     tree = f["tree"] if "tree" in f else None
-    missing = [b for b in branches if tree is None or b not in tree.keys()]
+    missing = [b for b in required if tree is None or b not in tree.keys()]
     if missing:
         runner.fail(f"{path.name}: no {missing} (rebuild BLC_pull and fit again)")
-    arr = tree.arrays(branches, library="np")
+    have_opt = [b for b in optional if b in tree.keys()]
+    arr = tree.arrays(required + have_opt, library="np")
     if len(arr["pull_sigma"]) < 1:
         runner.fail(f"{path.name}: empty tree")
-    return {b: float(arr[b][0]) for b in branches}
+    out = {b: float(arr[b][0]) for b in required}
+    for b in have_opt:
+        out[b] = int(arr[b][0])
+    return out
+
+
+def _pull_fit_ok_combined(pulls, key="pull_fit_ok"):
+    """None if no file has the flag; else 1 only when every present flag is non-zero."""
+    flags = [v[key] for v in pulls.values() if key in v]
+    if not flags:
+        return None
+    return 1 if all(f != 0 for f in flags) else 0
 
 
 def pull_groups(a):
-    """[(group, p, mean_chi2)] of the Res groups chosen by --all / --separate."""
+    """[(group, p, mean_chi2, fit_ok)] of the Res groups chosen by --all / --separate.
+
+    fit_ok is None when the ROOT has no pull_fit_ok branch (legacy); else 0/1.
+    """
     blcs, tags = (["BLC1", "BLC2"], ["BcIn", "BcOut"]) if a.all else ([a.blc], [a.chamber])
     found = fresh_outputs(a.run, [(b, b, "pull", a.suffix) for b in blcs], [decode(a.run, t) for t in tags],
                           required=True)
@@ -267,19 +288,37 @@ def pull_groups(a):
         ab = f" p_a={v['pull_sigma_a']:.4f} p_b={v['pull_sigma_b']:.4f}" if a.separate else ""
         runner.info(f"{b}: p={v['pull_sigma']:.4f}{ab} mean_chi2={v['mean_chi2']:.4f}")
     if a.separate:
-        return [(f"{b}{s}", pulls[b][f"pull_sigma_{s}"], pulls[b]["mean_chi2"]) for b in blcs for s in "ab"]
+        return [(f"{b}{s}", pulls[b][f"pull_sigma_{s}"], pulls[b]["mean_chi2"],
+                 pulls[b].get(f"pull_fit_ok_{s}"))
+                for b in blcs for s in "ab"]
     if a.all:
         return [("ALL", float(np.mean([v["pull_sigma"] for v in pulls.values()])),
-                 float(np.mean([v["mean_chi2"] for v in pulls.values()])))]
-    return [(a.blc, pulls[a.blc]["pull_sigma"], pulls[a.blc]["mean_chi2"])]
+                 float(np.mean([v["mean_chi2"] for v in pulls.values()])),
+                 _pull_fit_ok_combined(pulls))]
+    return [(a.blc, pulls[a.blc]["pull_sigma"], pulls[a.blc]["mean_chi2"],
+             pulls[a.blc].get("pull_fit_ok"))]
 
 
-def report_resolution(group, p, chi2, state, r0, res_new):
+def pull_width_ok(p, fit_ok):
+    """True when p can be used to scale DCGEO Res."""
+    if fit_ok == 0:
+        return False
+    return math.isfinite(p) and p > 0
+
+
+def report_resolution(group, p, chi2, state, r0, res_new, invalid=False):
     print(colored(f"\n>>> Convergence Report (Resolution / exclusive Pull) ({group}) <<<", "white", attrs=["bold"]))
-    print(f"  - pull σ (p):           {p:.4f}  (target ≈ 1)")
-    print(f"  - mean χ²_ν (monitor):  {chi2:.4f}")
+    p_txt = f"{p:.4f}" if math.isfinite(p) else str(p)
+    print(f"  - pull σ (p):           {p_txt}  (target ≈ 1)")
+    chi2_txt = f"{chi2:.4f}" if math.isfinite(chi2) else str(chi2)
+    print(f"  - mean χ²_ν (monitor):  {chi2_txt}")
     if r0 is not None:
         print(f"  - R0 / Res_new:         {r0:.6g} -> {res_new:.6g} mm")
+    if invalid:
+        print(colored("  - Status: [CHECK] invalid pull σ "
+                      "(not finite, <=0, or pull_fit_ok=0); DCGEO not written\n",
+                      "red", attrs=["bold"]))
+        return
     status = {
         conv.CONVERGED: (f"[CONVERGED] (|p-1|={abs(p - 1):.4f} < {RES_CONV}); not written", "green"),
         conv.SETTLED: (f"[SETTLED] p not changing over {conv.SETTLE_PASSES} passes but |p-1| >= {RES_CONV}; "
@@ -294,7 +333,11 @@ def collect_resolution(a, pf):
     current = pf.get_data_dict(key_len=1)
     col = CATEGORIES["resolution"]["start_col"] - 1
     data, states = {}, []
-    for group, p, chi2 in pull_groups(a):
+    for group, p, chi2, fit_ok in pull_groups(a):
+        if not pull_width_ok(p, fit_ok):
+            states.append(conv.SETTLED)
+            report_resolution(group, p, chi2, conv.SETTLED, None, None, invalid=True)
+            continue
         state = conv.judge(a.run, group, "reso", a.suffix, p, abs(p - 1.0) < RES_CONV,
                            lambda prev, new: abs(new - prev) < RES_STABLE_DP)
         states.append(state)
@@ -346,7 +389,17 @@ def main():
     print(colored(f"\n>>> Collecting results for {a.ptype} <<<", "cyan"))
     data, states = COLLECT[a.ptype](a, pf)
     if data:
+        missing, duplicates = pf.key_issues(data, key_len=cat["key_len"])
+        if missing or duplicates:
+            parts = []
+            if missing:
+                parts.append(f"missing keys: {missing}")
+            if duplicates:
+                parts.append(f"duplicate keys: {duplicates}")
+            runner.fail("nothing written (" + "; ".join(parts) + ")")
         n = pf.update(data, key_len=cat["key_len"], start_col=cat["start_col"])
+        if n != len(data):
+            runner.fail(f"nothing written (updated {n} rows, expected {len(data)})")
         pf.write()
         print(colored(f"\n[SUCCESS] Updated {n} entries total for Run {a.run} {a.suffix}", "green", attrs=["bold"]))
         print(f"File: {target.relative_to(config.ANALYZER_DIR)}\n")
