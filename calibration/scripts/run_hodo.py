@@ -8,7 +8,7 @@ Usage: run_hodo.py <run...> {hdprm,t0,hdphc,htof} [--kaon] [--ftof] [--debug] [-
   htof   HTOF_Calib (TDC, ADC, PHC in one pass) -> HDPRM and HDPHC
 Input: DATA_DIR/runXXXXX_Hodo.root (create_runlist.py --hodo); htof also DATA_DIR/runXXXXX_TPCHelixHTOF.root.
 Runs are processed one by one, except htof, which merges the runs and labels the result with the
-first run.
+first run. For htof, --force also allows a TPCHelixHTOF older than that run's Hodo (logged as a warning).
 """
 import sys
 from pathlib import Path
@@ -44,14 +44,17 @@ def do_t0(run, suffix, args):
     runner.update_param(run, suffix, "t0", debug=args.debug)
 
 
-def htof_dst(run):
+def htof_dst(run, force=False):
     """DstTPCHelixHTOF output of the run (dE/dx-tagged helix x HTOF match); it must follow the Hodo decode."""
     dst = config.DATA_DIR / f"run{run:05d}_TPCHelixHTOF.root"
     if not dst.exists():
         runner.fail(f"{dst} not found (dst_create_runlist.py {run} --tpchelixhtof, then run the job)")
     hodo = config.DATA_DIR / f"run{run:05d}_Hodo.root"
     if hodo.exists() and dst.resolve().stat().st_mtime < hodo.resolve().stat().st_mtime:
-        runner.warn(f"{dst.name} is older than {hodo.name}; regenerate it after the Hodo re-decode")
+        msg = (f"{dst.name} is older than {hodo.name}; regenerate it after the Hodo re-decode")
+        if not force:
+            runner.fail(f"{msg} (use --force to run anyway)")
+        runner.warn(f"--force: allowing stale DST ({msg})")
     runner.info(f"input: {dst}")
     return dst
 
@@ -63,7 +66,7 @@ def do_htof(runs, suffix, args):
     if args.ftof:
         runner.warn("--ftof does not apply to htof; ignored")
     (exe,) = runner.require_bins("HTOF_Calib")
-    pairs = [(runner.input_root(r, "Hodo", suffix, args.force), htof_dst(r)) for r in runs]
+    pairs = [(runner.input_root(r, "Hodo", suffix, args.force), htof_dst(r, args.force)) for r in runs]
     if len(runs) > 1:
         runner.info(f"merging {len(runs)} runs; results/params labeled with run {runs[0]:05d}")
     runner.step("HTOF_Calib")
