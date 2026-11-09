@@ -86,6 +86,19 @@ class ResolutionJournalTests(unittest.TestCase):
         self.assertEqual(data['1'], ['0.288'])
         self.assertEqual(states, [self.conv.WRITTEN])
 
+    def test_unrelated_parameter_edit_stops_retry(self):
+        self.apply()
+        self.target.write_text('neither before nor after')
+        with self.assertRaisesRegex(RuntimeError, 'neither before nor after'):
+            self.collect()
+
+    def test_restored_before_content_can_retry(self):
+        self.apply()
+        self.target.write_text('before')
+        for value in self.current.values():
+            value[8] = '0.2'
+        self.assertEqual(self.collect()[0]['1'], ['0.24'])
+
     def test_legacy_journal_requires_new_decode(self):
         rec = self.apply()
         text = rec['path'].read_text().replace('reso-v2:', '')
