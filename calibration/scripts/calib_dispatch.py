@@ -6,8 +6,10 @@ Usage:
   calib_dispatch.py status <config.yml>
 
 Steps: hodo | dc_resi [{bcin: true}] | d5_align
+  Optional per-step: allow_skip: true  (continue after EXIT_SKIP)
 State: OUTPUT_DIR/calib/runXXXXX/calib_dispatch_state.json (no stop/resume yet).
-Continue on exit 0 or 4 (SKIP); other codes stop the chain.
+Continue on exit 0; EXIT_SKIP (4) stops unless that step has allow_skip: true.
+Final exit code is runner.worst of executed step codes (so a skip is not erased by a later 0).
 """
 import json
 import sys
@@ -21,12 +23,25 @@ from common.lib import config, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 KNOWN_STEPS = ("hodo", "dc_resi", "d5_align")
-CONTINUE_RC = (runner.EXIT_OK, runner.EXIT_SKIP)
+KNOWN_OPTS = {"bcin", "skip_t0", "skip_hdphc", "ftof", "allow_skip"}
 
 
 #_____________________________________________________________________________
 def state_path(run):
     return config.OUTPUT_DIR / "calib" / f"run{run:05d}" / "calib_dispatch_state.json"
+
+
+#_____________________________________________________________________________
+def utc_now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+#_____________________________________________________________________________
+def require_bool(value, where):
+    """Accept only a YAML bool (not a string)."""
+    if not isinstance(value, bool):
+        runner.fail(f"{where}: must be a YAML bool, got {value!r}")
+    return value
 
 
 #_____________________________________________________________________________
@@ -72,7 +87,19 @@ def normalize_step(raw, index):
         runner.fail(f"steps[{index}]: expected string or single-key mapping, got {raw!r}")
     if name not in KNOWN_STEPS:
         runner.fail(f"steps[{index}]: unknown step {name!r} (known: {', '.join(KNOWN_STEPS)})")
+    if "allow_skip" in opts:
+        require_bool(opts["allow_skip"], f"steps[{index}].allow_skip")
     return name, opts
+
+
+#_____________________________________________________________________________
+def should_continue(rc, opts):
+    """True if the dispatch chain should proceed to the next step."""
+    if rc == runner.EXIT_OK:
+        return True
+    if rc == runner.EXIT_SKIP and opts.get("allow_skip") is True:
+        return True
+    return False
 
 
 #_____________________________________________________________________________
@@ -107,7 +134,7 @@ def step_cmd(name, opts, cfg, dry_run):
     if dry_run:
         parts.append("--dry-run")
 
-    unknown = set(opts) - {"bcin", "skip_t0", "skip_hdphc", "ftof"}
+    unknown = set(opts) - KNOWN_OPTS
     if unknown:
         runner.fail(f"step {name}: unknown option(s) {sorted(unknown)}")
     return " ".join(parts)
@@ -134,6 +161,20 @@ def read_state(run):
 
 
 #_____________________________________________________________________________
+def make_payload(run, index, name, opts, rc, finished, steps_hist):
+    return {
+        "run": run,
+        "index": index,
+        "step": name,
+        "opts": opts,
+        "rc": rc,
+        "finished": finished,
+        "steps": steps_hist,
+        "updated_at": utc_now(),
+    }
+
+
+#_____________________________________________________________________________
 def do_status(cfg):
     st = read_state(cfg["run"])
     if st is None:
@@ -154,7 +195,11 @@ def do_start(cfg, dry_run):
         f"calib_dispatch start run={cfg['run']:05d} n_steps={len(cfg['steps'])}"
         + (" dry-run" if dry_run else "")
     )
+    steps_hist = []
     last_rc = runner.EXIT_OK
+    last_name = None
+    last_opts = {}
+    last_index = -1
     for i, raw in enumerate(cfg["steps"]):
         name, opts = normalize_step(raw, i)
         cmd = step_cmd(name, opts, cfg, dry_run)
@@ -169,35 +214,30 @@ def do_start(cfg, dry_run):
                     runner.EXIT_CHECK, runner.EXIT_SKIP),
             )
         last_rc = rc
-        payload = {
-            "run": cfg["run"],
-            "index": i,
-            "step": name,
-            "opts": opts,
-            "rc": rc,
-            "finished": False,
-            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
+        last_name = name
+        last_opts = opts
+        last_index = i
+        steps_hist.append({"index": i, "step": name, "opts": opts, "rc": rc})
         if not dry_run:
-            write_state(cfg["run"], payload)
+            write_state(
+                cfg["run"],
+                make_payload(cfg["run"], i, name, opts, rc, False, steps_hist),
+            )
         runner.info(f"step {name} exit={rc}")
-        if rc not in CONTINUE_RC:
+        if not should_continue(rc, opts):
             runner.warn(f"stopping after step {name} (rc={rc})")
             sys.exit(rc)
 
+    overall_rc = runner.worst([e["rc"] for e in steps_hist]) if steps_hist else last_rc
     if not dry_run:
-        payload = {
-            "run": cfg["run"],
-            "index": len(cfg["steps"]) - 1,
-            "step": normalize_step(cfg["steps"][-1], len(cfg["steps"]) - 1)[0],
-            "opts": normalize_step(cfg["steps"][-1], len(cfg["steps"]) - 1)[1],
-            "rc": last_rc,
-            "finished": True,
-            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
-        write_state(cfg["run"], payload)
+        write_state(
+            cfg["run"],
+            make_payload(
+                cfg["run"], last_index, last_name, last_opts, overall_rc, True, steps_hist
+            ),
+        )
     runner.info("calib_dispatch finished")
-    sys.exit(last_rc)
+    sys.exit(overall_rc)
 
 
 #_____________________________________________________________________________

@@ -11,4 +11,5 @@ steps:
   - hodo
   - dc_resi                 # BcOut (default)
   # - dc_resi: {bcin: true}
+  # - dc_resi: {allow_skip: true}   # EXIT_SKIP(4) でも次へ（既定は停止）
   - d5_align
