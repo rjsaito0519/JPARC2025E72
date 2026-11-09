@@ -434,6 +434,7 @@ struct StepGuess {
   Double_t c_right;  // 右プラトー Δclock [ns]
   Double_t t0;       // ステップ位置 [ns]
   Bool_t fix_t0;     // true なら fit で t を固定
+  Bool_t fix_t0_prefit = kFALSE;  // true なら基線なしの pre-fit でも t を t0 に固定（params.h の 3 要素目）
 };
 
 // 前方宣言: ResY[mm] -> Δclock[ns] 変換
@@ -886,6 +887,7 @@ static TF1* FitStepSum(Int_t nstep, std::vector<Double_t>& x_center,
     if (t0 >  position_range) t0 =  position_range;
     f->SetParameter(2 + 3 * i, t0);    // 位置（初期値）
     f->SetParLimits(2 + 3 * i, -position_range, position_range);
+    if (i == 0 && guess && guess->fix_t0_prefit) f->FixParameter(2 + 3 * i, t0);
     f->FixParameter(3 + 3 * i, fixed_width);        // 幅（固定）
   }
   
@@ -1490,6 +1492,8 @@ int main(int argc, char* argv[])
           if (v.size() >= 1 && std::isfinite(v[0])) {
             g.t0 = std::clamp(v[0], -kPhaseGraphHalfRangeNs, kPhaseGraphHalfRangeNs);
           }
+          // v[2]: > 0 なら基線なしの pre-fit でも t を t0 に固定する
+          g.fix_t0_prefit = (v.size() >= 3 && v[2] > 0.0);
           // v[1]: 高さ[mm]（上 − 下）。有効なら c_left/c_right を上書き。
           if (v.size() >= 2 && std::isfinite(v[1]) && v_c > 0.0) {
             // 現在の Δclock 振幅（ns）からおおよその下側 Δclock を維持しつつ高さだけ合わせる
