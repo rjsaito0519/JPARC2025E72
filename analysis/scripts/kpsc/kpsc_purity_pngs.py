@@ -46,7 +46,7 @@ import uproot
 from matplotlib.colors import LogNorm
 from tqdm import tqdm
 
-project_root = Path(__file__).resolve().parent.parent.parent
+project_root = Path(__file__).resolve().parents[3]
 sys.path.append(str(project_root))
 
 from lib import config

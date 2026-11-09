@@ -59,7 +59,7 @@ import awkward as ak
 import numpy as np
 import uproot
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "macro"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "macro"))
 from compare_tpcpos_beamthrough import RUNS  # noqa: E402
 
 Z_TARGET = -143.0

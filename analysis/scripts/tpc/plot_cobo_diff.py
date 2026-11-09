@@ -10,7 +10,7 @@ import argparse
 from pathlib import Path
 
 # Add shared library path
-project_root = Path(__file__).resolve().parent.parent.parent
+project_root = Path(__file__).resolve().parents[3]
 sys.path.append(str(project_root))
 
 from lib import config

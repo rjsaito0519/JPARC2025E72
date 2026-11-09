@@ -16,7 +16,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import uproot
 
-project_root = Path(__file__).resolve().parent.parent.parent
+project_root = Path(__file__).resolve().parents[3]
 sys.path.append(str(project_root))
 from lib import config
 import opg_tool

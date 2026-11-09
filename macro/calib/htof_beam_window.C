@@ -2,7 +2,7 @@
 // whether plane-0 HTOF (seg 0-5) fired. Used to check the beam-window rectangle assumed by
 // TPCAnalyzer::ExtrapolateToHTOF (analyzer src/TPCAnalyzer.cc: TPC frame |x| < 71 mm,
 // |y - 4| < 56 mm on plane 0). Read-only; writes one PDF.
-//   root -l -b -q 'calibration/macros/htof_beam_window.C("<out.pdf>", "<DATA_DIR>", "02569,02570")'
+//   root -l -b -q 'macro/calib/htof_beam_window.C("<out.pdf>", "<DATA_DIR>", "02569,02570")'
 // Inputs per run: <DATA_DIR>/run<run>_BcOut.root (tree bcout: ntrack, chisqr, x0, y0, u0, v0) and
 // <DATA_DIR>/run<run>_Hodo.root (tree hodo: htof_raw_seg, htof_tdc_u/d, htof_hit_seg), same entries.
 // Track: the smallest-chisqr BcOut track of the event (any ntrack >= 1), straight line to z_htof

@@ -42,7 +42,7 @@ static const Double_t kvc_ratio_closeup_xmax = 45.;
 static const Double_t kvc_ped_fit_min = -5.;
 static const Double_t kvc_ped_fit_max = 30.;
 
-// KVC gain (p1) per segment and channel [seg][a,b,c,d]: one-photon gain from analysis/scripts/kvc_opg_plot.py
+// KVC gain (p1) per segment and channel [seg][a,b,c,d]: one-photon gain from analysis/scripts/hodo_kvc/kvc_opg_plot.py
 // (LED runs 3054-3134), same values as HDPRM CId=6, AorT=0, UorD=0-3.
 static const std::vector<std::vector<Double_t>> kvc_gain = {
     {9.405706e+00, 8.864464e+00, 9.281772e+00, 9.215651e+00},  // seg 0
