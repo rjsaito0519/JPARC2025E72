@@ -351,6 +351,26 @@ def report_resolution(group, p, chi2, state, r0, res_new, invalid=False):
     print(colored(f"  - Status: {status[0]}\n", status[1], attrs=["bold"]))
 
 
+def resolution_apply_key(hist, group, decode_tok, p):
+    """Identify a measured scale, independently of the Res values it updates.
+
+    Old journals hashed the resulting Res, so they cannot safely identify a
+    retry after a write. Require a new decode for those inputs during migration.
+    """
+    prefix = conv.make_apply_key(decode_tok, "")
+    if hist.exists():
+        for line in hist.read_text().splitlines():
+            fields = line.split("\t")
+            if len(fields) < 5 or fields[1] != group or fields[3] not in (conv.PENDING, conv.WRITTEN):
+                continue
+            for detail in fields[4].split():
+                if detail.startswith("apply=" + prefix) and not detail.startswith("apply=" + prefix + "reso-v2:"):
+                    runner.fail(f"{group} reso: legacy apply journal for this decode; "
+                                "decode again before applying resolution (do not delete the journal)")
+    corr = {"group": group, "ids": list(RES_GROUPS[group]), "p": p}
+    return conv.make_apply_key(decode_tok, "reso-v2:" + conv.corr_token(corr))
+
+
 def collect_resolution(a, pf):
     """Per group: decide p; if still moving, every layer gets Res_new = p * mean(current Res of the group).
 
@@ -378,8 +398,7 @@ def collect_resolution(a, pf):
                 runner.fail(f"DCGEO has no Ids {missing} of {group}")
             r0 = float(np.mean([float(current[k][col]) for k in keys]))
             res_new = p * r0
-        corr = {k: res_new for k in keys} if state == conv.WRITTEN else {"p": p, "group": group}
-        apply_key = conv.make_apply_key(decode_tok, conv.corr_token(corr))
+        apply_key = resolution_apply_key(hist, group, decode_tok, p)
         report_resolution(group, p, chi2, state, r0, res_new)
         if state == conv.WRITTEN:
             st = conv.apply_status(hist, group, apply_key, pf.path)
