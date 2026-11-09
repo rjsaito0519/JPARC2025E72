@@ -13,7 +13,8 @@ Fit outputs: OUTPUT_DIR/root/runXXXXX/runXXXXX_<det>[_<kind>]_<S>.root. A fit ou
 stops everything (exit 1). A missing hodo output is skipped (its rows keep their values); a missing DC
 output stops (exit 1).
 residual and resolution judge each group (calib_convergence.py) and write only the groups still moving;
-exit code 0 converged, 2 written, 3 settled (lib/runner.py).
+exit codes (lib/runner.py): 0 calib OK (converged or non-iterative write), 1 fail, 2 written (iterate),
+3 settled / check, 4 skip (no results).
 """
 import math
 import re
@@ -405,6 +406,7 @@ def main():
         print(f"File: {target.relative_to(config.ANALYZER_DIR)}\n")
     elif not states:
         runner.warn(f"no results for run {a.run} {a.suffix} {a.ptype}; nothing written")
+        sys.exit(runner.EXIT_SKIP)
     sys.exit(conv.exit_code(states))
 
 

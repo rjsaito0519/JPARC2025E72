@@ -24,8 +24,8 @@ Converged: score < 1.
 Settled: outside the criterion, and the score (below) did not shrink below POS_IMPROVE of
 the previous pass in the last 2 of 3 passes (history OUTPUT_DIR/calib/runXXXXX/d5_pos_<S>.txt,
 calib_convergence.py): nothing written, a person looks.
-Exit code of pos (lib/runner.py, worst run): 3 some run settled, 2 Ofs written for some run,
-0 all converged (or --debug), 1 failed.
+Exit code of pos (lib/runner.py, worst run): 3 some run settled or check PDF failed, 2 Ofs written,
+0 all converged with OK check PDF, 4 --debug (measure only), 1 failed.
 The common x shift of BLC1 is degenerate with delta and is left unchanged.
 """
 
@@ -266,8 +266,13 @@ def write_ofs(run, r, s):
 
 
 def make_check_pdf(run, s):
-    runner.sh(f"{BIN_DIR}/d5_plane_resi_qa {run} {beam_flag(s)} --d5 {d5_root(run, s)} "
-              f"--bcin {chamber_root(run, 'BcIn', s)} --bcout {chamber_root(run, 'BcOut', s)}", check=False)
+    """Run d5_plane_resi_qa; return its exit code (0 = OK). Does not stop the driver on failure."""
+    rc, _ = runner.sh(
+        f"{BIN_DIR}/d5_plane_resi_qa {run} {beam_flag(s)} --d5 {d5_root(run, s)} "
+        f"--bcin {chamber_root(run, 'BcIn', s)} --bcout {chamber_root(run, 'BcOut', s)}",
+        check=False,
+    )
+    return rc
 
 
 def check_pos_inputs(run, s, force):
@@ -293,7 +298,7 @@ def do_pos(args, s):
         runner.fail(f"measurement failed for {failed} (n/a); nothing written")
     if args.debug:
         runner.warn("--debug: nothing written")
-        return
+        sys.exit(runner.EXIT_SKIP)
 
     written = [run for run, r in rows.items() if r["state"] == conv.WRITTEN]
     for run in written:
@@ -301,14 +306,18 @@ def do_pos(args, s):
     if written:
         rl = " ".join(map(str, written))
         runner.warn(f"next for {rl}: myrun BcIn -> run_dcprm.py <run> resi --bcin{kaon_opt(s)} -> run_d5.py {rl} ref")
+    code = conv.exit_code([r["state"] for r in rows.values()])
     for run, r in rows.items():
         if r["state"] == conv.SETTLED:
             print(colored(f"[SETTLED] {run_tag(run)}: not converging over {conv.SETTLE_PASSES} passes; "
                           "nothing written, look at the d5_pos_review PDF", "red", attrs=["bold"]))
         elif r["state"] == conv.CONVERGED:
             runner.info(f"{run_tag(run)} converged: check PDF")
-            make_check_pdf(run, s)
-    sys.exit(conv.exit_code([r["state"] for r in rows.values()]))
+            pdf_rc = make_check_pdf(run, s)
+            if pdf_rc != 0:
+                runner.warn(f"{run_tag(run)}: check PDF failed (exit {pdf_rc}); treating as EXIT_CHECK")
+                code = runner.worst([code, runner.EXIT_CHECK])
+    sys.exit(code)
 
 
 def main():

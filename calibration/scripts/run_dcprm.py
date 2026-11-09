@@ -10,8 +10,8 @@ Usage: run_dcprm.py <run...> {t0,drift,resi,reso} [--bcout|--bcin|--all] [--sepa
          Iterate: decode BcIn/BcOut -> reso -> decode.
 Chamber: BcOut by default, --bcin for BcIn. Input: DATA_DIR/runXXXXX_<BcIn|BcOut>.root (create_runlist.py).
 Runs are processed one by one. resi and reso judge convergence (calibration/scripts/calib_convergence.py);
-the exit code is the worst of the runs: 3 no longer improving (look at it) over 2 written (decode again
-and repeat) over 0 converged; 1 failed.
+the exit code is the worst of the runs: 3 check/settled over 2 written (decode again) over 4 skip
+(--debug / no results) over 0 converged; 1 failed.
 """
 import sys
 from pathlib import Path
@@ -53,6 +53,8 @@ def do_drift(run, suffix, args):
         runner.backup_file(config.PARAM_DIR / "DCDRFT" / config.SUB_DIR / f"DCDriftParam_run{run:05d}_{suffix}.root")
     runner.step(f"run{run:05d}: BLC_DRFT ({chamber(args)})")
     runner.sh(f"{exe} {root} {suffix}" + (" --debug" if args.debug else ""))
+    if args.debug:
+        return runner.EXIT_SKIP
     return runner.EXIT_OK
 
 

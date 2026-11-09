@@ -2,10 +2,11 @@
 
 Every front end takes `<run...> <mode> [--kaon] [--debug] [--force]` and processes the runs one by
 one. Exit codes for a driver:
-  EXIT_OK            done (params written, or nothing to write)
+  EXIT_OK            calibration succeeded (non-iterative write, or iterative converged)
   EXIT_FAIL          stopped; nothing more was written after the failure
   EXIT_NOT_CONVERGED params written, another decode + iteration is needed
-  EXIT_CHECK         not converged and no longer improving; nothing written, a person looks
+  EXIT_CHECK         not converged / settled, or QA check failed; nothing useful written, a person looks
+  EXIT_SKIP          finished without applying calibration (no fit results, or --debug)
 """
 import argparse
 import subprocess
@@ -22,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BIN_DIR = PROJECT_ROOT / "bin"
 SCRIPT_DIR = PROJECT_ROOT / "calibration" / "scripts"
 
-EXIT_OK, EXIT_FAIL, EXIT_NOT_CONVERGED, EXIT_CHECK = 0, 1, 2, 3
+EXIT_OK, EXIT_FAIL, EXIT_NOT_CONVERGED, EXIT_CHECK, EXIT_SKIP = 0, 1, 2, 3, 4
 
 # keep our lines in order with the output of the commands we run (logs, pipes, batch jobs)
 sys.stdout.reconfigure(line_buffering=True)
@@ -112,17 +113,20 @@ def input_root(run, tag, suffix, force):
 
 
 def update_param(run, suffix, ptype, *opts, debug=False):
-    """update_param.py <run> <suffix> <ptype> [opts]; skipped with --debug. Its exit code (0, 2 or 3)."""
+    """update_param.py <run> <suffix> <ptype> [opts]; skipped with --debug (EXIT_SKIP).
+
+    Child exit codes accepted without stopping: 0, 2, 3, 4.
+    """
     if debug:
         warn(f"--debug: {ptype} params not written")
-        return EXIT_OK
+        return EXIT_SKIP
     step(f"update params ({ptype})")
     rc, _ = sh(" ".join(["python3", str(SCRIPT_DIR / "update_param.py"), str(run), suffix, ptype, *opts]),
-               ok=(EXIT_OK, EXIT_NOT_CONVERGED, EXIT_CHECK))
+               ok=(EXIT_OK, EXIT_NOT_CONVERGED, EXIT_CHECK, EXIT_SKIP))
     return rc
 
 
 def worst(codes):
-    """Exit code for several groups or runs: EXIT_CHECK over EXIT_NOT_CONVERGED over EXIT_OK."""
-    order = (EXIT_OK, EXIT_NOT_CONVERGED, EXIT_CHECK)
+    """Exit code for several groups or runs: CHECK > NOT_CONVERGED > SKIP > OK."""
+    order = (EXIT_OK, EXIT_SKIP, EXIT_NOT_CONVERGED, EXIT_CHECK)
     return max(codes, key=order.index, default=EXIT_OK)
