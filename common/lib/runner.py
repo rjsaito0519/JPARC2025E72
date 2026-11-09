@@ -19,7 +19,8 @@ from . import config
 from .input_check import check_input
 from .param import backup_file  # noqa: F401  (re-exported for the front ends)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# common/lib/runner.py → repository root is parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BIN_DIR = PROJECT_ROOT / "bin"
 SCRIPT_DIR = PROJECT_ROOT / "calibration" / "scripts"
 
