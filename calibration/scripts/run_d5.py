@@ -227,11 +227,33 @@ def pos_score(r, tol):
     return max(abs(r["dy_a"]) / tol_y, abs(r["dy_b"]) / tol_y, abs(r["s"]) / tol)
 
 
+def pos_hist_path(run, s):
+    return config.OUTPUT_DIR / "calib" / run_tag(run) / f"d5_pos_{s}.txt"
+
+
+def pos_fit_token(run, s):
+    """Id of the D5 inputs used for this measurement (normal + BLC2-referenced)."""
+    return conv.fit_token(d5_root(run, s)) + "+" + conv.fit_token(d5_root(run, s, TAG))
+
+
 def judge_pos(run, r, s, tol):
-    path = config.OUTPUT_DIR / "calib" / run_tag(run) / f"d5_pos_{s}.txt"
-    details = f"dy_a={r['dy_a']:+.5f} dy_b={r['dy_b']:+.5f} err={r['dy_err']:.5f} s={r['s']:+.5f}"
+    """Decide state; record CONVERGED/SETTLED immediately. WRITTEN is recorded after write_ofs."""
+    path = pos_hist_path(run, s)
+    extra = f"dy_a={r['dy_a']:+.5f} dy_b={r['dy_b']:+.5f} err={r['dy_err']:.5f} s={r['s']:+.5f}"
     score = pos_score(r, tol)
-    return conv.judge_at(path, "BLC1", score, score < 1.0, lambda prev, new: new > POS_IMPROVE * prev, details)
+    state = conv.decide_at(path, "BLC1", score, score < 1.0,
+                           lambda prev, new: new > POS_IMPROVE * prev)
+    fit_tok = pos_fit_token(run, s)
+    r["score"] = score
+    r["fit_token"] = fit_tok
+    r["hist_path"] = path
+    r["details_extra"] = extra
+    if state == conv.WRITTEN and conv.already_applied(path, "BLC1", fit_tok, dcgeo_path(run, s)):
+        runner.warn(f"{run_tag(run)} pos: measurement inputs already applied; not writing again")
+        state = conv.SKIPPED
+    elif state in (conv.CONVERGED, conv.SETTLED):
+        conv.record(path, "BLC1", score, state, conv.details_with_fit(fit_tok, extra=extra))
+    return state
 
 
 def fmt(v, f="{:+.4f}"):
@@ -302,7 +324,12 @@ def do_pos(args, s):
 
     written = [run for run, r in rows.items() if r["state"] == conv.WRITTEN]
     for run in written:
-        write_ofs(run, rows[run], s)
+        r = rows[run]
+        write_ofs(run, r, s)
+        conv.record(
+            r["hist_path"], "BLC1", r["score"], conv.WRITTEN,
+            conv.details_with_fit(r["fit_token"], param_path=dcgeo_path(run, s), extra=r["details_extra"]),
+        )
     if written:
         rl = " ".join(map(str, written))
         runner.warn(f"next for {rl}: myrun BcIn -> run_dcprm.py <run> resi --bcin{kaon_opt(s)} -> run_d5.py {rl} ref")
@@ -311,6 +338,8 @@ def do_pos(args, s):
         if r["state"] == conv.SETTLED:
             print(colored(f"[SETTLED] {run_tag(run)}: not converging over {conv.SETTLE_PASSES} passes; "
                           "nothing written, look at the d5_pos_review PDF", "red", attrs=["bold"]))
+        elif r["state"] == conv.SKIPPED:
+            runner.info(f"{run_tag(run)} skipped: same D5 inputs already applied")
         elif r["state"] == conv.CONVERGED:
             runner.info(f"{run_tag(run)} converged: check PDF")
             pdf_rc = make_check_pdf(run, s)

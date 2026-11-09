@@ -224,7 +224,10 @@ def report_residual(corr, sigma, state):
 
 
 def collect_residual(a, pf):
-    """New Ofs = current Ofs + correction (BLC_residual, relative to plane U1a)."""
+    """New Ofs = current Ofs + correction (BLC_residual, relative to plane U1a).
+
+    Returns (data, states, pending_records). pending_records are recorded after a successful write.
+    """
     path = fresh_outputs(a.run, [(a.blc, a.blc, "residual", a.suffix)], [decode(a.run, a.chamber)],
                          required=True)[a.blc]
     fit = update_residual.make_dictdata(str(path))
@@ -236,12 +239,23 @@ def collect_residual(a, pf):
     corr = {k: float(v[0]) for k, v in fit.items()}
     ok(f"{a.chamber} Residuals", len(corr), " (Additive Update)")
     max_corr = max(abs(c) for c in corr.values())
-    state = conv.judge(a.run, a.blc, "resi", a.suffix, max_corr, max_corr < RESI_CONV_MM,
-                       lambda prev, new: new > RESI_IMPROVE * prev)
+    hist = conv.history_path(a.run, a.blc, "resi", a.suffix)
+    fit_tok = conv.fit_token(path)
+    state = conv.decide_at(hist, a.blc, max_corr, max_corr < RESI_CONV_MM,
+                           lambda prev, new: new > RESI_IMPROVE * prev)
     report_residual(corr, {k: float(v[1]) for k, v in fit.items()}, state)
+    if state == conv.WRITTEN and conv.already_applied(hist, a.blc, fit_tok, pf.path):
+        runner.warn(f"{a.blc} resi: fit {path.name} already applied; not writing again "
+                    "(decode and refit before another residual pass)")
+        return {}, [conv.SKIPPED], []
+    if state in (conv.CONVERGED, conv.SETTLED):
+        conv.record(hist, a.blc, max_corr, state, conv.details_with_fit(fit_tok))
+        return {}, [state], []
     if state != conv.WRITTEN:
-        return {}, [state]
-    return {k: [float(current[k][col]) + c] for k, c in corr.items()}, [state]
+        return {}, [state], []
+    pending = [{"path": hist, "group": a.blc, "value": max_corr, "state": conv.WRITTEN,
+                "fit_token": fit_tok}]
+    return {k: [float(current[k][col]) + c] for k, c in corr.items()}, [state], pending
 
 
 def read_pull(path, need_ab):
@@ -330,18 +344,28 @@ def report_resolution(group, p, chi2, state, r0, res_new, invalid=False):
 
 
 def collect_resolution(a, pf):
-    """Per group: judge p; if still moving, every layer gets Res_new = p * mean(current Res of the group)."""
+    """Per group: decide p; if still moving, every layer gets Res_new = p * mean(current Res of the group).
+
+    Returns (data, states, pending_records). WRITTEN history lines are recorded after a successful write.
+    """
     current = pf.get_data_dict(key_len=1)
     col = CATEGORIES["resolution"]["start_col"] - 1
-    data, states = {}, []
+    data, states, pending = {}, [], []
     for group, p, chi2, fit_ok in pull_groups(a):
         if not pull_width_ok(p, fit_ok):
             states.append(conv.SETTLED)
             report_resolution(group, p, chi2, conv.SETTLED, None, None, invalid=True)
             continue
-        state = conv.judge(a.run, group, "reso", a.suffix, p, abs(p - 1.0) < RES_CONV,
-                           lambda prev, new: abs(new - prev) < RES_STABLE_DP)
-        states.append(state)
+        hist = conv.history_path(a.run, group, "reso", a.suffix)
+        if group == "ALL":
+            fit_tok = "+".join(conv.fit_token(fit_output(a.run, b, "pull", a.suffix)) for b in ("BLC1", "BLC2"))
+        else:
+            blc = "BLC1" if group.startswith("BLC1") else "BLC2" if group.startswith("BLC2") else a.blc
+            fit_tok = conv.fit_token(fit_output(a.run, blc, "pull", a.suffix))
+            if group[-1] in "ab" and len(group) > 4:
+                fit_tok = f"{fit_tok}:{group[-1]}"
+        state = conv.decide_at(hist, group, p, abs(p - 1.0) < RES_CONV,
+                               lambda prev, new: abs(new - prev) < RES_STABLE_DP)
         r0 = res_new = None
         if state == conv.WRITTEN:
             keys = [str(i) for i in RES_GROUPS[group]]
@@ -350,9 +374,20 @@ def collect_resolution(a, pf):
                 runner.fail(f"DCGEO has no Ids {missing} of {group}")
             r0 = float(np.mean([float(current[k][col]) for k in keys]))
             res_new = p * r0
-            data.update({k: [f"{res_new:.6g}"] for k in keys})
         report_resolution(group, p, chi2, state, r0, res_new)
-    return data, states
+        if state == conv.WRITTEN and conv.already_applied(hist, group, fit_tok, pf.path):
+            runner.warn(f"{group} reso: fit already applied; not writing again "
+                        "(decode and refit before another resolution pass)")
+            states.append(conv.SKIPPED)
+            continue
+        if state == conv.WRITTEN:
+            data.update({k: [f"{res_new:.6g}"] for k in keys})
+            pending.append({"path": hist, "group": group, "value": p, "state": conv.WRITTEN,
+                            "fit_token": fit_tok})
+        elif state in (conv.CONVERGED, conv.SETTLED):
+            conv.record(hist, group, p, state, conv.details_with_fit(fit_tok))
+        states.append(state)
+    return data, states, pending
 
 
 COLLECT = {
@@ -388,7 +423,9 @@ def main():
         ParamFile.create_from_template(source, target)
     pf = ParamFile(target)
     print(colored(f"\n>>> Collecting results for {a.ptype} <<<", "cyan"))
-    data, states = COLLECT[a.ptype](a, pf)
+    collected = COLLECT[a.ptype](a, pf)
+    data, states = collected[0], collected[1]
+    pending = collected[2] if len(collected) > 2 else []
     if data:
         missing, duplicates = pf.key_issues(data, key_len=cat["key_len"])
         if missing or duplicates:
@@ -402,6 +439,9 @@ def main():
         if n != len(data):
             runner.fail(f"nothing written (updated {n} rows, expected {len(data)})")
         pf.write()
+        for rec in pending:
+            conv.record(rec["path"], rec["group"], rec["value"], rec["state"],
+                        conv.details_with_fit(rec["fit_token"], param_path=target))
         print(colored(f"\n[SUCCESS] Updated {n} entries total for Run {a.run} {a.suffix}", "green", attrs=["bold"]))
         print(f"File: {target.relative_to(config.ANALYZER_DIR)}\n")
     elif not states:
