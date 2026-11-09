@@ -50,11 +50,9 @@ def resolve_hodo_runlist(run, explicit, require_exists=True):
 
 #_____________________________________________________________________________
 def decode_cmd(runlist):
-    try:
-        rel = runlist.relative_to(config.ANALYZER_DIR / "runmanager")
-    except ValueError:
-        rel = runlist
-    return f"cd {config.ANALYZER_DIR} && ./runmanager/myrun.py {rel} --local"
+    # myrun expects cwd = analyzer root; pass an absolute runlist (same as iterate_tpc_calib).
+    path = Path(runlist).expanduser().resolve()
+    return f"cd {config.ANALYZER_DIR} && ./runmanager/myrun.py {path} --local"
 
 
 #_____________________________________________________________________________
