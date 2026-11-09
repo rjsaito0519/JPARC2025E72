@@ -25,8 +25,8 @@ import numpy as np
 from termcolor import colored
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from lib import config, runner  # noqa: E402
-from lib.param import ParamFile  # noqa: E402
+from common.lib import config, runner  # noqa: E402
+from common.lib.param import ParamFile  # noqa: E402
 import calib_convergence as conv  # noqa: E402
 import phc_conf  # noqa: E402
 import update_dctdc  # noqa: E402

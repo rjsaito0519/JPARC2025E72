@@ -7,7 +7,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
 
-from lib import conf
+from common.lib import conf
 
 # --- ユーザーが設定する項目 ---
 hdphc_dir = f"{conf.param_dir}/HDPHC"

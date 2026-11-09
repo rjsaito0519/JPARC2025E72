@@ -18,7 +18,7 @@ import uproot
 
 project_root = Path(__file__).resolve().parents[3]
 sys.path.append(str(project_root))
-from lib import config
+from common.lib import config
 import opg_tool
 
 HV = 58

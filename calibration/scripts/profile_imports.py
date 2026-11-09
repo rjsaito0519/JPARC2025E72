@@ -16,5 +16,5 @@ print(f"uproot: {time.time() - start:.4f}s")
 
 project_root = Path("/home/had/sryuta/analyzer/JPARC2025E72/myanalysis")
 sys.path.append(str(project_root))
-from lib import config
+from common.lib import config
 print(f"config: {time.time() - start:.4f}s")

@@ -22,8 +22,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 MYANALYSIS_ROOT = SCRIPT_DIR.parent.parent
 sys.path.append(str(MYANALYSIS_ROOT))
 
-from lib import config
-from lib.param import ParamFile
+from common.lib import config
+from common.lib.param import ParamFile
 
 KEY_LEN = 3
 FRESH_SEC = 60

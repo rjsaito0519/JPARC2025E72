@@ -30,7 +30,7 @@ import numpy as np
 
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
-from lib.tpcpos_runs import RUNS, RunSpec  # noqa: E402
+from common.lib.tpcpos_runs import RUNS, RunSpec  # noqa: E402
 
 from compare_charge_beamthrough import (
     GEM_SECTIONS,

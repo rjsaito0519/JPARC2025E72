@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from lib import config, runner  # noqa: E402
+from common.lib import config, runner  # noqa: E402
 
 CONVERGED, SETTLED, WRITTEN, SKIPPED = "converged", "settled", "written", "skipped"
 SETTLE_PASSES = 3

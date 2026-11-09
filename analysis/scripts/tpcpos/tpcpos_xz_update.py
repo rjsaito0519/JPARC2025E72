@@ -5,7 +5,7 @@
 Per pad, the in-plane offset d = d_t e_t + d_r e_r is fitted from the residuals of two
 kinds of tracks:
 
-  --bt FILE    beam-through helix DST (runs in lib.tpcpos_runs.RUNS); each
+  --bt FILE    beam-through helix DST (runs in common.lib.tpcpos_runs.RUNS); each
                track is refitted in the bending plane with a Gaussian prior on its radius
                around the run median momentum (relative width --momentum-width), as
                tpc_position_update.py --momentum-constraint soft.

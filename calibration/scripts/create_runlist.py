@@ -14,7 +14,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
 
-from lib import config
+from common.lib import config
 
 SCRATCH_RUNLIST_DIR = "scratch"
 BEAM_GEANT4_DIR = Path("/group/had/sks/Users/sryuta/BeamE72Geant4")

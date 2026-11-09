@@ -52,7 +52,7 @@ from termcolor import colored
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
 
-from lib import config
+from common.lib import config
 
 
 def run_command(cmd: str, exit_on_error: bool = True) -> int:

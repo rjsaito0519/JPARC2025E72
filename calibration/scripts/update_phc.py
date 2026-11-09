@@ -16,7 +16,7 @@ import numpy as np
 import uproot
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from lib import config  # noqa: E402
+from common.lib import config  # noqa: E402
 
 PHC_TYPE, PHC_NPAR = 1, 3
 MIN_FIT_ENTRIES = 300

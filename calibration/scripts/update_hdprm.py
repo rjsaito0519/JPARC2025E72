@@ -10,7 +10,7 @@ from pathlib import Path
 import uproot
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from lib import config, runner  # noqa: E402
+from common.lib import config, runner  # noqa: E402
 
 TDC_GAIN = -0.0009765625  # ns per TDC channel (-1/1024), written as the TDC gain column
 

@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from lib import config, decode_run, runner  # noqa: E402
+from common.lib import config, decode_run, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_D5 = SCRIPT_DIR / "run_d5.py"

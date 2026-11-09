@@ -60,7 +60,7 @@ import numpy as np
 import uproot
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from lib.tpcpos_runs import RUNS, RunSpec  # noqa: E402
+from common.lib.tpcpos_runs import RUNS, RunSpec  # noqa: E402
 
 Z_TARGET = -143.0
 SPEC = {r.run: r for r in RUNS}

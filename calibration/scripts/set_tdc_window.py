@@ -19,8 +19,8 @@ from termcolor import colored
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
 
-from lib import config
-from lib.param import ParamFile
+from common.lib import config
+from common.lib.param import ParamFile
 
 parser = argparse.ArgumentParser(
     prog="set_tdc_window",

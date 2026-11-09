@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from lib import config, runner  # noqa: E402
+from common.lib import config, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 KNOWN_STEPS = ("hodo", "dc_resi", "d5_align")

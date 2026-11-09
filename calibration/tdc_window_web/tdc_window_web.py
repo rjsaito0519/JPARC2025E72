@@ -27,8 +27,8 @@ import uproot
 
 MYANALYSIS = Path(__file__).resolve().parents[2]
 sys.path.append(str(MYANALYSIS))
-from lib import config  # noqa: E402
-from lib.param import ParamFile  # noqa: E402
+from common.lib import config  # noqa: E402
+from common.lib.param import ParamFile  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 BACKUP_BASE = Path("/group/had/sks/Users/sryuta/backup")

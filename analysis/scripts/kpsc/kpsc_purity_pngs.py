@@ -49,7 +49,7 @@ from tqdm import tqdm
 project_root = Path(__file__).resolve().parents[3]
 sys.path.append(str(project_root))
 
-from lib import config
+from common.lib import config
 
 for k, v in config.PLOT_SETTINGS.items():
     plt.rcParams[k] = v

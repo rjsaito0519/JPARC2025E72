@@ -44,7 +44,7 @@ import numpy as np
 import uproot
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from lib.tpcpos_runs import RUNS  # noqa: E402
+from common.lib.tpcpos_runs import RUNS  # noqa: E402
 
 RESULTS_IMG = Path("/home/had/sryuta/JPARC2025E72/results/img")
 SCRATCH_OUT = Path("/group/had/sks/Users/sryuta/tmp/tpcpos_iter")

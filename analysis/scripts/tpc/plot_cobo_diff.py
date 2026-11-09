@@ -13,7 +13,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parents[3]
 sys.path.append(str(project_root))
 
-from lib import config
+from common.lib import config
 
 # Apply plot settings
 for k, v in config.PLOT_SETTINGS.items():

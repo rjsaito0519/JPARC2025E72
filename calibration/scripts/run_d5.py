@@ -35,7 +35,7 @@ from pathlib import Path
 from termcolor import colored
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from lib import config, runner  # noqa: E402
+from common.lib import config, runner  # noqa: E402
 import calib_convergence as conv  # noqa: E402
 
 DCGEO_DIR = config.PARAM_DIR / "DCGEO" / config.SUB_DIR

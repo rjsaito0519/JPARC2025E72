@@ -1,8 +1,8 @@
 # Build artifacts
 .build/
 bin/
-lib/*.so
-lib/*.a
+common/lib/*.so
+common/lib/*.a
 
 # Python cache
 __pycache__/
@@ -13,8 +13,6 @@ __pycache__/
 .idea/
 
 # Configuration files (environment dependent)
-lib/paths.py
-lib/conf.py
 common/lib/paths.py
 common/lib/conf.py
 common/include/paths.h

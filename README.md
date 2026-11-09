@@ -7,10 +7,12 @@ J-PARC E72 の解析で使う較正・解析ツール群。analyzer（k18-analyz
 ## セットアップ
 
 ```bash
-cp common/lib/paths_example.py common/lib/paths.py   # または cp lib/paths_example.py lib/paths.py（symlink）
+cp common/lib/paths_example.py common/lib/paths.py
 ./build.sh                             # C++ のツールを bin/ にビルド
 ./link.sh                              # 主なスクリプトを最上位にリンク
 ```
+
+Python 共通は `from common.lib import …`（トップに `lib` は置かない）。
 
 ## 構成
 
@@ -21,7 +23,7 @@ cp common/lib/paths_example.py common/lib/paths.py   # または cp lib/paths_ex
 | `calibration/tdc_window_web/` | TDC window をブラウザで決めるツール（Wiki の TDC-Window） |
 | `calibration/src/` | 較正の fit 本体（C++） |
 | `analysis/` | 較正以外の解析・確認用（C++ / Python）。補助スクリプトは `analysis/scripts/<theme>/`（tpcpos, tpc, kpsc, hodo_kvc 等） |
-| `common/` | 共通部品。C++ は `include/`・`src/`、Python は `lib/`（トップの `lib` は symlink） |
+| `common/` | 共通部品。C++ は `include/`・`src/`、Python は `common.lib`（`common/lib/`） |
 | `macro/` | 表示・手作業用。`macro/evdisp/`（helix 3D 等）、`macro/calib/`（検査用 `.C`）。本番数値は C++/`bin` 優先。**ACLiC しない** |
 | `archive/` | 使っていないソースの退避 |
 | `wiki/` | 使い方（GitHub wiki）。手順の正本 |
