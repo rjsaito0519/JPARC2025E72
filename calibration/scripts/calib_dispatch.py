@@ -253,11 +253,13 @@ def do_start(cfg, dry_run):
             print(f"[dry-run] {cmd}")
             rc = runner.EXIT_OK
         else:
-            rc, _ = runner.sh(
-                cmd,
-                ok=(runner.EXIT_OK, runner.EXIT_FAIL, runner.EXIT_NOT_CONVERGED,
-                    runner.EXIT_CHECK, runner.EXIT_SKIP),
-            )
+            try:
+                # Let the dispatcher record every child exit, including signals
+                # and shell errors, before stopping the chain.
+                rc, _ = runner.sh(cmd, check=False)
+            except (KeyboardInterrupt, OSError) as e:
+                runner.warn(f"step {name} interrupted: {type(e).__name__}")
+                rc = runner.EXIT_FAIL
         last_rc = rc
         last_name = name
         last_opts = opts
