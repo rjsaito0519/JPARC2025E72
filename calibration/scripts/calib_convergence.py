@@ -11,11 +11,12 @@ States (lib/runner.py exit codes; several groups or runs give the worst,
              written, a person looks (3)
   written    params written; decode again and run once more (2)
   skipped    same apply already reflected in param; nothing written this pass (4)
-  pending    apply planned (before write); not an exit state
+  pending    apply planned (before write); not an exit state; not counted in settle history
 
 `written` must be recorded only after a successful param write. Record `pending` first with
 before=/after= content hashes, then write, then `written`. Idempotency uses apply_key
 (input decode token + correction content hash), not fit ROOT mtime.
+`previous_values` ignores pending so one apply is one measurement for settle.
 """
 import datetime
 import hashlib
@@ -46,13 +47,18 @@ def history_path(run, group, mode, suffix):
 
 #_____________________________________________________________________________
 def previous_values(path, group):
-    """Values of `group` measured since its last converged pass, oldest first."""
+    """Values of `group` measured since its last converged pass, oldest first.
+
+    Journal `pending` lines are ignored; only completed pass states count toward settle.
+    """
     values = []
     if not path.exists():
         return values
     for line in path.read_text().splitlines():
         f = line.split("\t") if "\t" in line else line.split()
         if len(f) >= 4 and f[1] == group:
+            if f[3] == PENDING:
+                continue
             values = [] if f[3] == CONVERGED else values + [float(f[2])]
     return values
 
