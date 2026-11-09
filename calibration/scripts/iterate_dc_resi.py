@@ -8,6 +8,9 @@ Wraps run_dcprm.py resi and, on EXIT_NOT_CONVERGED (2), re-decodes the chamber
 with runmanager/myrun.py --local, then runs resi again. Stops on OK (0), FAIL (1),
 CHECK (3), SKIP (4), or when --max-iter is reached (exits CHECK).
 
+Before the first resi, if the chamber ROOT is missing or calib params are newer than
+the decode (non-interactive stale check), decode once first — do not rely on --force.
+
 Does not create runlists; pass --runlist or use create_runlist's
 runmanager/runlist/<sub>/{bcout|bcin}_runXXXXX.yml.
 """
@@ -15,7 +18,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, decode_run, runner  # noqa: E402
+from common.lib import config, decode_run, input_check, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_DCPRM = SCRIPT_DIR / "run_dcprm.py"
@@ -143,11 +146,21 @@ def main():
 
     if a.dry_run:
         runner.step("iterate_dc_resi dry-run")
+        print(f"[dry-run] preflight: decode if chamber ROOT missing or params newer than decode")
         print(f"[dry-run] {resi_cmd(a.run, a.bcin, a.kaon, a.force)}")
         decode_run.run_decode(runlist, dry_run=True)
         print(f"[dry-run] … repeat resi until exit 0/1/3/4 or max-iter={a.max_iter}")
         runner.info(f"chamber root: {root_mtime_msg(a.run, a.bcin)}")
         sys.exit(runner.EXIT_OK)
+
+    suffix = "K" if a.kaon else "Pi"
+    root = chamber_root(a.run, a.bcin)
+    stale = input_check.stale_params(root, suffix) if root.exists() else []
+    if not root.exists() or stale:
+        reason = "missing" if not root.exists() else ("stale vs " + "; ".join(stale))
+        runner.info(f"preflight decode ({reason})")
+        decode_run.run_decode(runlist)
+        runner.info(f"after preflight decode: {root_mtime_msg(a.run, a.bcin)}")
 
     ok_rc = (runner.EXIT_OK, runner.EXIT_FAIL, runner.EXIT_NOT_CONVERGED,
              runner.EXIT_CHECK, runner.EXIT_SKIP)

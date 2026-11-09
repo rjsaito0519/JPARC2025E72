@@ -2,6 +2,13 @@
 # Usage:
 #   ./calib_dispatch.py start calibration/config/calib_dispatch_example.yml --dry-run
 #   ./calib_dispatch.py status calibration/config/calib_dispatch_example.yml
+#
+# Notes:
+# - After hodo, iterate_dc_resi preflights: if Bc* ROOT is missing or params are newer
+#   than the decode, it decodes once before the first resi (do not rely on force: true).
+# - d5_align assumes BcIn/BcOut t0/drift/resi/reso etc. are already done for this run
+#   (see analyzer docs/d5_beam/D5_CALIBRATION_FLOW.md). For a fresh run, stop after
+#   hodo+dc_resi or finish those stages before enabling d5_align.
 
 run: 3774
 kaon: false

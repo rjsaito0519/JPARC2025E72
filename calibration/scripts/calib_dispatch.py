@@ -8,6 +8,7 @@ Usage:
 Steps: hodo | dc_resi [{bcin: true}] | d5_align
   Optional per-step: allow_skip: true  (continue after EXIT_SKIP)
 State: OUTPUT_DIR/calib/runXXXXX/calib_dispatch_state.json (no stop/resume yet).
+  status=running at step start, stopped on chain halt, finished when all steps done.
 Continue on exit 0; EXIT_SKIP (4) stops unless that step has allow_skip: true.
 Final exit code is runner.worst of executed step codes (so a skip is not erased by a later 0).
 Config: unknown top-level / step keys rejected; kaon/force/step flags are YAML bool only.
@@ -197,7 +198,7 @@ def read_state(run):
 
 
 #_____________________________________________________________________________
-def make_payload(run, index, name, opts, rc, finished, steps_hist):
+def make_payload(run, index, name, opts, rc, finished, steps_hist, status):
     return {
         "run": run,
         "index": index,
@@ -205,6 +206,7 @@ def make_payload(run, index, name, opts, rc, finished, steps_hist):
         "opts": opts,
         "rc": rc,
         "finished": finished,
+        "status": status,
         "steps": steps_hist,
         "updated_at": utc_now(),
     }
@@ -218,7 +220,7 @@ def do_status(cfg):
         sys.exit(runner.EXIT_OK)
     runner.info(
         f"run{cfg['run']:05d}: last step[{st.get('index')}]={st.get('step')} "
-        f"rc={st.get('rc')} finished={st.get('finished')} "
+        f"rc={st.get('rc')} status={st.get('status')} finished={st.get('finished')} "
         f"updated_at={st.get('updated_at')}"
     )
     print(json.dumps(st, indent=2, sort_keys=True))
@@ -240,6 +242,13 @@ def do_start(cfg, dry_run):
         name, opts = normalize_step(raw, i)
         cmd = step_cmd(name, opts, cfg, dry_run)
         runner.step(f"calib_dispatch {i + 1}/{len(cfg['steps'])}: {name}")
+        if not dry_run:
+            write_state(
+                cfg["run"],
+                make_payload(
+                    cfg["run"], i, name, opts, None, False, list(steps_hist), "running",
+                ),
+            )
         if dry_run:
             print(f"[dry-run] {cmd}")
             rc = runner.EXIT_OK
@@ -254,13 +263,15 @@ def do_start(cfg, dry_run):
         last_opts = opts
         last_index = i
         steps_hist.append({"index": i, "step": name, "opts": opts, "rc": rc})
-        if not dry_run:
-            write_state(
-                cfg["run"],
-                make_payload(cfg["run"], i, name, opts, rc, False, steps_hist),
-            )
         runner.info(f"step {name} exit={rc}")
         if not should_continue(rc, opts):
+            if not dry_run:
+                write_state(
+                    cfg["run"],
+                    make_payload(
+                        cfg["run"], i, name, opts, rc, False, steps_hist, "stopped",
+                    ),
+                )
             runner.warn(f"stopping after step {name} (rc={rc})")
             sys.exit(rc)
 
@@ -269,7 +280,8 @@ def do_start(cfg, dry_run):
         write_state(
             cfg["run"],
             make_payload(
-                cfg["run"], last_index, last_name, last_opts, overall_rc, True, steps_hist
+                cfg["run"], last_index, last_name, last_opts, overall_rc, True,
+                steps_hist, "finished",
             ),
         )
     runner.info("calib_dispatch finished")

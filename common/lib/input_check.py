@@ -71,6 +71,26 @@ def _ask(question):
         return False
 
 
+def stale_params(root_path, suffix, keys=CALIB_PARAM_KEYS):
+    """Non-interactive: list of 'KEY: path' strings for calib params newer than the decode.
+
+    Empty list when the ROOT is missing, has no conf, or nothing is newer.
+    Does not check particle mismatch (callers that care use check_input).
+    `suffix` is kept for API symmetry with check_input; unused for mtime comparison.
+    """
+    del suffix
+    root_path = Path(root_path)
+    if not root_path.exists():
+        return []
+    real = root_path.resolve()
+    conf = find_conf_for_root(real)
+    if conf is None or not conf.exists():
+        return []
+    t_root = real.stat().st_mtime
+    return [f"{k}: {p}" for k, p in read_conf_params(conf, keys).items()
+            if p.exists() and p.stat().st_mtime > t_root + 1.0]
+
+
 def check_input(root_path, suffix, force=False, keys=CALIB_PARAM_KEYS):
     """Return True if root_path is fine to calibrate with.
 
@@ -92,9 +112,7 @@ def check_input(root_path, suffix, force=False, keys=CALIB_PARAM_KEYS):
     if conf is None or not conf.exists():
         print(colored(f"[Warning] no runlist entry writes {real}; staleness of the params not checked", "yellow"))
         return True
-    t_root = real.stat().st_mtime
-    newer = [f"{k}: {p}" for k, p in read_conf_params(conf, keys).items()
-             if p.exists() and p.stat().st_mtime > t_root + 1.0]
+    newer = stale_params(real, suffix, keys=keys)
     if not newer:
         return True
     print(colored(f"[Warning] params changed after the decode {real.name} (conf {conf.name}):\n      "
