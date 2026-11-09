@@ -10,5 +10,6 @@
 | `macro_legacy/` | 非 helix の旧 TPC viewer（`check_tpc_track*`） |
 | `macro_manuals/` | evdisp 用 manual PDF/tex/fig |
 | `scripts_compare_bt/` | 旧 beam-through 比較 PDF（`compare_*`；run 表は `common/lib/tpcpos_runs.py`） |
+| `tools/` | 旧トップ `link.sh` / `autopush.sh` / `run_kvc_analysis.sh`（トップの run_*.py symlink は手動で残置） |
 
-生きている補助スクリプトは `analysis/scripts/`（例: `lh2eloss/`、`beam_summary/`）。較正フロントは `calibration/scripts/`。表示は `macro/{evdisp,calib}/`。
+生きている補助スクリプトは `analysis/scripts/`（例: `lh2eloss/`、`beam_summary/`）。較正フロントは `calibration/scripts/`（またはトップの既存 symlink）。表示は `macro/{evdisp,calib}/`。

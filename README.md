@@ -9,10 +9,9 @@ J-PARC E72 の解析で使う較正・解析ツール群。analyzer（k18-analyz
 ```bash
 cp common/lib/paths_example.py common/lib/paths.py
 ./build.sh                             # C++ のツールを bin/ にビルド
-./link.sh                              # 主なスクリプトを最上位にリンク
 ```
 
-Python 共通は `from common.lib import …`（トップに `lib` は置かない）。
+Python 共通は `from common.lib import …`（トップに `lib` は置かない）。較正フロントはトップの既存 symlink（`run_hodo.py` 等）か `calibration/scripts/…` を直接使う。
 
 ## 構成
 
