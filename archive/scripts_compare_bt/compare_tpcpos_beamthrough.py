@@ -28,10 +28,13 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 
+_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_ROOT))
+from lib.tpcpos_runs import RUNS, RunSpec  # noqa: E402
+
 from compare_charge_beamthrough import (
     GEM_SECTIONS,
     RESULTS_IMG,
-    RunSpec,
     RunStats,
     img_dir,
     side_dir,
@@ -43,32 +46,6 @@ from compare_charge_beamthrough import (
 
 DECODE_ON = Path("/group/had/sks/Users/sryuta/JPARC2025E72/root")
 DECODE_OFF = Path("/group/had/sks/Users/sryuta/JPARC2025E72/scratch_root")
-
-# All 22 runs from scratch/dst_tpchelix_02489-02537_22runs_tpcpos0.yml
-RUNS: List[RunSpec] = [
-    RunSpec(2489, -1, 1.000, "pi"),
-    RunSpec(2491, -1, 1.000, "p"),
-    RunSpec(2494, -1, 0.814, "p"),
-    RunSpec(2496, -1, 0.814, "p"),
-    RunSpec(2500, -1, 0.814, "K"),
-    RunSpec(2502, -1, 0.814, "pi"),
-    RunSpec(2504, -1, 0.645, "p"),
-    RunSpec(2506, -1, 0.645, "K"),
-    RunSpec(2508, -1, 0.645, "pi"),
-    RunSpec(2509, -1, 0.645, "pi"),
-    RunSpec(2512, -1, 0.400, "pi"),
-    RunSpec(2514, -1, 0.300, "pi"),
-    RunSpec(2516, +1, 1.000, "pi"),
-    RunSpec(2518, +1, 1.000, "p"),
-    RunSpec(2520, +1, 0.814, "pi"),
-    RunSpec(2522, +1, 0.814, "p"),
-    RunSpec(2524, +1, 0.645, "pi"),
-    RunSpec(2527, +1, 0.645, "p"),
-    RunSpec(2529, +1, 0.400, "pi"),
-    RunSpec(2531, +1, 0.400, "p"),
-    RunSpec(2535, +1, 0.400, "pi"),
-    RunSpec(2537, +1, 0.300, "pi"),
-]
 
 
 def path_on(run: int) -> Path:

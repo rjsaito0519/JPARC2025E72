@@ -34,6 +34,10 @@ from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 import uproot
 
+_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_ROOT))
+from lib.tpcpos_runs import RunSpec  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -60,20 +64,6 @@ BRANCHES = [
 
 # GEM sections used in overlays / summary (exclude boundary = -1)
 GEM_SECTIONS = (1, 2, 3, 4)
-
-
-@dataclass
-class RunSpec:
-    run: int
-    expect_charge: int  # +1 / -1 from run polarity
-    p_beam: float
-    species: str
-    label: str = ""
-
-    def __post_init__(self) -> None:
-        if not self.label:
-            sign = "+" if self.expect_charge > 0 else "-"
-            self.label = f"{self.species}{sign} {self.p_beam:.3f} GeV/c run{self.run:05d}"
 
 
 @dataclass

@@ -1,10 +1,10 @@
 // Figures for docs/htof/manual/htof_tof_manual.tex. Run it inside docs/htof/manual/fig/:
-//   root -l -b -q '<myanalysis>/macro/htof_manual_make_figs.C("<DATA_DIR>", "<calib_root_dir>")'
+//   root -l -b -q '<myanalysis>/macro/calib/htof_manual_make_figs.C("<DATA_DIR>", "<calib_root_dir>")'
 // DATA_DIR: run0XXXX_Hodo.root / run0XXXX_TPCHelixHTOF.root (analyzer outputs);
 // calib_root_dir: run02601_HTOF_{ADC,PHC}_Pi.root (HTOF calibration outputs, for the weak-side and
 // PHC figures). Writes tdc_example.pdf, adc_example.pdf, weak_example.pdf, phc_example.pdf,
 // qa_dtpi_m2.pdf and phc_fit_steps.pdf in the current directory.
-// phc_fit_steps.pdf alone: root -l -b -q -e '.L <myanalysis>/macro/htof_manual_make_figs.C' -e 'make_phcfit_fig("<calib_root_dir>")'
+// phc_fit_steps.pdf alone: root -l -b -q -e '.L <myanalysis>/macro/calib/htof_manual_make_figs.C' -e 'make_phcfit_fig("<calib_root_dir>")'
 #include <TFile.h>
 #include <TTree.h>
 #include <TTreeReader.h>

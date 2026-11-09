@@ -59,13 +59,13 @@ import awkward as ak
 import numpy as np
 import uproot
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "macro"))
-from compare_tpcpos_beamthrough import RUNS  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from lib.tpcpos_runs import RUNS, RunSpec  # noqa: E402
 
 Z_TARGET = -143.0
 SPEC = {r.run: r for r in RUNS}
 HTOF_RUNS = (2601, 2602, 2603, 2604, 2606, 2607)
-HTOF_SPEC = {r: type(RUNS[0])(r, -1, 1.000, "pi") for r in HTOF_RUNS}
+HTOF_SPEC = {r: RunSpec(r, -1, 1.000, "pi") for r in HTOF_RUNS}
 
 
 def mom_window(p_beam: float) -> float:

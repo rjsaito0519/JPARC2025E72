@@ -22,7 +22,7 @@ cp common/lib/paths_example.py common/lib/paths.py   # または cp lib/paths_ex
 | `calibration/src/` | 較正の fit 本体（C++） |
 | `analysis/` | 較正以外の解析・確認用（C++ / Python）。補助スクリプトは `analysis/scripts/<theme>/`（tpcpos, tpc, kpsc, hodo_kvc 等） |
 | `common/` | 共通部品。C++ は `include/`・`src/`、Python は `lib/`（トップの `lib` は symlink） |
-| `macro/` | 表示・手作業用の便利マクロ（evdisp 等）。本番数値は C++/`bin` 優先、次点 Python。**ACLiC しない** |
+| `macro/` | 表示・手作業用。`macro/evdisp/`（helix 3D 等）、`macro/calib/`（検査用 `.C`）。本番数値は C++/`bin` 優先。**ACLiC しない** |
 | `archive/` | 使っていないソースの退避 |
 | `wiki/` | 使い方（GitHub wiki）。手順の正本 |
 | `docs/` | analyzer `docs/` へのポインタのみ（文書は書かない） |

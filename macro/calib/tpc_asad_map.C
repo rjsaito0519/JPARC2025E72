@@ -4,7 +4,7 @@
 //
 // Usage:
 //   root -l
-//   .L macro/tpc_asad_map.C
+//   .L macro/calib/tpc_asad_map.C
 //   tpc_asad_map();
 //   tpc_asad_map_save(); // default: analyzer docs/tpc/tpc_asad_map.pdf (reference figure)
 //   tpc_asad_map_save("results/img/custom.pdf");
