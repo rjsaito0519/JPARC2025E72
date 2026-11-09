@@ -7,6 +7,9 @@ Usage: iterate_hodo_chain.py <run> [--kaon] [--ftof] [--force] [--dry-run]
 Not a convergence loop: Hodo update_param writes once (empty states). This script only
 runs the usual order and re-decodes Hodo after each write so the next fit sees new params.
 
+Continue only on run_hodo EXIT_OK (0). EXIT_FAIL/CHECK/SKIP/NOT_CONVERGED stop the chain
+immediately with that code (do not decode or start the next calibration step).
+
 Does not run htof (needs TPCHelixHTOF regenerate). Does not modify run_hodo.py.
 Hodo runlist: --hodo-runlist or create_runlist's
 runmanager/runlist/<sub>/hodo_runXXXXX.yml.
@@ -120,7 +123,6 @@ def main():
                 print(f"[dry-run] ({label}) {payload}")
         sys.exit(runner.EXIT_OK)
 
-    codes = []
     for i, (label, payload) in enumerate(steps, 1):
         runner.step(f"iterate_hodo_chain {i}/{len(steps)}: {label}")
         if label == "decode":
@@ -128,13 +130,12 @@ def main():
             continue
         rc, _ = runner.sh(payload, ok=OK_DRIVER)
         runner.info(f"run_hodo {label} exit={rc}")
-        if rc == runner.EXIT_FAIL:
-            sys.exit(runner.EXIT_FAIL)
-        codes.append(rc)
+        if rc != runner.EXIT_OK:
+            runner.warn(f"stopping after {label} (rc={rc})")
+            sys.exit(rc)
 
-    final = runner.worst(codes) if codes else runner.EXIT_OK
-    runner.info(f"done: worst exit={final}")
-    sys.exit(final)
+    runner.info("done: all hodo steps EXIT_OK")
+    sys.exit(runner.EXIT_OK)
 
 
 if __name__ == "__main__":
