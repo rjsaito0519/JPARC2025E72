@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
-"""Dispatch existing Hodo / DC / D5 iterate scripts from one compact YAML.
+"""Dispatch Hodo / DC / D5 iterate scripts from one YAML (see wiki Calibration-Automation).
 
 Usage:
   calib_dispatch.py start  <config.yml> [--dry-run]
   calib_dispatch.py status <config.yml>
 
-Steps (known keys only):
-  hodo      → iterate_hodo_chain.py
-  dc_resi   → iterate_dc_resi.py  (bcout default; {bcin: true} for BcIn)
-  d5_align  → iterate_d5_align.py
-
-Writes OUTPUT_DIR/calib/runXXXXX/calib_dispatch_state.json after each step
-(observability only; no stop/resume CLI). Continues only on exit 0 or 4 (SKIP);
-any other code stops the chain.
+Steps: hodo | dc_resi [{bcin: true}] | d5_align
+State: OUTPUT_DIR/calib/runXXXXX/calib_dispatch_state.json (no stop/resume yet).
+Continue on exit 0 or 4 (SKIP); other codes stop the chain.
 """
 import json
 import sys

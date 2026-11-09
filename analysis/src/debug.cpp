@@ -9,7 +9,7 @@
 //
 //   ./bin/debug
 //
-// Backup: analysis/src/unused/debug_residual_bk.cpp
+// Backup: archive/unused_cpp/debug_residual_bk.cpp
 
 #include <TRandom3.h>
 

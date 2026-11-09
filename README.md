@@ -16,13 +16,16 @@ cp lib/paths_example.py lib/paths.py   # analyzer・param・データ置き場�
 
 | パス | 中身 |
 |---|---|
-| `calibration/scripts/` | 較正のフロントエンド（`create_runlist.py`、`set_tdc_window.py`、`run_hodo.py`、`run_dcprm.py`、`run_d5.py`、`run_tpc.py`、`update_param.py` など） |
-| `calibration/tdc_window_web/` | TDC window をブラウザで決めるツール（自分の PC から ssh のトンネル越しに使う。Wiki の TDC-Window） |
+| `calibration/scripts/` | 較正のフロントエンド（`create_runlist.py`、`run_*.py`、`iterate_*.py`、`calib_dispatch.py`、`update_param.py` など） |
+| `calibration/config/` | 例: `calib_dispatch_example.yml` |
+| `calibration/tdc_window_web/` | TDC window をブラウザで決めるツール（Wiki の TDC-Window） |
 | `calibration/src/` | 較正の fit 本体（C++） |
-| `analysis/` | 較正以外の解析・確認用（C++ / Python） |
+| `analysis/` | 較正以外の解析・確認用（C++ / Python）。補助スクリプトは `analysis/scripts/` |
 | `common/` | 共通部品。`common/include/params.h` に fit 範囲のヒントや run 固有の設定 |
-| `lib/` | Python の共通部品（パス、param ファイルの読み書き、入力チェック） |
-| `macro/` | ROOT マクロ・表示用スクリプト |
+| `lib/` | Python 共通（パス、param、入力チェック、`decode_run`） |
+| `macro/` | ROOT マクロ・表示用（**ACLiC しない**；C++ は `build.sh`） |
+| `archive/` | 使っていないソースの退避 |
+| `wiki/` | 使い方（GitHub wiki）。手順の正本 |
 | `bin/`, `results/` | ビルドした実行ファイル、出力（PDF・ROOT） |
 
 ## 較正の基本の形

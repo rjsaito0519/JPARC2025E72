@@ -14,7 +14,7 @@
 //   (particle_id 0=proton 1=pion 2=kaon, exit_id 0=side 1=cap)
 // with the Target* and VesselRadius header keys. Without --split-exit the
 // cap rows repeat the side grid. Several single-particle files are combined
-// into one map with scripts/lh2eloss/merge_lh2_eloss_maps.py.
+// into one map with analysis/scripts/lh2eloss/merge_lh2_eloss_maps.py.
 // --pdg: primary PDG codes used for the map (default 2212).
 // --particle: species written as particle_id (default proton).
 // --pedges: p grid edges [MeV/c] (overrides --pgrid).
