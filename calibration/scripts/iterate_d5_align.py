@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from lib import config, runner  # noqa: E402
+from lib import config, decode_run, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_D5 = SCRIPT_DIR / "run_d5.py"
@@ -95,13 +95,6 @@ def resolve_bcin_runlist(run, explicit, require_exists=True):
         f"bcin runlist not found: {path} "
         f"(create_runlist.py {run} --bcin, or pass --bcin-runlist)"
     )
-
-
-#_____________________________________________________________________________
-def decode_cmd(runlist):
-    # myrun expects cwd = analyzer root; pass an absolute runlist (same as iterate_tpc_calib).
-    path = Path(runlist).expanduser().resolve()
-    return f"cd {config.ANALYZER_DIR} && ./runmanager/myrun.py {path} --local"
 
 
 #_____________________________________________________________________________
@@ -208,12 +201,14 @@ def main():
     if a.dry_run:
         runner.step("iterate_d5_align dry-run")
         print(f"[dry-run] {ref_cmd(a.run, a.kaon)}")
-        print(f"[dry-run] {decode_cmd(p_norm)}")
-        print(f"[dry-run] {decode_cmd(p_tag)}")
+        decode_run.run_decode(p_norm, dry_run=True)
+        decode_run.run_decode(p_tag, dry_run=True)
         print(f"[dry-run] {pos_cmd(a.run, a.kaon, a.tol, a.force)}")
-        print(f"[dry-run] {decode_cmd(bcin_runlist)}   # if pos exit 2")
+        print("[dry-run] (if pos exit 2)")
+        decode_run.run_decode(bcin_runlist, dry_run=True)
         print(f"[dry-run] {resi_cmd(a.run, a.kaon, a.force)}")
-        print(f"[dry-run] {decode_cmd(bcin_runlist)}   # if resi exit 2")
+        print("[dry-run] (if resi exit 2)")
+        decode_run.run_decode(bcin_runlist, dry_run=True)
         print(f"[dry-run] … repeat until pos exit 0/1/3/4 or max-iter={a.max_iter}")
         sys.exit(runner.EXIT_OK)
 
@@ -227,8 +222,8 @@ def main():
         rc, _ = runner.sh(ref_cmd(a.run, a.kaon), ok=(runner.EXIT_OK,))
         runner.info(f"run_d5 ref exit={rc}")
         p_norm, p_tag = require_scratch_runlists(a.run, s, dry_run=False)
-        runner.sh(decode_cmd(p_norm), ok=(runner.EXIT_OK,))
-        runner.sh(decode_cmd(p_tag), ok=(runner.EXIT_OK,))
+        decode_run.run_decode(p_norm)
+        decode_run.run_decode(p_tag)
 
         rc, _ = runner.sh(pos_cmd(a.run, a.kaon, a.tol, a.force), ok=ok_driver)
         last_rc = rc
@@ -242,14 +237,14 @@ def main():
             runner.warn(f"max-iter {a.max_iter} reached after NOT_CONVERGED; stop as CHECK")
             sys.exit(runner.EXIT_CHECK)
 
-        runner.sh(decode_cmd(bcin_runlist), ok=(runner.EXIT_OK,))
+        decode_run.run_decode(bcin_runlist)
         rc_resi, _ = runner.sh(resi_cmd(a.run, a.kaon, a.force), ok=ok_driver)
         action_resi = next_action(rc_resi)
         runner.info(f"run_dcprm resi --bcin exit={rc_resi} → {action_resi}")
         if action_resi in (STOP_FAIL, STOP_CHECK, STOP_SKIP):
             stop_with(action_resi)
         if action_resi == DO_NEXT:
-            runner.sh(decode_cmd(bcin_runlist), ok=(runner.EXIT_OK,))
+            decode_run.run_decode(bcin_runlist)
         # EXIT_OK or after re-decode: continue outer loop with ref
 
     runner.warn("loop ended without terminal state; stop as CHECK")

@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from lib import config, runner  # noqa: E402
+from lib import config, decode_run, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_DCPRM = SCRIPT_DIR / "run_dcprm.py"
@@ -106,13 +106,6 @@ def resi_cmd(run, bcin, kaon, force):
 
 
 #_____________________________________________________________________________
-def decode_cmd(runlist):
-    # myrun expects cwd = analyzer root; pass an absolute runlist (same as iterate_tpc_calib).
-    path = Path(runlist).expanduser().resolve()
-    return f"cd {config.ANALYZER_DIR} && ./runmanager/myrun.py {path} --local"
-
-
-#_____________________________________________________________________________
 def parse_args():
     p = runner.Parser(__doc__)
     p.add_argument("run", type=int)
@@ -151,7 +144,7 @@ def main():
     if a.dry_run:
         runner.step("iterate_dc_resi dry-run")
         print(f"[dry-run] {resi_cmd(a.run, a.bcin, a.kaon, a.force)}")
-        print(f"[dry-run] {decode_cmd(runlist)}")
+        decode_run.run_decode(runlist, dry_run=True)
         print(f"[dry-run] … repeat resi until exit 0/1/3/4 or max-iter={a.max_iter}")
         runner.info(f"chamber root: {root_mtime_msg(a.run, a.bcin)}")
         sys.exit(runner.EXIT_OK)
@@ -186,7 +179,7 @@ def main():
             sys.exit(runner.EXIT_CHECK)
 
         runner.info(f"before decode: {root_mtime_msg(a.run, a.bcin)}")
-        runner.sh(decode_cmd(runlist), ok=(runner.EXIT_OK,))
+        decode_run.run_decode(runlist)
         runner.info(f"after decode: {root_mtime_msg(a.run, a.bcin)}")
 
     runner.warn("loop ended without terminal state; stop as CHECK")

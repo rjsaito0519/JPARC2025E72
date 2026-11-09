@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from lib import config, runner  # noqa: E402
+from lib import config, decode_run, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_HODO = SCRIPT_DIR / "run_hodo.py"
@@ -49,13 +49,6 @@ def resolve_hodo_runlist(run, explicit, require_exists=True):
 
 
 #_____________________________________________________________________________
-def decode_cmd(runlist):
-    # myrun expects cwd = analyzer root; pass an absolute runlist (same as iterate_tpc_calib).
-    path = Path(runlist).expanduser().resolve()
-    return f"cd {config.ANALYZER_DIR} && ./runmanager/myrun.py {path} --local"
-
-
-#_____________________________________________________________________________
 def hodo_cmd(run, mode, kaon, ftof, force):
     parts = ["python3", str(RUN_HODO), str(run), mode]
     if kaon:
@@ -69,15 +62,15 @@ def hodo_cmd(run, mode, kaon, ftof, force):
 
 #_____________________________________________________________________________
 def build_steps(run, runlist, kaon, ftof, force, skip_t0, skip_hdphc):
-    """Ordered (label, cmd) pairs for the chain."""
+    """Ordered (label, payload) pairs: decode payload is the runlist Path."""
     steps = [("hdprm", hodo_cmd(run, "hdprm", kaon, ftof, force)),
-             ("decode", decode_cmd(runlist))]
+             ("decode", runlist)]
     if not skip_t0:
         steps.append(("t0", hodo_cmd(run, "t0", kaon, ftof, force)))
-        steps.append(("decode", decode_cmd(runlist)))
+        steps.append(("decode", runlist))
     if not skip_hdphc:
         steps.append(("hdphc", hodo_cmd(run, "hdphc", kaon, ftof, force)))
-        steps.append(("decode", decode_cmd(runlist)))
+        steps.append(("decode", runlist))
     return steps
 
 
@@ -120,17 +113,20 @@ def main():
 
     if a.dry_run:
         runner.step("iterate_hodo_chain dry-run")
-        for label, cmd in steps:
-            print(f"[dry-run] ({label}) {cmd}")
+        for label, payload in steps:
+            if label == "decode":
+                decode_run.run_decode(payload, dry_run=True)
+            else:
+                print(f"[dry-run] ({label}) {payload}")
         sys.exit(runner.EXIT_OK)
 
     codes = []
-    for i, (label, cmd) in enumerate(steps, 1):
+    for i, (label, payload) in enumerate(steps, 1):
         runner.step(f"iterate_hodo_chain {i}/{len(steps)}: {label}")
         if label == "decode":
-            runner.sh(cmd, ok=(runner.EXIT_OK,))
+            decode_run.run_decode(payload)
             continue
-        rc, _ = runner.sh(cmd, ok=OK_DRIVER)
+        rc, _ = runner.sh(payload, ok=OK_DRIVER)
         runner.info(f"run_hodo {label} exit={rc}")
         if rc == runner.EXIT_FAIL:
             sys.exit(runner.EXIT_FAIL)
