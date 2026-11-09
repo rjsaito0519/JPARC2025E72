@@ -163,17 +163,22 @@ def details_with_fit(fit_tok, param_path=None, extra=""):
     return " ".join(parts)
 
 
-#_____________________________________________________________________________
-def already_applied(hist_path, group, apply_key, param_path):
-    """True when param_path already reflects a successful apply for apply_key.
+APPLY_DONE = "done"
+APPLY_NEEDED = "needed"
+APPLY_MISMATCH = "mismatch"
 
-    New journal: look for apply=<apply_key> with pending/written and content hashes.
-    Legacy lines with fit=<token> and param_mtime= keep the old mtime rule.
+
+#_____________________________________________________________________________
+def apply_status(hist_path, group, apply_key, param_path):
+    """How param_path relates to the newest journal entry for apply_key.
+
+    Returns APPLY_DONE, APPLY_NEEDED, or APPLY_MISMATCH (content matches neither
+    before nor after hashes — do not treat as successfully applied).
     """
     hist_path = Path(hist_path)
     param_path = Path(param_path)
     if not hist_path.exists() or not param_path.exists():
-        return False
+        return APPLY_NEEDED
     current = file_sha256(param_path)
     for line in reversed(hist_path.read_text().splitlines()):
         if not line.strip():
@@ -188,29 +193,36 @@ def already_applied(hist_path, group, apply_key, param_path):
             before = dm.get("before")
             after = dm.get("after")
             if state == WRITTEN and after is not None:
-                return after == current
+                return APPLY_DONE if after == current else APPLY_NEEDED
             if state == PENDING:
                 if before is not None and before == current:
-                    return False
-                if before is not None and before != current:
-                    return True
+                    return APPLY_NEEDED
                 if after is not None and after == current:
-                    return True
-                return False
+                    return APPLY_DONE
+                return APPLY_MISMATCH
             if state == WRITTEN and after is None and before is not None:
-                return before != current
+                if before == current:
+                    return APPLY_NEEDED
+                return APPLY_MISMATCH
             continue
-        # Legacy: fit=<token> + optional param_mtime=
         if dm.get("fit") != apply_key or state != WRITTEN:
             continue
         if "param_mtime" not in dm:
-            return True
+            return APPLY_DONE
         try:
             pm = int(dm["param_mtime"])
         except ValueError:
-            return True
-        return param_path.stat().st_mtime_ns >= pm
-    return False
+            return APPLY_DONE
+        return (
+            APPLY_DONE if param_path.stat().st_mtime_ns >= pm else APPLY_NEEDED
+        )
+    return APPLY_NEEDED
+
+
+#_____________________________________________________________________________
+def already_applied(hist_path, group, apply_key, param_path):
+    """True only when apply_status is APPLY_DONE."""
+    return apply_status(hist_path, group, apply_key, param_path) == APPLY_DONE
 
 
 #_____________________________________________________________________________

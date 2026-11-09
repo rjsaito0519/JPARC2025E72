@@ -254,10 +254,17 @@ def judge_pos(run, r, s, tol):
     r["apply_key"] = apply_key
     r["hist_path"] = path
     r["details_extra"] = extra
-    if state == conv.WRITTEN and conv.already_applied(path, "BLC1", apply_key, dcgeo_path(run, s)):
-        runner.warn(f"{run_tag(run)} pos: same decode+correction already applied; not writing again")
-        state = conv.SKIPPED
-    elif state in (conv.CONVERGED, conv.SETTLED):
+    if state == conv.WRITTEN:
+        st = conv.apply_status(path, "BLC1", apply_key, dcgeo_path(run, s))
+        if st == conv.APPLY_DONE:
+            runner.warn(f"{run_tag(run)} pos: same decode+correction already applied; not writing again")
+            state = conv.SKIPPED
+        elif st == conv.APPLY_MISMATCH:
+            runner.fail(
+                f"{run_tag(run)} pos: DCGEO matches neither before nor after hash for this apply "
+                f"(apply={apply_key}); inspect {path} and {dcgeo_path(run, s)}"
+            )
+    if state in (conv.CONVERGED, conv.SETTLED):
         conv.record(path, "BLC1", score, state,
                     conv.details_with_apply(apply_key, extra=extra))
     return state

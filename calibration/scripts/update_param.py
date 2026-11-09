@@ -245,10 +245,17 @@ def collect_residual(a, pf):
     state = conv.decide_at(hist, a.blc, max_corr, max_corr < RESI_CONV_MM,
                            lambda prev, new: new > RESI_IMPROVE * prev)
     report_residual(corr, {k: float(v[1]) for k, v in fit.items()}, state)
-    if state == conv.WRITTEN and conv.already_applied(hist, a.blc, apply_key, pf.path):
-        runner.warn(f"{a.blc} resi: same decode+correction already applied; not writing again "
-                    "(decode and refit before another residual pass)")
-        return {}, [conv.SKIPPED], []
+    if state == conv.WRITTEN:
+        st = conv.apply_status(hist, a.blc, apply_key, pf.path)
+        if st == conv.APPLY_DONE:
+            runner.warn(f"{a.blc} resi: same decode+correction already applied; not writing again "
+                        "(decode and refit before another residual pass)")
+            return {}, [conv.SKIPPED], []
+        if st == conv.APPLY_MISMATCH:
+            runner.fail(
+                f"{a.blc} resi: param content matches neither before nor after hash for this apply "
+                f"(apply={apply_key}); inspect {hist} and {pf.path}"
+            )
     if state in (conv.CONVERGED, conv.SETTLED):
         conv.record(hist, a.blc, max_corr, state, conv.details_with_apply(apply_key))
         return {}, [state], []
@@ -374,11 +381,18 @@ def collect_resolution(a, pf):
         corr = {k: res_new for k in keys} if state == conv.WRITTEN else {"p": p, "group": group}
         apply_key = conv.make_apply_key(decode_tok, conv.corr_token(corr))
         report_resolution(group, p, chi2, state, r0, res_new)
-        if state == conv.WRITTEN and conv.already_applied(hist, group, apply_key, pf.path):
-            runner.warn(f"{group} reso: same decode+correction already applied; not writing again "
-                        "(decode and refit before another resolution pass)")
-            states.append(conv.SKIPPED)
-            continue
+        if state == conv.WRITTEN:
+            st = conv.apply_status(hist, group, apply_key, pf.path)
+            if st == conv.APPLY_DONE:
+                runner.warn(f"{group} reso: same decode+correction already applied; not writing again "
+                            "(decode and refit before another resolution pass)")
+                states.append(conv.SKIPPED)
+                continue
+            if st == conv.APPLY_MISMATCH:
+                runner.fail(
+                    f"{group} reso: param content matches neither before nor after hash for this apply "
+                    f"(apply={apply_key}); inspect {hist} and {pf.path}"
+                )
         if state == conv.WRITTEN:
             data.update({k: [f"{res_new:.6g}"] for k in keys})
             pending.append({"path": hist, "group": group, "value": p, "state": conv.WRITTEN,
