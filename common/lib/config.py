@@ -5,7 +5,10 @@ try:
     from .paths import (ANALYZER_DIR, PARAM_DIR, DATA_DIR, OUTPUT_DIR, SCRATCH_DIR, DECODE_DIR,
                         BACKUP_DIR, WORK_DIR)
 except ImportError:
-    raise ImportError("lib/paths.py not found. Please copy lib/paths_example.py to lib/paths.py and configure it.")
+    raise ImportError(
+        "common/lib/paths.py not found. "
+        "Copy common/lib/paths_example.py to common/lib/paths.py (or run init_setup.sh) and configure it."
+    )
 
 # Subdirectories
 SUB_DIR = "e72"
