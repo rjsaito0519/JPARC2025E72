@@ -13,6 +13,8 @@ cp common/lib/paths_example.py common/lib/paths.py
 
 Python 共通は `from common.lib import …`（トップに `lib` は置かない）。較正フロントはトップの既存 symlink（`run_hodo.py` 等）か `calibration/scripts/…` を直接使う。
 
+ローカル用 symlink（gitignore）: `group_root` → グループデータ領域、`param` → analyzer の `submodule/param`（コード上の正は `PARAM_DIR`）。
+
 ## 構成
 
 | パス | 中身 |
@@ -26,7 +28,6 @@ Python 共通は `from common.lib import …`（トップに `lib` は置かな�
 | `macro/` | 表示・手作業用。`macro/evdisp/`（helix 3D 等）、`macro/calib/`（検査用 `.C`）。本番数値は C++/`bin` 優先。**ACLiC しない** |
 | `archive/` | 使っていないソースの退避 |
 | `wiki/` | 使い方（GitHub wiki）。手順の正本 |
-| `docs/` | analyzer `docs/` へのポインタのみ（文書は書かない） |
 | `bin/`, `results/` | ビルドした実行ファイル、出力（PDF・ROOT） |
 
 ## 較正の基本の形

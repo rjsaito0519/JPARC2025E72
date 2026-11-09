@@ -21,7 +21,7 @@ common/include/paths.h
 results/root/
 results/img/
 data/
-root
+group_root
 param
 
 # Temporary files
@@ -29,9 +29,6 @@ param
 *~
 .DS_Store
 
-docs/**
-!docs/
-!docs/README.md
 results
 *.root
 wiki/
