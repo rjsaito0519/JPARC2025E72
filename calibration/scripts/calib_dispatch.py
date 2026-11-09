@@ -10,6 +10,7 @@ Steps: hodo | dc_resi [{bcin: true}] | d5_align
 State: OUTPUT_DIR/calib/runXXXXX/calib_dispatch_state.json (no stop/resume yet).
 Continue on exit 0; EXIT_SKIP (4) stops unless that step has allow_skip: true.
 Final exit code is runner.worst of executed step codes (so a skip is not erased by a later 0).
+Config: unknown top-level / step keys rejected; kaon/force/step flags are YAML bool only.
 """
 import json
 import sys
@@ -23,7 +24,19 @@ from common.lib import config, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 KNOWN_STEPS = ("hodo", "dc_resi", "d5_align")
-KNOWN_OPTS = {"bcin", "skip_t0", "skip_hdphc", "ftof", "allow_skip"}
+KNOWN_TOP_KEYS = frozenset({"run", "kaon", "force", "max_iter", "steps"})
+# Options that apply to a given step (allow_skip is common).
+STEP_OPTS = {
+    "hodo": frozenset({"skip_t0", "skip_hdphc", "ftof", "allow_skip"}),
+    "dc_resi": frozenset({"bcin", "allow_skip"}),
+    "d5_align": frozenset({"allow_skip"}),
+}
+BOOL_STEP_OPTS = frozenset({
+    "bcin", "skip_t0", "skip_hdphc", "ftof", "allow_skip",
+})
+MAX_ITER_MIN = 1
+MAX_ITER_MAX = 100
+RUN_MIN = 1
 
 
 #_____________________________________________________________________________
@@ -38,9 +51,19 @@ def utc_now():
 
 #_____________________________________________________________________________
 def require_bool(value, where):
-    """Accept only a YAML bool (not a string)."""
+    """Accept only a YAML bool (not a string or int)."""
     if not isinstance(value, bool):
         runner.fail(f"{where}: must be a YAML bool, got {value!r}")
+    return value
+
+
+#_____________________________________________________________________________
+def require_int(value, where, lo, hi):
+    """Accept an int in [lo, hi] (reject bool; YAML bool is a subclass of int)."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        runner.fail(f"{where}: must be an int, got {value!r}")
+    if value < lo or value > hi:
+        runner.fail(f"{where}: must be in [{lo}, {hi}], got {value}")
     return value
 
 
@@ -54,20 +77,29 @@ def load_config(path):
     doc = yaml.safe_load(path.read_text())
     if not isinstance(doc, dict):
         runner.fail(f"config must be a mapping: {path}")
+    unknown = sorted(set(doc) - KNOWN_TOP_KEYS)
+    if unknown:
+        runner.fail(f"config unknown key(s): {unknown}")
     if "run" not in doc:
         runner.fail("config missing required key: run")
-    try:
-        run = int(doc["run"])
-    except (TypeError, ValueError):
-        runner.fail(f"config run must be int: {doc.get('run')!r}")
+    run = require_int(doc["run"], "config run", RUN_MIN, 10**9)
     steps = doc.get("steps")
     if not isinstance(steps, list) or not steps:
         runner.fail("config steps must be a non-empty list")
+    kaon = False
+    if "kaon" in doc:
+        kaon = require_bool(doc["kaon"], "config kaon")
+    force = False
+    if "force" in doc:
+        force = require_bool(doc["force"], "config force")
+    max_iter = 10
+    if "max_iter" in doc:
+        max_iter = require_int(doc["max_iter"], "config max_iter", MAX_ITER_MIN, MAX_ITER_MAX)
     return path, {
         "run": run,
-        "kaon": bool(doc.get("kaon", False)),
-        "force": bool(doc.get("force", False)),
-        "max_iter": int(doc.get("max_iter", 10)),
+        "kaon": kaon,
+        "force": force,
+        "max_iter": max_iter,
         "steps": steps,
     }
 
@@ -87,8 +119,16 @@ def normalize_step(raw, index):
         runner.fail(f"steps[{index}]: expected string or single-key mapping, got {raw!r}")
     if name not in KNOWN_STEPS:
         runner.fail(f"steps[{index}]: unknown step {name!r} (known: {', '.join(KNOWN_STEPS)})")
-    if "allow_skip" in opts:
-        require_bool(opts["allow_skip"], f"steps[{index}].allow_skip")
+    allowed = STEP_OPTS[name]
+    unknown = sorted(set(opts) - allowed)
+    if unknown:
+        runner.fail(
+            f"steps[{index}] ({name}): option(s) not allowed here: {unknown} "
+            f"(allowed: {sorted(allowed)})"
+        )
+    for key, value in opts.items():
+        if key in BOOL_STEP_OPTS:
+            require_bool(value, f"steps[{index}].{key}")
     return name, opts
 
 
@@ -133,10 +173,6 @@ def step_cmd(name, opts, cfg, dry_run):
         parts.append("--force")
     if dry_run:
         parts.append("--dry-run")
-
-    unknown = set(opts) - KNOWN_OPTS
-    if unknown:
-        runner.fail(f"step {name}: unknown option(s) {sorted(unknown)}")
     return " ".join(parts)
 
 
@@ -256,8 +292,7 @@ def main():
     _, cfg = load_config(a.config)
     # Validate all steps up front (fail before running anything).
     for i, raw in enumerate(cfg["steps"]):
-        name, opts = normalize_step(raw, i)
-        step_cmd(name, opts, cfg, dry_run=True)
+        normalize_step(raw, i)
     if a.command == "status":
         if a.dry_run:
             runner.warn("--dry-run ignored for status")
