@@ -1,0 +1,14 @@
+# Example calib_dispatch config (one run, Hodo → BcOut resi → D5).
+# Usage:
+#   ./calib_dispatch.py start calibration/config/calib_dispatch_example.yml --dry-run
+#   ./calib_dispatch.py status calibration/config/calib_dispatch_example.yml
+
+run: 3774
+kaon: false
+force: false
+max_iter: 10
+steps:
+  - hodo
+  - dc_resi                 # BcOut (default)
+  # - dc_resi: {bcin: true}
+  - d5_align
