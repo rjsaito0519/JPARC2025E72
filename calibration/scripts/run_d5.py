@@ -231,9 +231,15 @@ def pos_hist_path(run, s):
     return config.OUTPUT_DIR / "calib" / run_tag(run) / f"d5_pos_{s}.txt"
 
 
-def pos_fit_token(run, s):
-    """Id of the D5 inputs used for this measurement (normal + BLC2-referenced)."""
-    return conv.fit_token(d5_root(run, s)) + "+" + conv.fit_token(d5_root(run, s, TAG))
+def pos_apply_key(run, r, s):
+    """apply_key from D5 input ROOTs + planned BLC1 Ofs corrections."""
+    inp = (conv.input_token(d5_root(run, s)) + "+"
+           + conv.input_token(d5_root(run, s, TAG)))
+    corr = {
+        "BLC1a": [float(r["s"]), float(r["dy_a"])],
+        "BLC1b": [float(-r["s"]), float(r["dy_b"])],
+    }
+    return conv.make_apply_key(inp, conv.corr_token(corr))
 
 
 def judge_pos(run, r, s, tol):
@@ -243,16 +249,17 @@ def judge_pos(run, r, s, tol):
     score = pos_score(r, tol)
     state = conv.decide_at(path, "BLC1", score, score < 1.0,
                            lambda prev, new: new > POS_IMPROVE * prev)
-    fit_tok = pos_fit_token(run, s)
+    apply_key = pos_apply_key(run, r, s)
     r["score"] = score
-    r["fit_token"] = fit_tok
+    r["apply_key"] = apply_key
     r["hist_path"] = path
     r["details_extra"] = extra
-    if state == conv.WRITTEN and conv.already_applied(path, "BLC1", fit_tok, dcgeo_path(run, s)):
-        runner.warn(f"{run_tag(run)} pos: measurement inputs already applied; not writing again")
+    if state == conv.WRITTEN and conv.already_applied(path, "BLC1", apply_key, dcgeo_path(run, s)):
+        runner.warn(f"{run_tag(run)} pos: same decode+correction already applied; not writing again")
         state = conv.SKIPPED
     elif state in (conv.CONVERGED, conv.SETTLED):
-        conv.record(path, "BLC1", score, state, conv.details_with_fit(fit_tok, extra=extra))
+        conv.record(path, "BLC1", score, state,
+                    conv.details_with_apply(apply_key, extra=extra))
     return state
 
 
@@ -325,10 +332,19 @@ def do_pos(args, s):
     written = [run for run, r in rows.items() if r["state"] == conv.WRITTEN]
     for run in written:
         r = rows[run]
+        geo = dcgeo_path(run, s)
+        before = conv.file_sha256(geo)
+        conv.record(
+            r["hist_path"], "BLC1", r["score"], conv.PENDING,
+            conv.details_with_apply(r["apply_key"], before=before, extra=r["details_extra"]),
+        )
         write_ofs(run, r, s)
+        after = conv.file_sha256(geo)
         conv.record(
             r["hist_path"], "BLC1", r["score"], conv.WRITTEN,
-            conv.details_with_fit(r["fit_token"], param_path=dcgeo_path(run, s), extra=r["details_extra"]),
+            conv.details_with_apply(
+                r["apply_key"], before=before, after=after, extra=r["details_extra"],
+            ),
         )
     if written:
         rl = " ".join(map(str, written))

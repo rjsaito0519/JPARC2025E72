@@ -94,19 +94,23 @@ class ParamFile:
                     updated_count += 1
         return updated_count
 
+    def serialized_text(self):
+        """Same byte layout as write(), without touching the file (for content hashing)."""
+        lines = []
+        for is_comment, parts in self.records:
+            if is_comment:
+                lines.append(parts[0] + "\n")
+            else:
+                lines.append("\t".join(parts) + "\n")
+        return "".join(lines)
+
     def write(self, target_path: Path = None):
         """Write records back to file."""
         if target_path is None:
             target_path = self.path
         backup_file(target_path)
         with open(target_path, 'w') as f:
-            for is_comment, parts in self.records:
-                if is_comment:
-                    # parts[0] is the raw line text for comments
-                    f.write(parts[0] + "\n")
-                else:
-                    # Use tabs for data lines as expected by some scripts
-                    f.write("\t".join(parts) + "\n")
+            f.write(self.serialized_text())
 
     @staticmethod
     def create_from_template(template_path: Path, target_path: Path):

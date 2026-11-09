@@ -226,9 +226,10 @@ def report_residual(corr, sigma, state):
 def collect_residual(a, pf):
     """New Ofs = current Ofs + correction (BLC_residual, relative to plane U1a).
 
-    Returns (data, states, pending_records). pending_records are recorded after a successful write.
+    Returns (data, states, pending_records). Journal pending/written is recorded around the write.
     """
-    path = fresh_outputs(a.run, [(a.blc, a.blc, "residual", a.suffix)], [decode(a.run, a.chamber)],
+    decode_path = decode(a.run, a.chamber)
+    path = fresh_outputs(a.run, [(a.blc, a.blc, "residual", a.suffix)], [decode_path],
                          required=True)[a.blc]
     fit = update_residual.make_dictdata(str(path))
     current = pf.get_data_dict(key_len=1)
@@ -240,21 +241,21 @@ def collect_residual(a, pf):
     ok(f"{a.chamber} Residuals", len(corr), " (Additive Update)")
     max_corr = max(abs(c) for c in corr.values())
     hist = conv.history_path(a.run, a.blc, "resi", a.suffix)
-    fit_tok = conv.fit_token(path)
+    apply_key = conv.make_apply_key(conv.input_token(decode_path), conv.corr_token(corr))
     state = conv.decide_at(hist, a.blc, max_corr, max_corr < RESI_CONV_MM,
                            lambda prev, new: new > RESI_IMPROVE * prev)
     report_residual(corr, {k: float(v[1]) for k, v in fit.items()}, state)
-    if state == conv.WRITTEN and conv.already_applied(hist, a.blc, fit_tok, pf.path):
-        runner.warn(f"{a.blc} resi: fit {path.name} already applied; not writing again "
+    if state == conv.WRITTEN and conv.already_applied(hist, a.blc, apply_key, pf.path):
+        runner.warn(f"{a.blc} resi: same decode+correction already applied; not writing again "
                     "(decode and refit before another residual pass)")
         return {}, [conv.SKIPPED], []
     if state in (conv.CONVERGED, conv.SETTLED):
-        conv.record(hist, a.blc, max_corr, state, conv.details_with_fit(fit_tok))
+        conv.record(hist, a.blc, max_corr, state, conv.details_with_apply(apply_key))
         return {}, [state], []
     if state != conv.WRITTEN:
         return {}, [state], []
     pending = [{"path": hist, "group": a.blc, "value": max_corr, "state": conv.WRITTEN,
-                "fit_token": fit_tok}]
+                "apply_key": apply_key}]
     return {k: [float(current[k][col]) + c] for k, c in corr.items()}, [state], pending
 
 
@@ -346,27 +347,23 @@ def report_resolution(group, p, chi2, state, r0, res_new, invalid=False):
 def collect_resolution(a, pf):
     """Per group: decide p; if still moving, every layer gets Res_new = p * mean(current Res of the group).
 
-    Returns (data, states, pending_records). WRITTEN history lines are recorded after a successful write.
+    Returns (data, states, pending_records). Journal pending/written is recorded around the write.
     """
     current = pf.get_data_dict(key_len=1)
     col = CATEGORIES["resolution"]["start_col"] - 1
     data, states, pending = {}, [], []
+    tags = ["BcIn", "BcOut"] if a.all else [a.chamber]
+    decode_tok = "+".join(conv.input_token(decode(a.run, t)) for t in tags)
     for group, p, chi2, fit_ok in pull_groups(a):
         if not pull_width_ok(p, fit_ok):
             states.append(conv.SETTLED)
             report_resolution(group, p, chi2, conv.SETTLED, None, None, invalid=True)
             continue
         hist = conv.history_path(a.run, group, "reso", a.suffix)
-        if group == "ALL":
-            fit_tok = "+".join(conv.fit_token(fit_output(a.run, b, "pull", a.suffix)) for b in ("BLC1", "BLC2"))
-        else:
-            blc = "BLC1" if group.startswith("BLC1") else "BLC2" if group.startswith("BLC2") else a.blc
-            fit_tok = conv.fit_token(fit_output(a.run, blc, "pull", a.suffix))
-            if group[-1] in "ab" and len(group) > 4:
-                fit_tok = f"{fit_tok}:{group[-1]}"
         state = conv.decide_at(hist, group, p, abs(p - 1.0) < RES_CONV,
                                lambda prev, new: abs(new - prev) < RES_STABLE_DP)
         r0 = res_new = None
+        keys = []
         if state == conv.WRITTEN:
             keys = [str(i) for i in RES_GROUPS[group]]
             missing = [k for k in keys if k not in current]
@@ -374,18 +371,20 @@ def collect_resolution(a, pf):
                 runner.fail(f"DCGEO has no Ids {missing} of {group}")
             r0 = float(np.mean([float(current[k][col]) for k in keys]))
             res_new = p * r0
+        corr = {k: res_new for k in keys} if state == conv.WRITTEN else {"p": p, "group": group}
+        apply_key = conv.make_apply_key(decode_tok, conv.corr_token(corr))
         report_resolution(group, p, chi2, state, r0, res_new)
-        if state == conv.WRITTEN and conv.already_applied(hist, group, fit_tok, pf.path):
-            runner.warn(f"{group} reso: fit already applied; not writing again "
+        if state == conv.WRITTEN and conv.already_applied(hist, group, apply_key, pf.path):
+            runner.warn(f"{group} reso: same decode+correction already applied; not writing again "
                         "(decode and refit before another resolution pass)")
             states.append(conv.SKIPPED)
             continue
         if state == conv.WRITTEN:
             data.update({k: [f"{res_new:.6g}"] for k in keys})
             pending.append({"path": hist, "group": group, "value": p, "state": conv.WRITTEN,
-                            "fit_token": fit_tok})
+                            "apply_key": apply_key})
         elif state in (conv.CONVERGED, conv.SETTLED):
-            conv.record(hist, group, p, state, conv.details_with_fit(fit_tok))
+            conv.record(hist, group, p, state, conv.details_with_apply(apply_key))
         states.append(state)
     return data, states, pending
 
@@ -435,13 +434,25 @@ def main():
             if duplicates:
                 parts.append(f"duplicate keys: {duplicates}")
             runner.fail("nothing written (" + "; ".join(parts) + ")")
+        before = conv.file_sha256(target)
         n = pf.update(data, key_len=cat["key_len"], start_col=cat["start_col"])
         if n != len(data):
             runner.fail(f"nothing written (updated {n} rows, expected {len(data)})")
-        pf.write()
+        after = conv.sha256_hex(pf.serialized_text())
         for rec in pending:
-            conv.record(rec["path"], rec["group"], rec["value"], rec["state"],
-                        conv.details_with_fit(rec["fit_token"], param_path=target))
+            key = rec.get("apply_key") or rec.get("fit_token")
+            conv.record(
+                rec["path"], rec["group"], rec["value"], conv.PENDING,
+                conv.details_with_apply(key, before=before, after=after),
+            )
+        pf.write()
+        after_disk = conv.file_sha256(target)
+        for rec in pending:
+            key = rec.get("apply_key") or rec.get("fit_token")
+            conv.record(
+                rec["path"], rec["group"], rec["value"], conv.WRITTEN,
+                conv.details_with_apply(key, before=before, after=after_disk),
+            )
         print(colored(f"\n[SUCCESS] Updated {n} entries total for Run {a.run} {a.suffix}", "green", attrs=["bold"]))
         print(f"File: {target.relative_to(config.ANALYZER_DIR)}\n")
     elif not states:
