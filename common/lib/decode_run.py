@@ -2,7 +2,9 @@
 
 myrun can exit 0 even when runs FAILED. Iterators must not treat process exit
 alone as success. Mirrors the idea of iterate_tpc_calib's stat / mtime checks,
-without polling (callers run myrun in the foreground with --local).
+without polling (callers wait for myrun to finish, then verify).
+
+Default is bsub (no --local). Pass local=True for work-server --local mode.
 """
 import json
 import time
@@ -17,10 +19,11 @@ STAT_DIR = config.ANALYZER_DIR / "runmanager" / "stat"
 
 
 #_____________________________________________________________________________
-def decode_cmd(runlist):
+def decode_cmd(runlist, *, local=False):
     """Shell command: cd analyzer root and run myrun with an absolute runlist."""
     path = Path(runlist).expanduser().resolve()
-    return f"cd {config.ANALYZER_DIR} && ./runmanager/myrun.py {path} --local"
+    local_arg = " --local" if local else ""
+    return f"cd {config.ANALYZER_DIR} && ./runmanager/myrun.py {path}{local_arg}"
 
 
 #_____________________________________________________________________________
@@ -140,10 +143,10 @@ def verify_decode(yml, t0, myrun_rc=0):
 
 
 #_____________________________________________________________________________
-def run_decode(runlist, *, dry_run=False):
-    """Run myrun --local and verify stat DONE + fresh roots. dry_run: print only."""
+def run_decode(runlist, *, dry_run=False, local=False):
+    """Run myrun and verify stat DONE + fresh roots. dry_run: print only."""
     yml = Path(runlist).expanduser().resolve()
-    cmd = decode_cmd(yml)
+    cmd = decode_cmd(yml, local=local)
     if dry_run:
         print(f"[dry-run] {cmd}")
         return runner.EXIT_OK

@@ -41,7 +41,7 @@ from common.lib import calib_approval, config, runner  # noqa: E402
 SCRIPT_DIR = Path(__file__).resolve().parent
 KNOWN_STEPS = ("hodo", "dc_resi", "dc_chamber", "d5_align")
 KNOWN_TOP_KEYS = frozenset({
-    "run", "kaon", "calib_particle", "force", "max_iter", "steps",
+    "run", "kaon", "calib_particle", "force", "max_iter", "steps", "local",
     "target", "momentum_gev_c", "momentum_source",
     "beam_particle", "beam_particle_source", "charge", "charge_source",
     "created_at", "table_updated",
@@ -143,6 +143,9 @@ def load_config(path):
     force = False
     if "force" in doc:
         force = require_bool(doc["force"], "config force")
+    local = False
+    if "local" in doc:
+        local = require_bool(doc["local"], "config local")
     max_iter = 10
     if "max_iter" in doc:
         max_iter = require_int(doc["max_iter"], "config max_iter", MAX_ITER_MIN, MAX_ITER_MAX)
@@ -152,6 +155,7 @@ def load_config(path):
         "run": run,
         "kaon": kaon,
         "force": force,
+        "local": local,
         "max_iter": max_iter,
         "steps": steps,
         "session": meta,
@@ -325,6 +329,8 @@ def step_cmd(name, opts, cfg, dry_run):
         parts.append("--kaon")
     if cfg["force"]:
         parts.append("--force")
+    if cfg.get("local"):
+        parts.append("--local")
     if dry_run:
         parts.append("--dry-run")
     return " ".join(parts)
@@ -388,6 +394,7 @@ def plan_of(cfg):
         "calib_particle": str(calib_particle),
         "force": bool(cfg["force"]),
         "kaon": bool(cfg["kaon"]),
+        "local": bool(cfg.get("local")),
         "max_iter": int(cfg["max_iter"]),
         "steps": steps,
     }
@@ -415,6 +422,8 @@ def require_resume_plan(cfg, st):
             f"run{cfg['run']:05d}: state has no plan fingerprint; "
             f"use start (not resume)"
         )
+    if isinstance(saved, dict) and "local" not in saved:
+        saved = {**saved, "local": False}
     if plans_match(saved, current):
         return
     bits = []
@@ -426,6 +435,8 @@ def require_resume_plan(cfg, st):
         )
     if saved.get("force") != current.get("force"):
         bits.append(f"force {saved.get('force')!r} -> {current.get('force')!r}")
+    if saved.get("local") != current.get("local"):
+        bits.append(f"local {saved.get('local')!r} -> {current.get('local')!r}")
     if saved.get("max_iter") != current.get("max_iter"):
         bits.append(f"max_iter {saved.get('max_iter')!r} -> {current.get('max_iter')!r}")
     saved_steps = [e.get("name") for e in (saved.get("steps") or [])]
@@ -633,9 +644,7 @@ def do_stop(cfg):
 
 #_____________________________________________________________________________
 def do_hold(cfg, reason):
-    reason = (reason or "").strip()
-    if not reason:
-        runner.fail("hold requires --reason TEXT")
+    reason = (reason or "").strip() or "(unspecified)"
     st = read_state(cfg["run"])
     if st is None:
         runner.fail(f"run{cfg['run']:05d}: not started; cannot hold")
@@ -1117,6 +1126,10 @@ def parse_args():
 
 #_____________________________________________________________________________
 def main():
+    runner.warn(
+        "prefer ./calib.py <run> to launch and ./ops.py for state "
+        "(calib_dispatch is compat)"
+    )
     a = parse_args()
     _, cfg = load_config(a.config)
     # Validate all steps up front (fail before running anything).

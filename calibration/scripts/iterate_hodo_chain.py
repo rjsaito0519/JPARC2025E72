@@ -108,6 +108,8 @@ def parse_args():
                    help="auto (min CBTOF width) or 1-based round index to keep")
     p.add_argument("--skip-hdphc-adopt", action="store_true",
                    help="leave the last hdphc write as-is (no restore/final decode)")
+    p.add_argument("--local", action="store_true",
+                   help="myrun --local (default: bsub)")
     return p.parse_args()
 
 
@@ -140,22 +142,24 @@ def main():
         + (" --skip-t0" if a.skip_t0 else "")
         + (" --skip-hdphc" if a.skip_hdphc else "")
         + (" --skip-hdphc-adopt" if a.skip_hdphc_adopt else "")
+        + (" --local" if a.local else "")
         + (" dry-run" if a.dry_run else "")
     )
 
     if a.dry_run:
         runner.step("iterate_hodo_chain dry-run")
         print(f"[dry-run] {hodo_cmd(a.run, 'hdprm', a.kaon, a.ftof, a.force)}")
-        print(f"[dry-run] decode {runlist}")
+        decode_run.run_decode(runlist, dry_run=True, local=a.local)
         if not a.skip_t0:
             print(f"[dry-run] {hodo_cmd(a.run, 't0', a.kaon, a.ftof, a.force)}")
-            print(f"[dry-run] decode {runlist}")
+            decode_run.run_decode(runlist, dry_run=True, local=a.local)
         for i in range(1, n_hdphc + 1):
             print(
                 f"[dry-run] ({i}/{n_hdphc}) "
                 f"{hodo_cmd(a.run, 'hdphc', a.kaon, a.ftof, a.force, skip_qa=True)}"
             )
-            print(f"[dry-run] decode {runlist} + score_btof + snapshot round_{i:02d}")
+            decode_run.run_decode(runlist, dry_run=True, local=a.local)
+            print(f"[dry-run] score_btof + snapshot round_{i:02d}")
         if n_hdphc and not a.skip_hdphc_adopt:
             print(
                 f"[dry-run] adopt {a.adopt} -> restore HDPHC + decode + "
@@ -165,11 +169,11 @@ def main():
 
     # hdprm
     run_hodo_ok(hodo_cmd(a.run, "hdprm", a.kaon, a.ftof, a.force), "hdprm")
-    decode_run.run_decode(runlist)
+    decode_run.run_decode(runlist, local=a.local)
 
     if not a.skip_t0:
         run_hodo_ok(hodo_cmd(a.run, "t0", a.kaon, a.ftof, a.force), "t0")
-        decode_run.run_decode(runlist)
+        decode_run.run_decode(runlist, local=a.local)
 
     if a.skip_hdphc:
         runner.info("done: skipped hdphc")
@@ -183,7 +187,7 @@ def main():
             hodo_cmd(a.run, "hdphc", a.kaon, a.ftof, a.force, skip_qa=True),
             f"hdphc[{i}]",
         )
-        decode_run.run_decode(runlist)
+        decode_run.run_decode(runlist, local=a.local)
         score = hodo_btof_monitor.score_btof(
             a.run, particle_suffix=suffix, ftof=a.ftof, root_path=hodo_path,
         )
@@ -213,7 +217,7 @@ def main():
         runner.fail(str(exc))
     runner.info(f"adopting hdphc round {chosen}")
     hodo_hdphc_rounds.restore_round(a.run, chosen, suffix)
-    decode_run.run_decode(runlist)
+    decode_run.run_decode(runlist, local=a.local)
     hodo_hdphc_rounds.write_summary(a.run, adopted=chosen)
 
     # Post-adopt QA: re-fit plots on the restored param / final decode; no param write.

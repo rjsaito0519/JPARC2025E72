@@ -11,7 +11,7 @@ cp common/lib/paths_example.py common/lib/paths.py
 ./build.sh                             # C++ のツールを bin/ にビルド
 ```
 
-Python 共通は `from common.lib import …`（トップに `lib` は置かない）。較正フロントはトップの symlink（`run_*.py` / `iterate_*.py` / `calib_session.py` / `calib_dispatch.py` 等）か `calibration/scripts/…` を直接使う。自動化の日常入口は `./calib_session.py` → `./calib_dispatch.py`。`adopt_hdphc_round` / `extra_hdphc_iter` / `post_*` などはトップに出さず scripts 直叩き。
+Python 共通は `from common.lib import …`（トップに `lib` は置かない）。トップの symlink は人が回す入口だけ（`./calib.py` / `./ops.py` / `run_*.py` / `create_runlist.py` / `dst_create_runlist.py`）。自動化の日常起動は `./calib.py <run>`。状態操作は `./ops.py` または Slack。`iterate_*` / `adopt_*` / `extra_*` / 旧 session・dispatch は `calibration/scripts/…` 直叩き。
 
 ローカル用 symlink（gitignore）: `group_root` → グループデータ領域、`param` → analyzer の `submodule/param`（コード上の正は `PARAM_DIR`）。
 
@@ -19,7 +19,7 @@ Python 共通は `from common.lib import …`（トップに `lib` は置かな�
 
 | パス | 中身 |
 |---|---|
-| `calibration/scripts/` | 較正フロント本体（トップ symlink の先。`run_*` / `iterate_*` / `calib_session` / `calib_dispatch` / 補助の `adopt_*`・`extra_*`・`post_*` など） |
+| `calibration/scripts/` | 較正フロント本体（トップ symlink の先。`calib` / `ops` / `run_*` / `iterate_*` / 補助の `adopt_*`・`extra_*`・`post_*` など） |
 | `calibration/config/` | 例: `calib_dispatch_example.yml` / `calib_session_example.yml` |
 | `calibration/tdc_window_web/` | TDC window をブラウザで決めるツール（Wiki の TDC-Window） |
 | `calibration/src/` | 較正の fit 本体（C++） |
@@ -33,13 +33,14 @@ Python 共通は `from common.lib import …`（トップに `lib` は置かな�
 ## 較正の基本の形
 
 ```bash
-# 自動化（推奨）
-./calib_session.py init <run> --calib-particle pion --target both
-./calib_dispatch.py start results/calib/run0XXXX/calib_session.yml
+# 自動化（推奨）: 起動は calib、判断は Slack / ops
+./calib.py 2977
+./calib.py 2977 --kaon --local
+./ops.py status 2977                 # 別ターミナル / 別 cw から可
 
 # 単体（従来どおり）
 ./create_runlist.py --hodo <run> Pi_hdprm     # conf・runlist を作る
-# analyzer の runmanager/myrun.py で decode
+# analyzer の runmanager/myrun.py で decode（既定 bsub、--local 可）
 ./run_hodo.py <run> hdprm                     # fit して param を更新
 ```
 

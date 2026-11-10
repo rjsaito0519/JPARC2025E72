@@ -7,7 +7,7 @@ try:
 except ImportError:
     raise ImportError(
         "common/lib/paths.py not found. "
-        "Copy common/lib/paths_example.py to common/lib/paths.py (or run init_setup.sh) and configure it."
+        "Copy common/lib/paths_example.py to common/lib/paths.py and configure it."
     )
 
 # Subdirectories

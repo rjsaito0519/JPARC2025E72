@@ -153,6 +153,8 @@ def parse_args():
     p.add_argument("--dry-run", action="store_true", help="print commands only")
     p.add_argument("--force", action="store_true",
                    help="passed through to run_d5 pos and run_dcprm resi")
+    p.add_argument("--local", action="store_true",
+                   help="myrun --local (default: bsub)")
     a = p.parse_args()
     if a.max_iter < 1:
         runner.fail("--max-iter must be >= 1")
@@ -196,19 +198,20 @@ def main():
         f"iterate_d5_align run={a.run:05d} suffix={s} "
         f"max_iter={a.max_iter} tol={a.tol} bcin_runlist={bcin_runlist}"
         + (" dry-run" if a.dry_run else "")
+        + (" --local" if a.local else "")
     )
 
     if a.dry_run:
         runner.step("iterate_d5_align dry-run")
         print(f"[dry-run] {ref_cmd(a.run, a.kaon)}")
-        decode_run.run_decode(p_norm, dry_run=True)
-        decode_run.run_decode(p_tag, dry_run=True)
+        decode_run.run_decode(p_norm, dry_run=True, local=a.local)
+        decode_run.run_decode(p_tag, dry_run=True, local=a.local)
         print(f"[dry-run] {pos_cmd(a.run, a.kaon, a.tol, a.force)}")
         print("[dry-run] (if pos exit 2)")
-        decode_run.run_decode(bcin_runlist, dry_run=True)
+        decode_run.run_decode(bcin_runlist, dry_run=True, local=a.local)
         print(f"[dry-run] {resi_cmd(a.run, a.kaon, a.force)}")
         print("[dry-run] (if resi exit 2)")
-        decode_run.run_decode(bcin_runlist, dry_run=True)
+        decode_run.run_decode(bcin_runlist, dry_run=True, local=a.local)
         print(f"[dry-run] … repeat until pos exit 0/1/3/4 or max-iter={a.max_iter}")
         sys.exit(runner.EXIT_OK)
 
@@ -222,8 +225,8 @@ def main():
         rc, _ = runner.sh(ref_cmd(a.run, a.kaon), ok=(runner.EXIT_OK,))
         runner.info(f"run_d5 ref exit={rc}")
         p_norm, p_tag = require_scratch_runlists(a.run, s, dry_run=False)
-        decode_run.run_decode(p_norm)
-        decode_run.run_decode(p_tag)
+        decode_run.run_decode(p_norm, local=a.local)
+        decode_run.run_decode(p_tag, local=a.local)
 
         rc, _ = runner.sh(pos_cmd(a.run, a.kaon, a.tol, a.force), ok=ok_driver)
         last_rc = rc
@@ -237,14 +240,14 @@ def main():
             runner.warn(f"max-iter {a.max_iter} reached after NOT_CONVERGED; stop as CHECK")
             sys.exit(runner.EXIT_CHECK)
 
-        decode_run.run_decode(bcin_runlist)
+        decode_run.run_decode(bcin_runlist, local=a.local)
         rc_resi, _ = runner.sh(resi_cmd(a.run, a.kaon, a.force), ok=ok_driver)
         action_resi = next_action(rc_resi)
         runner.info(f"run_dcprm resi --bcin exit={rc_resi} → {action_resi}")
         if action_resi in (STOP_FAIL, STOP_CHECK, STOP_SKIP):
             stop_with(action_resi)
         if action_resi == DO_NEXT:
-            decode_run.run_decode(bcin_runlist)
+            decode_run.run_decode(bcin_runlist, local=a.local)
         # EXIT_OK or after re-decode: continue outer loop with ref
 
     runner.warn("loop ended without terminal state; stop as CHECK")

@@ -34,6 +34,8 @@ def parse_args():
                    help="myrun yml (default: runmanager/runlist/<sub>/{bcout|bcin}_runXXXXX.yml)")
     p.add_argument("--dry-run", action="store_true", help="print commands only")
     p.add_argument("--force", action="store_true", help="passed through to run_dcprm")
+    p.add_argument("--local", action="store_true",
+                   help="myrun --local (default: bsub)")
     a = p.parse_args()
     if a.max_iter < 1:
         runner.fail("--max-iter must be >= 1")
@@ -48,6 +50,7 @@ def main():
     rc = dc_fit.run_fit_loop(
         a.run, "reso", a.bcin, a.kaon, a.force, a.max_iter, runlist, a.dry_run,
         separate=a.separate, do_preflight=True, label="iterate_dc_reso",
+        local=a.local,
     )
     sys.exit(rc)
 

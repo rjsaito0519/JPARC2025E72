@@ -56,6 +56,8 @@ def parse_args():
                    help="omit drift and its following decode")
     p.add_argument("--skip-resi", action="store_true", help="omit residual iterate loop")
     p.add_argument("--skip-reso", action="store_true", help="omit resolution iterate loop")
+    p.add_argument("--local", action="store_true",
+                   help="myrun --local (default: bsub)")
     a = p.parse_args()
     if a.max_iter < 1:
         runner.fail("--max-iter must be >= 1")
@@ -64,19 +66,19 @@ def parse_args():
 
 
 #_____________________________________________________________________________
-def run_oneshot(run, mode, bcin, kaon, force, runlist, dry_run):
+def run_oneshot(run, mode, bcin, kaon, force, runlist, dry_run, local=False):
     """Run t0 or drift then decode. Returns exit code; OK only continues."""
     cmd = oneshot_cmd(run, mode, bcin, kaon, force)
     runner.step(f"iterate_dc_chamber {mode}")
     if dry_run:
         print(f"[dry-run] {cmd}")
-        decode_run.run_decode(runlist, dry_run=True)
+        decode_run.run_decode(runlist, dry_run=True, local=local)
         return runner.EXIT_OK
     rc, _ = runner.sh(cmd, ok=OK_DRIVER)
     runner.info(f"run_dcprm {mode} exit={rc}")
     if rc != runner.EXIT_OK:
         return rc
-    decode_run.run_decode(runlist)
+    decode_run.run_decode(runlist, local=local)
     return runner.EXIT_OK
 
 
@@ -97,6 +99,7 @@ def main():
         f"iterate_dc_chamber run={a.run:05d} {dc_fit.chamber_tag(a.bcin)} "
         f"max_iter={a.max_iter} runlist={runlist}"
         + (" dry-run" if a.dry_run else "")
+        + (" --local" if a.local else "")
         + (" --skip-t0" if a.skip_t0 else "")
         + (" --skip-drift" if a.skip_drift else "")
         + (" --skip-resi" if a.skip_resi else "")
@@ -104,12 +107,16 @@ def main():
     )
 
     if not a.skip_t0:
-        rc = run_oneshot(a.run, "t0", a.bcin, a.kaon, a.force, runlist, a.dry_run)
+        rc = run_oneshot(
+            a.run, "t0", a.bcin, a.kaon, a.force, runlist, a.dry_run, a.local,
+        )
         if rc != runner.EXIT_OK:
             sys.exit(rc)
 
     if not a.skip_drift:
-        rc = run_oneshot(a.run, "drift", a.bcin, a.kaon, a.force, runlist, a.dry_run)
+        rc = run_oneshot(
+            a.run, "drift", a.bcin, a.kaon, a.force, runlist, a.dry_run, a.local,
+        )
         if rc != runner.EXIT_OK:
             sys.exit(rc)
 
@@ -117,6 +124,7 @@ def main():
         rc = dc_fit.run_fit_loop(
             a.run, "resi", a.bcin, a.kaon, a.force, a.max_iter, runlist, a.dry_run,
             separate=False, do_preflight=True, label="iterate_dc_chamber/resi",
+            local=a.local,
         )
         if rc != runner.EXIT_OK:
             sys.exit(rc)
@@ -125,6 +133,7 @@ def main():
         rc = dc_fit.run_fit_loop(
             a.run, "reso", a.bcin, a.kaon, a.force, a.max_iter, runlist, a.dry_run,
             separate=a.separate, do_preflight=True, label="iterate_dc_chamber/reso",
+            local=a.local,
         )
         if rc != runner.EXIT_OK:
             sys.exit(rc)

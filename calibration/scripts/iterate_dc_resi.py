@@ -125,7 +125,7 @@ def resi_cmd(run, bcin, kaon, force):
 #_____________________________________________________________________________
 def run_fit_loop(
     run, mode, bcin, kaon, force, max_iter, runlist, dry_run,
-    separate=False, do_preflight=True, label=None,
+    separate=False, do_preflight=True, label=None, local=False,
 ):
     """Run resi/reso until terminal exit. Returns the exit code (does not sys.exit)."""
     if mode not in FIT_MODES:
@@ -137,6 +137,7 @@ def run_fit_loop(
         f"{tag} run={run:05d} {chamber_tag(bcin)} mode={mode} "
         f"max_iter={max_iter} runlist={runlist}"
         + (" dry-run" if dry_run else "")
+        + (" --local" if local else "")
     )
 
     if dry_run:
@@ -144,7 +145,7 @@ def run_fit_loop(
         if do_preflight:
             print("[dry-run] preflight: decode if chamber ROOT missing or params newer than decode")
         print(f"[dry-run] {fit_cmd(run, mode, bcin, kaon, force, separate)}")
-        decode_run.run_decode(runlist, dry_run=True)
+        decode_run.run_decode(runlist, dry_run=True, local=local)
         print(f"[dry-run] … repeat {mode} until exit 0/1/3/4 or max-iter={max_iter}")
         runner.info(f"chamber root: {root_mtime_msg(run, bcin)}")
         return runner.EXIT_OK
@@ -161,7 +162,7 @@ def run_fit_loop(
         if not root.exists() or stale:
             reason = "missing" if not root.exists() else ("stale vs " + "; ".join(stale))
             runner.info(f"preflight decode ({reason})")
-            decode_run.run_decode(runlist)
+            decode_run.run_decode(runlist, local=local)
             runner.info(f"after preflight decode: {root_mtime_msg(run, bcin)}")
 
     ok_rc = (runner.EXIT_OK, runner.EXIT_FAIL, runner.EXIT_NOT_CONVERGED,
@@ -194,7 +195,7 @@ def run_fit_loop(
             return runner.EXIT_CHECK
 
         runner.info(f"before decode: {root_mtime_msg(run, bcin)}")
-        decode_run.run_decode(runlist)
+        decode_run.run_decode(runlist, local=local)
         runner.info(f"after decode: {root_mtime_msg(run, bcin)}")
 
     runner.warn("loop ended without terminal state; stop as CHECK")
@@ -217,6 +218,8 @@ def parse_args():
                    help="myrun yml (default: runmanager/runlist/<sub>/{bcout|bcin}_runXXXXX.yml)")
     p.add_argument("--dry-run", action="store_true", help="print commands only")
     p.add_argument("--force", action="store_true", help="passed through to run_dcprm")
+    p.add_argument("--local", action="store_true",
+                   help="myrun --local (default: bsub)")
     a = p.parse_args()
     if a.max_iter < 1:
         runner.fail("--max-iter must be >= 1")
@@ -231,6 +234,7 @@ def main():
     rc = run_fit_loop(
         a.run, "resi", a.bcin, a.kaon, a.force, a.max_iter, runlist, a.dry_run,
         separate=False, do_preflight=True, label="iterate_dc_resi",
+        local=a.local,
     )
     sys.exit(rc)
 

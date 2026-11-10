@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Create / show a calibration session YAML (run, calib particle, beam momentum).
 
-Usage:
+Daily entry is ./calib.py <run>. This module keeps the session helpers and a
+compatibility CLI:
+
   calib_session.py init <run> --calib-particle pion|kaon --target hodo|chamber|both
       [--momentum GEV] [--beam-particle pion|kaon|proton] [--charge ±1]
       [--write-table] [--max-iter N] [--force] [--out PATH]
   calib_session.py show <run|session.yml>
 
 Beam momentum comes from myanalysis beam_run_condition.yml and optional UserParam
-(BeamMom etc.). Missing momentum requires --momentum (no neighbor guess).
+(BeamMom etc.). Missing momentum: TTY prompt, or --momentum (no neighbor guess).
 --write-table upserts myanalysis table only (not analyzer BeamRunCondition.cc).
 calib_particle is the calibration window and is never used as beam particle.
 """
@@ -47,6 +49,35 @@ def default_steps(target):
 
 
 #_____________________________________________________________________________
+def steps_from_flags(*, hodo=False, bcout=False, bcin=False, d5=False):
+    """Build session steps from boolean stage flags.
+
+    No flags → both. Any flag → only those stages, in fixed order.
+    """
+    any_flag = hodo or bcout or bcin or d5
+    if not any_flag:
+        return default_steps("both"), "both"
+    steps = []
+    if hodo:
+        steps.append("hodo")
+    if bcout:
+        steps.append("dc_chamber")
+    if bcin:
+        steps.append({"dc_chamber": {"bcin": True}})
+    if d5:
+        steps.append("d5_align")
+    if steps == default_steps("hodo"):
+        target = "hodo"
+    elif steps == default_steps("chamber"):
+        target = "chamber"
+    elif steps == default_steps("both"):
+        target = "both"
+    else:
+        target = "custom"
+    return steps, target
+
+
+#_____________________________________________________________________________
 def write_session(path, doc):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,6 +95,218 @@ def load_session_file(path):
     doc = yaml.safe_load(path.read_text())
     if not isinstance(doc, dict):
         runner.fail(f"session must be a mapping: {path}")
+    return path, doc
+
+
+#_____________________________________________________________________________
+def prompt_momentum(run):
+    """Ask for beam momentum on a TTY. Fail clearly when non-interactive."""
+    if not sys.stdin.isatty():
+        runner.fail(
+            f"run {run}: momentum unknown in table/UserParam; pass --momentum "
+            f"(no neighbor guess; non-interactive)"
+        )
+    while True:
+        try:
+            raw = input(f"run {run:05d}: momentum [GeV/c]? ").strip()
+        except EOFError:
+            runner.fail(
+                f"run {run}: momentum unknown; pass --momentum (no neighbor guess)"
+            )
+        try:
+            momentum = float(raw)
+        except ValueError:
+            print("enter a positive number", file=sys.stderr)
+            continue
+        if momentum > 0:
+            return momentum
+        print("momentum must be > 0", file=sys.stderr)
+
+
+#_____________________________________________________________________________
+def resolve_calib_particle(*, pion=False, kaon=False, calib_particle=None):
+    if pion and kaon:
+        runner.fail("use only one of --pion / --kaon")
+    if calib_particle is not None:
+        particle = str(calib_particle).lower()
+        if particle not in CALIB_PARTICLES:
+            runner.fail(f"calib_particle must be pion|kaon, got {calib_particle!r}")
+        if pion and particle != "pion":
+            runner.fail("--pion disagrees with --calib-particle")
+        if kaon and particle != "kaon":
+            runner.fail("--kaon disagrees with --calib-particle")
+        return particle
+    if kaon:
+        return "kaon"
+    return "pion"
+
+
+#_____________________________________________________________________________
+def build_session_doc(
+    run,
+    *,
+    calib_particle="pion",
+    steps=None,
+    target=None,
+    momentum=None,
+    beam_particle=None,
+    charge=None,
+    write_table=False,
+    max_iter=10,
+    force=False,
+    local=False,
+    prompt_if_missing=True,
+):
+    """Resolve beam fields and return a session mapping (does not write)."""
+    if steps is None:
+        if target is None:
+            target = "both"
+        steps = default_steps(target)
+    elif target is None:
+        if steps == default_steps("hodo"):
+            target = "hodo"
+        elif steps == default_steps("chamber"):
+            target = "chamber"
+        elif steps == default_steps("both"):
+            target = "both"
+        else:
+            target = "custom"
+
+    resolved = brc.resolve(run)
+    runner.info(
+        f"run={run:05d} calib_particle={calib_particle} target={target}"
+    )
+    runner.info(
+        f"beam particle={resolved['particle']} ({resolved['particle_source']}) "
+        f"momentum={resolved['momentum_gev_c']} ({resolved['momentum_source']}) "
+        f"charge={resolved['charge']} ({resolved['charge_source']})"
+    )
+    if resolved["user_param_path"]:
+        runner.info(f"UserParam peeked: {resolved['user_param_path']}")
+
+    beam_particle_out = resolved["particle"]
+    beam_particle_source = resolved["particle_source"]
+    if beam_particle:
+        beam_particle_out = beam_particle
+        beam_particle_source = brc.SOURCE_USER_INPUT
+
+    momentum_out = resolved["momentum_gev_c"]
+    momentum_source = resolved["momentum_source"]
+    if momentum is not None:
+        momentum_out = float(momentum)
+        if not (momentum_out > 0):
+            runner.fail("--momentum must be > 0")
+        momentum_source = brc.SOURCE_USER_INPUT
+
+    charge_out = resolved["charge"]
+    charge_source = resolved["charge_source"]
+    if charge is not None:
+        charge_out = int(charge)
+        if charge_out not in (-1, 1):
+            runner.fail("--charge must be +1 or -1")
+        charge_source = brc.SOURCE_USER_INPUT
+
+    if momentum_out is None:
+        if prompt_if_missing:
+            momentum_out = prompt_momentum(run)
+            momentum_source = brc.SOURCE_USER_INPUT
+        else:
+            runner.fail(
+                f"run {run}: momentum unknown in table/UserParam; pass --momentum "
+                f"(no neighbor guess)"
+            )
+
+    table_updated = False
+    if write_table:
+        if beam_particle_out is None:
+            runner.fail("--write-table needs beam particle (--beam-particle)")
+        if charge_out is None:
+            runner.fail("--write-table needs charge (--charge)")
+        try:
+            path, action = brc.upsert_run(
+                run, beam_particle_out, momentum_out, charge_out,
+            )
+        except ValueError as e:
+            runner.fail(str(e))
+        table_updated = action != "unchanged"
+        runner.info(f"beam table {action}: {path}")
+
+    return {
+        "run": run,
+        "calib_particle": calib_particle,
+        "kaon": calib_particle == "kaon",
+        "target": target,
+        "momentum_gev_c": momentum_out,
+        "momentum_source": momentum_source,
+        "beam_particle": beam_particle_out,
+        "beam_particle_source": beam_particle_source,
+        "charge": charge_out,
+        "charge_source": charge_source,
+        "force": bool(force),
+        "local": bool(local),
+        "max_iter": max_iter,
+        "steps": steps,
+        "created_at": utc_now(),
+        "table_updated": table_updated,
+    }
+
+
+#_____________________________________________________________________________
+def ensure_session(
+    run,
+    *,
+    calib_particle="pion",
+    steps=None,
+    target=None,
+    momentum=None,
+    beam_particle=None,
+    charge=None,
+    write_table=False,
+    max_iter=10,
+    force=False,
+    local=False,
+    out=None,
+    prompt_if_missing=True,
+    overwrite=False,
+):
+    """Create or reuse session YAML. Returns (path, doc).
+
+    force: stored for iterate (--force on run_*).
+    overwrite: rewrite the session file when it already exists.
+    """
+    out_path = Path(out).expanduser() if out else session_path(run)
+    if not out_path.is_absolute():
+        out_path = (Path.cwd() / out_path).resolve()
+    if out_path.is_file() and not overwrite:
+        path, doc = load_session_file(out_path)
+        if bool(local) != bool(doc.get("local", False)):
+            doc["local"] = bool(local)
+            write_session(path, doc)
+        return path, doc
+    doc = build_session_doc(
+        run,
+        calib_particle=calib_particle,
+        steps=steps,
+        target=target,
+        momentum=momentum,
+        beam_particle=beam_particle,
+        charge=charge,
+        write_table=write_table,
+        max_iter=max_iter,
+        force=force,
+        local=local,
+        prompt_if_missing=prompt_if_missing,
+    )
+    write_session(out_path, doc)
+    runner.info(f"wrote session {out_path}")
+    return out_path, doc
+
+
+#_____________________________________________________________________________
+def set_session_local(path, local):
+    path, doc = load_session_file(path)
+    doc["local"] = bool(local)
+    write_session(path, doc)
     return path, doc
 
 
@@ -88,84 +331,28 @@ def do_show(target):
 
 #_____________________________________________________________________________
 def do_init(a):
-    resolved = brc.resolve(a.run)
-    runner.info(
-        f"run={a.run:05d} calib_particle={a.calib_particle} target={a.target}"
+    steps = None
+    target = a.target
+    if getattr(a, "steps", None) is not None:
+        steps = a.steps
+    out, doc = ensure_session(
+        a.run,
+        calib_particle=a.calib_particle,
+        steps=steps,
+        target=target,
+        momentum=a.momentum,
+        beam_particle=a.beam_particle,
+        charge=a.charge,
+        write_table=a.write_table,
+        max_iter=a.max_iter,
+        force=a.force,
+        local=getattr(a, "local", False),
+        out=a.out,
+        prompt_if_missing=getattr(a, "prompt_if_missing", True),
+        overwrite=True,
     )
-    runner.info(
-        f"beam particle={resolved['particle']} ({resolved['particle_source']}) "
-        f"momentum={resolved['momentum_gev_c']} ({resolved['momentum_source']}) "
-        f"charge={resolved['charge']} ({resolved['charge_source']})"
-    )
-    if resolved["user_param_path"]:
-        runner.info(f"UserParam peeked: {resolved['user_param_path']}")
-
-    beam_particle = resolved["particle"]
-    beam_particle_source = resolved["particle_source"]
-    if a.beam_particle:
-        beam_particle = a.beam_particle
-        beam_particle_source = brc.SOURCE_USER_INPUT
-
-    momentum = resolved["momentum_gev_c"]
-    momentum_source = resolved["momentum_source"]
-    if a.momentum is not None:
-        momentum = float(a.momentum)
-        if not (momentum > 0):
-            runner.fail("--momentum must be > 0")
-        momentum_source = brc.SOURCE_USER_INPUT
-
-    charge = resolved["charge"]
-    charge_source = resolved["charge_source"]
-    if a.charge is not None:
-        charge = int(a.charge)
-        if charge not in (-1, 1):
-            runner.fail("--charge must be +1 or -1")
-        charge_source = brc.SOURCE_USER_INPUT
-
-    if momentum is None:
-        runner.fail(
-            f"run {a.run}: momentum unknown in table/UserParam; pass --momentum "
-            f"(no neighbor guess)"
-        )
-
-    table_updated = False
-    if a.write_table:
-        if beam_particle is None:
-            runner.fail("--write-table needs beam particle (--beam-particle)")
-        if charge is None:
-            runner.fail("--write-table needs charge (--charge)")
-        try:
-            path, action = brc.upsert_run(
-                a.run, beam_particle, momentum, charge,
-            )
-        except ValueError as e:
-            runner.fail(str(e))
-        table_updated = action != "unchanged"
-        runner.info(f"beam table {action}: {path}")
-
-    doc = {
-        "run": a.run,
-        "calib_particle": a.calib_particle,
-        "kaon": a.calib_particle == "kaon",
-        "target": a.target,
-        "momentum_gev_c": momentum,
-        "momentum_source": momentum_source,
-        "beam_particle": beam_particle,
-        "beam_particle_source": beam_particle_source,
-        "charge": charge,
-        "charge_source": charge_source,
-        "force": bool(a.force),
-        "max_iter": a.max_iter,
-        "steps": default_steps(a.target),
-        "created_at": utc_now(),
-        "table_updated": table_updated,
-    }
-    out = Path(a.out).expanduser() if a.out else session_path(a.run)
-    if not out.is_absolute():
-        out = (Path.cwd() / out).resolve()
-    write_session(out, doc)
-    runner.info(f"wrote session {out}")
     print(yaml.safe_dump(doc, sort_keys=False, default_flow_style=False))
+    runner.info(f"session ready {out}")
     sys.exit(runner.EXIT_OK)
 
 
@@ -187,12 +374,15 @@ def parse_args():
                    help="upsert myanalysis beam_run_condition.yml (not analyzer .cc)")
     p.add_argument("--max-iter", type=int, default=10)
     p.add_argument("--force", action="store_true")
+    p.add_argument("--local", action="store_true",
+                   help="myrun --local (stored on session for dispatch)")
     p.add_argument("--out", type=Path, default=None, help="session output path")
     return p.parse_args()
 
 
 #_____________________________________________________________________________
 def main():
+    runner.warn("prefer ./calib.py <run> for daily launch (calib_session is compat)")
     a = parse_args()
     if a.command == "show":
         do_show(a.target)
@@ -209,6 +399,11 @@ def main():
     if a.max_iter < 1 or a.max_iter > 100:
         runner.fail("--max-iter must be in [1, 100]")
     a.target = a.calib_target
+    a.prompt_if_missing = a.momentum is None
+    # Compatibility CLI: missing momentum still fails without TTY unless prompted;
+    # keep old non-interactive fail when no --momentum (tests rely on this).
+    if a.momentum is None and not sys.stdin.isatty():
+        a.prompt_if_missing = False
     do_init(a)
 
 
