@@ -7,6 +7,8 @@ Usage:
   calib_dispatch.py stop   <config.yml>
   calib_dispatch.py hold   <config.yml> --reason TEXT
   calib_dispatch.py decide <config.yml> --action refit|continue [--note TEXT]
+  calib_dispatch.py approve <config.yml> [--note TEXT] [--via cli|slack] [--user-id ID]
+  calib_dispatch.py revoke  <config.yml> [--reason TEXT]
   calib_dispatch.py resume <config.yml> [--dry-run]
 
 Steps: hodo | dc_resi [{bcin: true}] | dc_chamber [{bcin: true}] | d5_align
@@ -15,11 +17,11 @@ Steps: hodo | dc_resi [{bcin: true}] | dc_chamber [{bcin: true}] | d5_align
 State: OUTPUT_DIR/calib/runXXXXX/calib_dispatch_state.json
   status=running at step start, stopped on chain halt or stop request,
   held on EXIT_CHECK or manual hold (needs decide before resume),
-  finished when all steps done.
+  awaiting_final_approval when all steps done (not auto-approved),
+  approved after human approve.
   stop sets stop_requested; hold sets hold_requested (or immediate held);
   start/resume honor them between steps (no kill).
-  resume requires status=stopped (not held). decide continue advances past
-  a non-continue-able rc; decide refit retries the same index.
+  resume requires status=stopped (not held / awaiting / approved).
 Continue on exit 0; EXIT_SKIP (4) stops unless that step has allow_skip: true.
 EXIT_CHECK (3) becomes held (not a silent resume).
 Final exit code is runner.worst of executed step codes (so a skip is not erased by a later 0).
@@ -34,7 +36,7 @@ from pathlib import Path
 import yaml
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, runner  # noqa: E402
+from common.lib import calib_approval, config, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 KNOWN_STEPS = ("hodo", "dc_resi", "dc_chamber", "d5_align")
@@ -482,6 +484,34 @@ def enter_held(run, payload, hold, event_type):
 
 
 #_____________________________________________________________________________
+def mark_awaiting_final(run, payload):
+    """Write process-complete state and notify Slack (best-effort)."""
+    payload = dict(payload)
+    payload["finished"] = True
+    payload["status"] = calib_approval.STATUS_AWAITING
+    payload.pop("approval", None)
+    payload["updated_at"] = utc_now()
+    # Preserve plan/hold/steps already on payload; ensure subject can be built.
+    write_state(run, payload)
+    st = read_state(run) or payload
+    subject = calib_approval.build_subject(run, st)
+    sha = calib_approval.subject_sha(subject)
+    calib_approval.append_approval_journal(run, {
+        "event": "awaiting",
+        "subject_sha": sha,
+    })
+    ok, msg = calib_approval.notify_awaiting_slack(run, sha)
+    if not ok:
+        runner.warn(f"awaiting Slack note failed: {msg}")
+    elif not msg.startswith("slack skip:"):
+        runner.info(msg)
+    runner.info(
+        f"run{run:05d}: awaiting final QA approval (subject_sha={sha[:8]}…)"
+    )
+    return sha
+
+
+#_____________________________________________________________________________
 def do_status(cfg):
     st = read_state(cfg["run"])
     if st is None:
@@ -489,12 +519,15 @@ def do_status(cfg):
         sys.exit(runner.EXIT_OK)
     mom = st.get("momentum_gev_c")
     mom_src = st.get("momentum_source")
+    eff = calib_approval.effective_status(st)
     runner.info(
         f"run{cfg['run']:05d}: last step[{st.get('index')}]={st.get('step')} "
-        f"rc={st.get('rc')} status={st.get('status')} finished={st.get('finished')} "
+        f"rc={st.get('rc')} status={st.get('status')} effective={eff} "
+        f"finished={st.get('finished')} "
         f"stop_requested={st.get('stop_requested')} "
         f"hold_requested={st.get('hold_requested')} "
         f"{hold_summary(st)} "
+        f"{calib_approval.approval_summary(st)} "
         f"calib_particle={st.get('calib_particle')} "
         f"momentum={mom} ({mom_src}) updated_at={st.get('updated_at')}"
     )
@@ -508,8 +541,11 @@ def do_stop(cfg):
     if st is None:
         runner.warn(f"run{cfg['run']:05d}: not started; nothing to stop")
         sys.exit(runner.EXIT_OK)
-    if st.get("finished") or st.get("status") == "finished":
-        runner.warn(f"run{cfg['run']:05d}: already finished; stop ignored")
+    if calib_approval.is_process_complete(st):
+        runner.warn(
+            f"run{cfg['run']:05d}: process complete "
+            f"({calib_approval.effective_status(st)}); stop ignored"
+        )
         sys.exit(runner.EXIT_OK)
     if st.get("status") == "held":
         runner.warn(
@@ -532,8 +568,11 @@ def do_hold(cfg, reason):
     st = read_state(cfg["run"])
     if st is None:
         runner.fail(f"run{cfg['run']:05d}: not started; cannot hold")
-    if st.get("finished") or st.get("status") == "finished":
-        runner.fail(f"run{cfg['run']:05d}: already finished; cannot hold")
+    if calib_approval.is_process_complete(st):
+        runner.fail(
+            f"run{cfg['run']:05d}: process complete "
+            f"({calib_approval.effective_status(st)}); cannot hold"
+        )
     if st.get("status") == "held":
         runner.warn(f"run{cfg['run']:05d}: already held; hold ignored")
         sys.exit(runner.EXIT_OK)
@@ -600,6 +639,92 @@ def do_decide(cfg, action, note):
 
 
 #_____________________________________________________________________________
+def do_approve(cfg, note, via, user_id):
+    via = via or "cli"
+    st = read_state(cfg["run"])
+    if st is None:
+        runner.fail(f"run{cfg['run']:05d}: not started; cannot approve")
+    if not calib_approval.is_process_complete(st):
+        runner.fail(
+            f"run{cfg['run']:05d}: status={st.get('status')!r} "
+            f"(approve requires process complete)"
+        )
+    eff = calib_approval.effective_status(st)
+    if eff == calib_approval.STATUS_APPROVED:
+        runner.warn(f"run{cfg['run']:05d}: already approved")
+        sys.exit(runner.EXIT_OK)
+    if eff not in (
+        calib_approval.STATUS_AWAITING, calib_approval.STATUS_FINISHED_LEGACY,
+    ):
+        runner.fail(
+            f"run{cfg['run']:05d}: status={eff!r} "
+            f"(approve requires awaiting_final_approval)"
+        )
+    subject = calib_approval.build_subject(cfg["run"], st)
+    sha = calib_approval.subject_sha(subject)
+    approval = {
+        "subject_sha": sha,
+        "subject": subject,
+        "at": utc_now(),
+        "via": via,
+    }
+    if note:
+        approval["note"] = note
+    if user_id:
+        approval["user_id"] = user_id
+    st["approval"] = approval
+    st["status"] = calib_approval.STATUS_APPROVED
+    st["finished"] = True
+    st["updated_at"] = utc_now()
+    write_state(cfg["run"], st)
+    calib_approval.append_approval_journal(cfg["run"], {
+        "event": "approve",
+        "subject_sha": sha,
+        "via": via,
+        "user_id": user_id,
+        "note": note,
+    })
+    runner.info(f"run{cfg['run']:05d}: approved (subject_sha={sha[:8]}… via={via})")
+    sys.exit(runner.EXIT_OK)
+
+
+#_____________________________________________________________________________
+def do_revoke(cfg, reason):
+    reason = (reason or "manual revoke").strip() or "manual revoke"
+    st = read_state(cfg["run"])
+    if st is None:
+        runner.fail(f"run{cfg['run']:05d}: not started; cannot revoke")
+    if not calib_approval.is_process_complete(st):
+        runner.fail(
+            f"run{cfg['run']:05d}: status={st.get('status')!r} "
+            f"(revoke requires process complete)"
+        )
+    if calib_approval.effective_status(st) != calib_approval.STATUS_APPROVED:
+        runner.warn(
+            f"run{cfg['run']:05d}: not approved "
+            f"({calib_approval.effective_status(st)}); nothing to revoke"
+        )
+        # Normalize legacy finished → awaiting
+        if st.get("status") == calib_approval.STATUS_FINISHED_LEGACY:
+            st["status"] = calib_approval.STATUS_AWAITING
+            st["finished"] = True
+            st["updated_at"] = utc_now()
+            write_state(cfg["run"], st)
+        sys.exit(runner.EXIT_OK)
+    st["status"] = calib_approval.STATUS_AWAITING
+    st["finished"] = True
+    st.pop("approval", None)
+    st["updated_at"] = utc_now()
+    write_state(cfg["run"], st)
+    calib_approval.append_approval_journal(cfg["run"], {
+        "event": "revoke",
+        "reason": reason,
+    })
+    runner.info(f"run{cfg['run']:05d}: approval revoked ({reason})")
+    sys.exit(runner.EXIT_OK)
+
+
+#_____________________________________________________________________________
 def resume_start_index(st):
     """Index to run next after a stopped state."""
     index = st.get("index")
@@ -629,14 +754,17 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
         done_rc = overall_rc(steps_hist)
         if not dry_run and steps_hist:
             last = steps_hist[-1]
-            write_state(
-                cfg["run"],
-                make_payload(
-                    cfg["run"], last["index"], last["step"], last.get("opts") or {},
-                    done_rc, True, steps_hist, "finished", session=session, plan=plan,
-                ),
+            base = make_payload(
+                cfg["run"], last["index"], last["step"], last.get("opts") or {},
+                done_rc, True, steps_hist, calib_approval.STATUS_AWAITING,
+                session=session, plan=plan,
             )
-        runner.info(f"calib_dispatch {label} finished (no remaining steps)")
+            # Carry hold from prior state if present (decide continue path).
+            prev = read_state(cfg["run"])
+            if prev and isinstance(prev.get("hold"), dict):
+                base["hold"] = prev["hold"]
+            mark_awaiting_final(cfg["run"], base)
+        runner.info(f"calib_dispatch {label} process complete (awaiting final approval)")
         sys.exit(done_rc)
 
     runner.info(
@@ -728,20 +856,22 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
 
     done_rc = overall_rc(steps_hist, fallback=last_rc)
     if not dry_run:
-        write_state(
-            cfg["run"],
-            make_payload(
-                cfg["run"], last_index, last_name, last_opts, done_rc, True,
-                steps_hist, "finished", session=session, plan=plan,
-            ),
+        base = make_payload(
+            cfg["run"], last_index, last_name, last_opts, done_rc, True,
+            steps_hist, calib_approval.STATUS_AWAITING,
+            session=session, plan=plan,
         )
-    runner.info("calib_dispatch finished")
+        prev = read_state(cfg["run"])
+        if prev and isinstance(prev.get("hold"), dict):
+            base["hold"] = prev["hold"]
+        mark_awaiting_final(cfg["run"], base)
+    runner.info("calib_dispatch process complete (awaiting final approval)")
     sys.exit(done_rc)
 
 
 #_____________________________________________________________________________
 def do_start(cfg, dry_run):
-    # start always begins at index 0; clear any prior stop/hold via overwrite.
+    # start always begins at index 0; clear any prior stop/hold/approval via overwrite.
     run_steps(cfg, dry_run, 0, [], "start")
 
 
@@ -750,8 +880,11 @@ def do_resume(cfg, dry_run):
     st = read_state(cfg["run"])
     if st is None:
         runner.fail(f"run{cfg['run']:05d}: not started; cannot resume")
-    if st.get("finished") or st.get("status") == "finished":
-        runner.fail(f"run{cfg['run']:05d}: already finished; cannot resume")
+    if calib_approval.is_process_complete(st):
+        runner.fail(
+            f"run{cfg['run']:05d}: process complete "
+            f"({calib_approval.effective_status(st)}); cannot resume"
+        )
     if st.get("status") == "held":
         runner.fail(
             f"run{cfg['run']:05d}: status=held; "
@@ -775,15 +908,24 @@ def parse_args():
     p = runner.Parser(__doc__)
     p.add_argument(
         "command",
-        choices=("start", "status", "stop", "hold", "decide", "resume"),
+        choices=(
+            "start", "status", "stop", "hold", "decide",
+            "approve", "revoke", "resume",
+        ),
     )
     p.add_argument("config", type=Path, help="YAML config path")
     p.add_argument("--dry-run", action="store_true",
                    help="start/resume: print iterate commands only (no state write)")
-    p.add_argument("--reason", default=None, help="hold: required short reason")
+    p.add_argument("--reason", default=None,
+                   help="hold/revoke: short reason")
     p.add_argument("--action", default=None, choices=DECIDE_ACTIONS,
                    help="decide: refit (retry step) or continue (advance)")
-    p.add_argument("--note", default=None, help="decide: optional note for journal")
+    p.add_argument("--note", default=None,
+                   help="decide/approve: optional note for journal")
+    p.add_argument("--via", default="cli", choices=("cli", "slack"),
+                   help="approve: how the approval was issued")
+    p.add_argument("--user-id", default=None,
+                   help="approve: Slack user id when --via slack")
     return p.parse_args()
 
 
@@ -812,6 +954,14 @@ def main():
         if not a.action:
             runner.fail("decide requires --action refit|continue")
         do_decide(cfg, a.action, a.note)
+    if a.command == "approve":
+        if a.dry_run:
+            runner.warn("--dry-run ignored for approve")
+        do_approve(cfg, a.note, a.via, a.user_id)
+    if a.command == "revoke":
+        if a.dry_run:
+            runner.warn("--dry-run ignored for revoke")
+        do_revoke(cfg, a.reason)
     if a.command == "resume":
         do_resume(cfg, a.dry_run)
     do_start(cfg, a.dry_run)

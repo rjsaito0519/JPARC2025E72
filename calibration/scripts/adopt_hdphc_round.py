@@ -9,8 +9,13 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import decode_run, hodo_hdphc_rounds, runner  # noqa: E402
-from common.lib import config  # noqa: E402
+from common.lib import (  # noqa: E402
+    calib_approval,
+    config,
+    decode_run,
+    hodo_hdphc_rounds,
+    runner,
+)
 
 RUNLIST_DIR = config.ANALYZER_DIR / "runmanager" / "runlist"
 
@@ -35,6 +40,13 @@ def main():
     dest = hodo_hdphc_rounds.restore_round(a.run, a.round, suffix)
     hodo_hdphc_rounds.write_summary(a.run, adopted=a.round)
     runner.info(f"restored {dest.name} from round_{a.round:02d}")
+    if calib_approval.invalidate_approval(
+        a.run, f"adopt_hdphc_round {a.round}",
+    ):
+        runner.info(
+            f"run{a.run:05d}: final approval cleared after hdphc adopt "
+            f"(awaiting re-approval)"
+        )
     if a.decode:
         if a.hodo_runlist is not None:
             runlist = Path(a.hodo_runlist).expanduser()

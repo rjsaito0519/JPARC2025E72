@@ -30,6 +30,10 @@ class CalibOpsTests(unittest.TestCase):
     def test_parse_calib_text(self):
         op, run, err = self.ops.parse_calib_text("status 3774")
         self.assertEqual((op, run, err), ("status", 3774, ""))
+        op, run, err = self.ops.parse_calib_text("approve 12")
+        self.assertEqual((op, run, err), ("approve", 12, ""))
+        op, run, err = self.ops.parse_calib_text("revoke 12")
+        self.assertEqual((op, run, err), ("revoke", 12, ""))
         op, run, err = self.ops.parse_calib_text("resume")
         self.assertIsNone(op)
         self.assertIn("usage", err)

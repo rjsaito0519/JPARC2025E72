@@ -1,6 +1,7 @@
 """Thin wrappers so Slack (or other UIs) can drive calib_dispatch safely.
 
-No arbitrary shell: only status / stop / resume against a run's session YAML.
+No arbitrary shell: only status / stop / resume / approve / revoke against
+a run's session YAML.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from . import config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DISPATCH_SCRIPT = PROJECT_ROOT / "calibration" / "scripts" / "calib_dispatch.py"
-OPS = ("status", "stop", "resume")
+OPS = ("status", "stop", "resume", "approve", "revoke")
 DEDUP_SECONDS = 5
 
 
@@ -42,13 +43,16 @@ def _utc_now() -> str:
 
 #_____________________________________________________________________________
 def parse_calib_text(text: str) -> tuple[Optional[str], Optional[int], str]:
-    """Parse 'status 3774' / 'stop 12'. Returns (op, run, error)."""
+    """Parse 'status 3774' / 'approve 12'. Returns (op, run, error)."""
     parts = (text or "").strip().split()
     if len(parts) != 2:
-        return None, None, "usage: /calib status|stop|resume <run>"
+        return None, None, "usage: /calib status|stop|resume|approve|revoke <run>"
     op = parts[0].lower()
     if op not in OPS:
-        return None, None, f"unsupported op {parts[0]!r}; use status|stop|resume"
+        return None, None, (
+            f"unsupported op {parts[0]!r}; "
+            f"use status|stop|resume|approve|revoke"
+        )
     try:
         run = int(parts[1])
     except ValueError:
@@ -112,8 +116,9 @@ def run_dispatch(
     *,
     background_resume: bool = True,
     timeout_s: float = 30.0,
+    user_id: Optional[str] = None,
 ) -> tuple[bool, str]:
-    """Run calib_dispatch status|stop|resume for the run's session YAML."""
+    """Run calib_dispatch status|stop|resume|approve|revoke for session YAML."""
     if command not in OPS:
         return False, f"unsupported command {command!r}"
     yml = session_yml(run)
@@ -125,6 +130,10 @@ def run_dispatch(
     if not DISPATCH_SCRIPT.is_file():
         return False, f"missing dispatcher: {DISPATCH_SCRIPT}"
     cmd = [sys.executable, str(DISPATCH_SCRIPT), command, str(yml)]
+    if command == "approve":
+        cmd += ["--via", "slack"]
+        if user_id:
+            cmd += ["--user-id", str(user_id)]
 
     if command == "resume" and background_resume:
         log_path = resume_log_path(run)
@@ -163,9 +172,9 @@ def run_dispatch(
         return False, f"{command} failed: {type(exc).__name__}"
     text = ((result.stdout or "") + (result.stderr or "")).strip()
     if command == "status":
-        hold_line = _status_hold_line(run)
-        if hold_line:
-            text = (hold_line + "\n" + text) if text else hold_line
+        summary = _status_summary_line(run)
+        if summary:
+            text = (summary + "\n" + text) if text else summary
     if len(text) > 1800:
         text = "…\n" + text[-1800:]
     if not text:
@@ -174,8 +183,10 @@ def run_dispatch(
 
 
 #_____________________________________________________________________________
-def _status_hold_line(run: int) -> str:
-    """Prefix Slack status with a short hold summary from dispatch state."""
+def _status_summary_line(run: int) -> str:
+    """Prefix Slack status with hold + approval summary from dispatch state."""
+    from . import calib_approval
+
     path = Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}" / "calib_dispatch_state.json"
     if not path.is_file():
         return ""
@@ -187,7 +198,7 @@ def _status_hold_line(run: int) -> str:
         return ""
     hold = st.get("hold") if isinstance(st.get("hold"), dict) else None
     bits = [
-        f"status={st.get('status')}",
+        f"status={calib_approval.effective_status(st) or st.get('status')}",
         f"hold_requested={bool(st.get('hold_requested'))}",
     ]
     if hold:
@@ -198,4 +209,5 @@ def _status_hold_line(run: int) -> str:
         )
     else:
         bits.append("hold=none")
+    bits.append(calib_approval.approval_summary(st))
     return " ".join(bits)

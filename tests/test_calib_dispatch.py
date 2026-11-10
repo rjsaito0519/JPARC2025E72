@@ -26,12 +26,23 @@ class DispatchTests(unittest.TestCase):
         lib.mkdir(parents=True)
         (lib / "__init__.py").touch()
         (lib / "config.py").write_text(
-            f"from pathlib import Path\nOUTPUT_DIR = Path({str(self.root / 'out')!r})\n")
+            "from pathlib import Path\n"
+            f"OUTPUT_DIR = Path({str(self.root / 'out')!r})\n"
+            f"PARAM_DIR = Path({str(self.root / 'param')!r})\n"
+            "SUB_DIR = 'e72'\n"
+        )
         (lib / "input_check.py").write_text("def check_input(*a): return True\n")
         (lib / "param.py").write_text("def backup_file(*a): pass\n")
         (self.root / "termcolor.py").write_text("def colored(text, *a, **kw): return text\n")
         shutil.copy(REPO / "calibration/scripts/calib_dispatch.py", self.scripts)
         shutil.copy(REPO / "common/lib/runner.py", lib)
+        shutil.copy(REPO / "common/lib/calib_approval.py", lib)
+        shutil.copy(REPO / "common/lib/qa_session.py", lib)
+        # Slack notify is best-effort on awaiting; stub as skip.
+        (lib / "slack_notify.py").write_text(
+            "def try_notify_failure(*a, **k):\n"
+            "    return True, 'slack skip: disabled'\n"
+        )
         self.state = self.root / "out/calib/run00001/calib_dispatch_state.json"
         self.cfg = self.root / "config.yml"
         self.env = {**os.environ, "PYTHONPATH": str(self.root)}
@@ -96,7 +107,10 @@ class DispatchTests(unittest.TestCase):
                                         '  - hodo: {allow_skip: true}\n  - dc_resi\n')
                 self.assertEqual(result.returncode, rc, result.stderr)
                 self.assertTrue((self.root / 'next').exists())
-                self.assertEqual(json.loads(self.state.read_text())['status'], 'finished')
+                self.assertEqual(
+                    json.loads(self.state.read_text())['status'],
+                    'awaiting_final_approval',
+                )
 
     def test_dry_run_has_no_state(self):
         result = self.run_chain('raise SystemExit(1)\n', dry=True)
@@ -133,7 +147,7 @@ p.write_text(json.dumps(st) + '\\n')
         resumed = self.dispatch("resume")
         self.assertEqual(resumed.returncode, 0, resumed.stderr)
         state = json.loads(self.state.read_text())
-        self.assertEqual(state['status'], 'finished')
+        self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertTrue((self.root / 'next').exists())
         self.assertEqual([e['index'] for e in state['steps']], [0, 0, 1])
 
@@ -153,7 +167,7 @@ p.write_text(json.dumps(st) + '\\n')
         resumed = self.dispatch("resume")
         self.assertEqual(resumed.returncode, 0, resumed.stderr)
         state = json.loads(self.state.read_text())
-        self.assertEqual(state['status'], 'finished')
+        self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertTrue((self.root / 'next').exists())
         self.assertEqual([e['index'] for e in state['steps']], [0, 1])
 
@@ -163,7 +177,10 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertEqual(missing.returncode, 1, missing.stderr)
         ok = self.run_chain('pass\n')
         self.assertEqual(ok.returncode, 0, ok.stderr)
-        self.assertEqual(json.loads(self.state.read_text())['status'], 'finished')
+        self.assertEqual(
+            json.loads(self.state.read_text())['status'],
+            'awaiting_final_approval',
+        )
         again = self.dispatch("resume")
         self.assertEqual(again.returncode, 1, again.stderr)
 
@@ -179,7 +196,10 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertEqual(done.returncode, 0, done.stderr)
         ignored = self.dispatch("stop")
         self.assertEqual(ignored.returncode, 0, ignored.stderr)
-        self.assertEqual(json.loads(self.state.read_text())['status'], 'finished')
+        self.assertEqual(
+            json.loads(self.state.read_text())['status'],
+            'awaiting_final_approval',
+        )
 
     def test_start_records_plan(self):
         result = self.run_chain('raise SystemExit(1)\n')
@@ -250,7 +270,7 @@ p.write_text(json.dumps(st) + '\\n')
         resumed = self.dispatch("resume")
         self.assertEqual(resumed.returncode, 0, resumed.stderr)
         state = json.loads(self.state.read_text())
-        self.assertEqual(state['status'], 'finished')
+        self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertEqual([e['index'] for e in state['steps']], [0, 0, 1])
 
     def test_decide_continue_advances_past_check(self):
@@ -267,7 +287,7 @@ p.write_text(json.dumps(st) + '\\n')
         # CHECK stays in step history; overall worst exit remains 3.
         self.assertEqual(resumed.returncode, 3, resumed.stderr)
         state = json.loads(self.state.read_text())
-        self.assertEqual(state['status'], 'finished')
+        self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertTrue((self.root / 'next').exists())
         self.assertEqual([e['index'] for e in state['steps']], [0, 1])
         self.assertEqual(state['rc'], 3)
@@ -302,6 +322,35 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertEqual(state['hold']['source'], 'manual')
         self.assertEqual(state['hold']['reason'], 'mid-chain flag')
         self.assertFalse((self.root / 'next').exists())
+
+    def test_approve_and_revoke(self):
+        done = self.run_chain('pass\n')
+        self.assertEqual(done.returncode, 0, done.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['status'], 'awaiting_final_approval')
+        self.assertTrue(state['finished'])
+        blocked = self.dispatch("resume")
+        self.assertEqual(blocked.returncode, 1)
+        approved = self.dispatch_extra("approve", "--note", "looks ok")
+        self.assertEqual(approved.returncode, 0, approved.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['status'], 'approved')
+        self.assertIn('subject_sha', state['approval'])
+        revoked = self.dispatch_extra("revoke", "--reason", "recheck")
+        self.assertEqual(revoked.returncode, 0, revoked.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['status'], 'awaiting_final_approval')
+        self.assertNotIn('approval', state)
+
+    def test_legacy_finished_status_treated_as_awaiting(self):
+        done = self.run_chain('pass\n')
+        self.assertEqual(done.returncode, 0)
+        state = json.loads(self.state.read_text())
+        state['status'] = 'finished'
+        self.state.write_text(json.dumps(state) + '\n')
+        approved = self.dispatch("approve")
+        self.assertEqual(approved.returncode, 0, approved.stderr)
+        self.assertEqual(json.loads(self.state.read_text())['status'], 'approved')
 
 
 if __name__ == '__main__':

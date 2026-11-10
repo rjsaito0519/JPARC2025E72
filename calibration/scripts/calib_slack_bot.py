@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Slack Socket Mode bot for calib_dispatch status / stop / resume.
+"""Slack Socket Mode bot for calib_dispatch status / stop / resume / approve / revoke.
 
 Usage:
   pip install slack-bolt   # optional dependency
@@ -10,6 +10,8 @@ Slash command (register /calib in the Slack app):
   /calib status <run>
   /calib stop <run>
   /calib resume <run>
+  /calib approve <run>
+  /calib revoke <run>
 
 Does not run start or arbitrary shell. resume is started in the background.
 """
@@ -40,7 +42,7 @@ def handle_calib_request(bot_cfg, user_id, channel_id, text):
     if dup:
         return True, dup_msg, True
 
-    ok, message = calib_ops.run_dispatch(op, run)
+    ok, message = calib_ops.run_dispatch(op, run, user_id=user_id)
     calib_ops.record_op(run, op, user_id)
     prefix = f"run{run:05d} {op}: "
     return ok, prefix + message, False
