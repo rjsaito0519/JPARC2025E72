@@ -43,9 +43,15 @@ class HodoChainRunlistTests(unittest.TestCase):
             "    print(f'decode {runlist} dry={dry_run} local={local}')\n"
             "    return 0\n"
         )
-        for name in (
-            "hodo_btof_monitor.py", "hodo_hdphc_rounds.py", "hodo_qa_pdf.py",
-        ):
+        (lib / "hodo_btof_monitor.py").write_text(
+            "from pathlib import Path\n"
+            "from . import config\n"
+            "def hodo_root(run):\n"
+            "    return Path(config.DATA_DIR) / f'run{int(run):05d}_Hodo.root'\n"
+            "def score_btof(*a, **k):\n"
+            "    return {}\n"
+        )
+        for name in ("hodo_hdphc_rounds.py", "hodo_qa_pdf.py"):
             (lib / name).write_text("pass\n")
         (lib / "beam_run_condition.py").write_text(
             "from pathlib import Path\n"
@@ -56,6 +62,7 @@ class HodoChainRunlistTests(unittest.TestCase):
             "    return {'momentum_gev_c': 1.0}\n"
         )
         shutil.copy(REPO / "common/lib/calib_runlist.py", lib)
+        shutil.copy(REPO / "common/lib/calib_progress.py", lib)
         shutil.copy(REPO / "common/lib/runner.py", lib)
         shutil.copy(REPO / "calibration/scripts/iterate_hodo_chain.py", self.scripts)
         (self.scripts / "run_hodo.py").write_text("raise SystemExit(0)\n")

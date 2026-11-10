@@ -443,10 +443,11 @@ class TopSymlinkPolicyTests(unittest.TestCase):
             "calib_dispatch.py",
             "calib_session.py",
             "set_tdc_window.py",
+            "iterate_hodo_chain.py",
         ]
         for name in banned:
             self.assertFalse((REPO / name).exists(), name)
-        for name in ("run_hodo.py", "create_runlist.py", "iterate_hodo_chain.py"):
+        for name in ("calib.py", "ops.py", "run_hodo.py", "create_runlist.py"):
             self.assertTrue((REPO / name).is_symlink(), name)
 
 

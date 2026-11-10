@@ -50,6 +50,7 @@ class DcChamberTests(unittest.TestCase):
             "    return {'momentum_gev_c': 1.0}\n"
         )
         shutil.copy(REPO / "common/lib/calib_runlist.py", lib)
+        shutil.copy(REPO / "common/lib/calib_progress.py", lib)
         (self.root / "termcolor.py").write_text(
             "def colored(text, *a, **kw): return text\n")
         shutil.copy(REPO / "calibration/scripts/iterate_dc_resi.py", self.scripts)
