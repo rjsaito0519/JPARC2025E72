@@ -22,13 +22,14 @@ Slash command (register /calib in the Slack app):
 
 Block Kit:
   - Approve / Revoke on awaiting-final (calib_approve_run / calib_revoke_run)
-  - Proceed / Refit / Stop on step gate
+  - Proceed / Refit / Stop on step gate / EXIT_CHECK
     (calib_step_proceed / calib_step_refit / calib_step_stop)
   - Accept PHC range proposal (calib_phc_accept)
+  - Custom PHC range modal (calib_phc_custom → calib_phc_custom_modal)
 
 Does not run start or arbitrary shell. resume, proceed, retry,
 phc-accept (after conf write), and hdphc-again start resume work in
-the background.
+the background when no in-process waiter is present.
 """
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from common.lib import (  # noqa: E402
     calib_ops,
     local_notify_config,
+    phc_range_gate,
     runner,
     slack_bot_ensure,
 )
@@ -79,6 +81,23 @@ def handle_calib_request(bot_cfg, user_id, channel_id, text):
     calib_ops.record_op(run, op, user_id)
     prefix = f"run{run:05d} {op}: "
     return ok, prefix + message, False
+
+
+#_____________________________________________________________________________
+def _modal_values(view):
+    """Extract plain_text_input values from a Slack view state."""
+    state = (view or {}).get("state") or {}
+    values = state.get("values") or {}
+    out = {}
+    for block_id, actions in values.items():
+        if not isinstance(actions, dict):
+            continue
+        for action_id, payload in actions.items():
+            if not isinstance(payload, dict):
+                continue
+            out[action_id] = str(payload.get("value") or "").strip()
+            out[block_id] = out[action_id]
+    return out
 
 
 #_____________________________________________________________________________
@@ -145,6 +164,94 @@ def build_app(bot_cfg):
     app.action("calib_step_refit")(_button_action("retry"))
     app.action("calib_step_stop")(_button_action("gate-stop"))
     app.action("calib_phc_accept")(_button_action("phc-accept"))
+
+    @app.action("calib_phc_custom")
+    def phc_custom_open(ack, body, client):
+        ack()
+        user = body.get("user") or {}
+        user_id = str(user.get("id") or "") if isinstance(user, dict) else ""
+        channel = body.get("channel") or {}
+        if isinstance(channel, dict):
+            channel_id = str(channel.get("id") or body.get("channel_id") or "")
+        else:
+            channel_id = str(body.get("channel_id") or "")
+        if not calib_ops.user_channel_allowed(bot_cfg, user_id, channel_id):
+            client.chat_postEphemeral(
+                channel=channel_id or user_id,
+                user=user_id,
+                text="not allowed for this user/channel",
+            )
+            return
+        actions = body.get("actions") or []
+        run_s = ""
+        if actions and isinstance(actions[0], dict):
+            run_s = str(actions[0].get("value") or "").split(":", 1)[0]
+        try:
+            run = int(run_s)
+        except (TypeError, ValueError):
+            client.chat_postEphemeral(
+                channel=channel_id or user_id,
+                user=user_id,
+                text=f"bad run value for PHC custom: {run_s!r}",
+            )
+            return
+        proposal = phc_range_gate.read_proposal(run) or {}
+        rows = proposal.get("proposals") if isinstance(proposal, dict) else None
+        trigger = str(body.get("trigger_id") or "")
+        view = phc_range_gate.phc_custom_modal_view(run, rows)
+        client.views_open(trigger_id=trigger, view=view)
+
+    @app.view("calib_phc_custom_modal")
+    def phc_custom_submit(ack, body, client):
+        view = body.get("view") or {}
+        vals = _modal_values(view)
+        det = vals.get("det") or vals.get("phc_det") or ""
+        first_s = vals.get("first") or vals.get("phc_first") or ""
+        last_s = vals.get("last") or vals.get("phc_last") or ""
+        try:
+            run = int(str(view.get("private_metadata") or ""))
+            first = int(first_s)
+            last = int(last_s)
+        except (TypeError, ValueError):
+            ack(
+                response_action="errors",
+                errors={
+                    "phc_first": "first/last must be integers",
+                    "phc_last": "first/last must be integers",
+                },
+            )
+            return
+        if not det:
+            ack(
+                response_action="errors",
+                errors={"phc_det": "detector is required"},
+            )
+            return
+        if first > last:
+            ack(
+                response_action="errors",
+                errors={"phc_last": "last must be >= first"},
+            )
+            return
+        ack()
+        user = body.get("user") or {}
+        user_id = str(user.get("id") or "") if isinstance(user, dict) else ""
+        ok, message = calib_ops.run_dispatch(
+            "phc-range",
+            run,
+            user_id=user_id,
+            det=det,
+            first=first,
+            last=last,
+        )
+        calib_ops.record_op(run, "phc-range", user_id)
+        text = f"run{run:05d} phc-range: {message}"
+        try:
+            client.chat_postMessage(channel=user_id, text=text)
+        except Exception:
+            runner.warn(f"phc modal DM failed; {text}")
+        if not ok:
+            runner.warn(text)
 
     return app
 

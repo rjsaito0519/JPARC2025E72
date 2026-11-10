@@ -1,0 +1,48 @@
+# Batch calibration list (DEFAULT + RUN).
+# Launch: ./calib.py --list calibration/caliblist/example.yml
+# Optional CLI override for all runs: ./calib.py --list ... --local
+
+DEFAULT:
+  # --- calib window / stages（複数 true 可） ---
+  calib_particle: pi            # pion|pi / kaon|k（較正窓。ビーム粒子とは別）
+  hodo: true
+  bcout: false                  # BcOut dc_chamber
+  bcin: false                   # BcIn dc_chamber
+  d5: false                     # true なら bcin+bcout を強制 ON のうえ d5_align
+
+  # --- run / decode ---
+  local: false                  # true = myrun --local；false = bsub
+  force: false
+  auto: false                   # true = Slack step_gate 省略
+  dry_run: false
+
+  # --- iterate ---
+  max_iter: 10                  # [1, 100]
+  hdphc_iter: 3
+
+  # --- beam（欠落時や上書き） ---
+  # momentum: 0.75              # [GeV/c]
+  # beam_particle: kaon         # pion|pi / kaon|k / proton|p
+  # charge: -1
+  # write_table: false
+
+RUN:
+  2977:
+
+  2978:
+    calib_particle: k
+    hodo: true
+    bcout: true
+    bcin: true
+    d5: true                    # → bcin/bcout も強制
+    local: true
+
+  3001:
+    hodo: true
+    bcin: true
+    d5: false
+    momentum: 0.70
+    beam_particle: pi
+    charge: 1
+    max_iter: 5
+    hdphc_iter: 2

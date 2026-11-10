@@ -323,7 +323,13 @@ def _phc_refit_after_conf(
     timeout_s: float,
     user_id: Optional[str],
 ) -> tuple[bool, str]:
-    """decide refit + resume after phc_conf was updated."""
+    """decide refit after phc_conf was updated; resume only if no waiter."""
+    st = _read_dispatch_state(run)
+    waiter = bool(
+        isinstance(st, dict)
+        and st.get("gate_waiter")
+        and isinstance(st.get("hold"), dict)
+    )
     ok_d, msg_d = run_dispatch(
         "decide", run,
         background_resume=False,
@@ -333,6 +339,11 @@ def _phc_refit_after_conf(
     )
     if not ok_d:
         return False, f"phc conf written; decide refit failed: {msg_d}"
+    if waiter:
+        return True, (
+            f"phc conf written; decide refit; "
+            f"in-process waiter will continue (no resume)"
+        )
     ok_r, msg_r = run_dispatch(
         "resume", run,
         background_resume=background_resume,
@@ -545,7 +556,6 @@ def run_dispatch(
             isinstance(st, dict)
             and st.get("gate_waiter")
             and isinstance(st.get("hold"), dict)
-            and st["hold"].get("source") == "step_gate"
         )
         ok_d, msg_d = run_dispatch(
             "decide", run,
@@ -580,10 +590,11 @@ def run_dispatch(
                 f"gate-stop requires status=held, got {st.get('status')!r}"
             )
         hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
-        if hold.get("source") != "step_gate":
+        source = hold.get("source")
+        if source not in ("step_gate", "exit_check"):
             return False, (
-                f"gate-stop requires hold.source=step_gate, "
-                f"got {hold.get('source')!r}"
+                f"gate-stop requires hold.source=step_gate|exit_check, "
+                f"got {source!r}"
             )
         hold = dict(hold)
         hold["decision"] = "stop"
@@ -596,10 +607,10 @@ def run_dispatch(
         )
         path.write_text(json.dumps(st, indent=2, sort_keys=True) + "\n")
         return True, (
-            f"stopped at step_gate "
+            f"stopped at {source} "
             f"(step={hold.get('step')} index={hold.get('index')}). "
             f"Hand-fix then /calib retry {run} or "
-            f"/calib decide {run} refit|continue && /calib resume {run}"
+            f"/calib decide {run} refit|continue"
         )
 
     if command == "resume" and background_resume:

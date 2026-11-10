@@ -273,19 +273,46 @@ class DispatchTests(unittest.TestCase):
                 self.assertFalse(state.get('stop_requested'))
                 self.assertFalse((self.root / 'next').exists())
 
+    def wait_for_exit_check(self, timeout_s=5.0):
+        """Poll until held at exit_check with gate_waiter."""
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if self.state.is_file():
+                state = json.loads(self.state.read_text())
+                hold = state.get("hold") if isinstance(state.get("hold"), dict) else {}
+                if (
+                    state.get("status") == "held"
+                    and hold.get("source") == "exit_check"
+                    and state.get("gate_waiter")
+                ):
+                    return state
+            time.sleep(0.05)
+        self.fail("timed out waiting for exit_check waiter")
+
     def test_exit_check_records_held(self):
-        result = self.run_chain('raise SystemExit(3)\n')
-        self.assertEqual(result.returncode, 3, result.stderr)
-        state = json.loads(self.state.read_text())
-        self.assertEqual(state['status'], 'held')
-        self.assertEqual(state['hold']['source'], 'exit_check')
-        self.assertIsNone(state['hold']['decision'])
-        self.assertFalse((self.root / 'next').exists())
+        proc = self.start_chain_async(
+            "raise SystemExit(3)\n",
+            "  - hodo\n  - dc_resi\n",
+        )
+        state = self.wait_for_exit_check()
+        self.assertEqual(state["status"], "held")
+        self.assertEqual(state["hold"]["source"], "exit_check")
+        self.assertIsNone(state["hold"]["decision"])
+        self.assertTrue(state.get("gate_waiter"))
+        self.assertFalse((self.root / "next").exists())
         journal = (
             self.root / "out/calib/run00001/hold_journal.jsonl"
         ).read_text().strip().splitlines()
-        events = [json.loads(line)['event'] for line in journal]
-        self.assertIn('hold', events)
+        events = [json.loads(line)["event"] for line in journal]
+        self.assertIn("hold", events)
+        decided = self.dispatch_extra("decide", "--action", "continue")
+        self.assertEqual(decided.returncode, 0, decided.stderr + decided.stdout)
+        out, err = proc.communicate(timeout=10)
+        # overall_rc keeps EXIT_CHECK from the held step; chain still advanced.
+        self.assertIn(proc.returncode, (0, 3), err + out)
+        self.assertTrue((self.root / "next").exists())
+        final = json.loads(self.state.read_text())
+        self.assertEqual(final["status"], "awaiting_final_approval")
 
     def test_interruption_records_stop(self):
         runner = self.root / 'common/lib/runner.py'

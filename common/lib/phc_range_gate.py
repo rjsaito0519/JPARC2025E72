@@ -104,7 +104,7 @@ def upsert_phc_conf(
 
 #_____________________________________________________________________________
 def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
-    """Block Kit Accept button; Custom is slash-command only."""
+    """Block Kit Accept + Custom (opens modal for det/first/last)."""
     run_s = str(int(run))
     lines = []
     for row in proposals:
@@ -127,7 +127,9 @@ def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
                     f"*run{int(run):05d}* PHC usable-segment range proposal\n"
                     f"{body}\n"
                     f"Accept = write all to `phc_conf.py` and refit hdphc. "
-                    f"Custom: `/calib phc-range {int(run)} <det> <first> <last>`"
+                    f"Custom = enter det / first / last in the modal "
+                    f"(slash fallback: `/calib phc-range {int(run)} "
+                    f"<det> <first> <last>`)"
                 ),
             },
         },
@@ -142,9 +144,67 @@ def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
                     "style": "primary",
                     "value": run_s,
                 },
+                {
+                    "type": "button",
+                    "action_id": "calib_phc_custom",
+                    "text": {"type": "plain_text", "text": "Custom range"},
+                    "value": run_s,
+                },
             ],
         },
     ]
+
+
+#_____________________________________________________________________________
+def phc_custom_modal_view(run: int, proposals: list[dict[str, Any]] | None = None) -> dict:
+    """Modal view payload for Custom PHC range (det / first / last)."""
+    run_i = int(run)
+    dets = []
+    if isinstance(proposals, list):
+        for row in proposals:
+            if isinstance(row, dict) and row.get("det"):
+                dets.append(str(row["det"]))
+    hint = ", ".join(dets) if dets else "e.g. BHT"
+    return {
+        "type": "modal",
+        "callback_id": "calib_phc_custom_modal",
+        "private_metadata": str(run_i),
+        "title": {"type": "plain_text", "text": f"PHC range {run_i:05d}"},
+        "submit": {"type": "plain_text", "text": "Apply"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "phc_det",
+                "label": {"type": "plain_text", "text": "Detector"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "det",
+                    "placeholder": {"type": "plain_text", "text": hint},
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "phc_first",
+                "label": {"type": "plain_text", "text": "First segment"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "first",
+                    "placeholder": {"type": "plain_text", "text": "0"},
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "phc_last",
+                "label": {"type": "plain_text", "text": "Last segment"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "last",
+                    "placeholder": {"type": "plain_text", "text": "31"},
+                },
+            },
+        ],
+    }
 
 
 #_____________________________________________________________________________

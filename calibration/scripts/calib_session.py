@@ -24,8 +24,23 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from common.lib import beam_run_condition as brc  # noqa: E402
 from common.lib import config, runner  # noqa: E402
 
-TARGETS = ("hodo", "chamber", "both")
+# Compat for old session YAML / calib_session init; new flows use stage flags.
+TARGETS = ("hodo", "chamber", "both", "custom")
 CALIB_PARTICLES = ("pion", "kaon")
+CALIB_PARTICLE_ALIASES = {
+    "pion": "pion",
+    "pi": "pion",
+    "kaon": "kaon",
+    "k": "kaon",
+}
+BEAM_PARTICLE_ALIASES = {
+    "pion": "pion",
+    "pi": "pion",
+    "kaon": "kaon",
+    "k": "kaon",
+    "proton": "proton",
+    "p": "proton",
+}
 
 
 #_____________________________________________________________________________
@@ -39,12 +54,37 @@ def session_path(run):
 
 
 #_____________________________________________________________________________
+def normalize_calib_particle(raw):
+    """Map pion|pi / kaon|k (case-insensitive) to pion|kaon."""
+    key = str(raw or "").strip().lower()
+    particle = CALIB_PARTICLE_ALIASES.get(key)
+    if particle is None:
+        runner.fail(
+            f"calib_particle must be pion|pi|kaon|k, got {raw!r}"
+        )
+    return particle
+
+
+#_____________________________________________________________________________
+def normalize_beam_particle(raw):
+    """Map pion|pi / kaon|k / proton|p to canonical beam particle."""
+    key = str(raw or "").strip().lower()
+    particle = BEAM_PARTICLE_ALIASES.get(key)
+    if particle is None:
+        runner.fail(
+            f"beam_particle must be pion|pi|kaon|k|proton|p, got {raw!r}"
+        )
+    return particle
+
+
+#_____________________________________________________________________________
 def default_steps(target):
     if target == "hodo":
         return ["hodo"]
     chamber = ["dc_chamber", {"dc_chamber": {"bcin": True}}, "d5_align"]
     if target == "chamber":
         return chamber
+    # former "both" and any other → full chain
     return ["hodo"] + chamber
 
 
@@ -52,11 +92,15 @@ def default_steps(target):
 def steps_from_flags(*, hodo=False, bcout=False, bcin=False, d5=False):
     """Build session steps from boolean stage flags.
 
-    No flags → both. Any flag → only those stages, in fixed order.
+    Multiple flags may be true. d5 forces bcout+bcin on.
+    No flags → full chain (hodo + bcout + bcin + d5).
     """
+    if d5:
+        bcout = True
+        bcin = True
     any_flag = hodo or bcout or bcin or d5
     if not any_flag:
-        return default_steps("both"), "both"
+        hodo = bcout = bcin = d5 = True
     steps = []
     if hodo:
         steps.append("hodo")
@@ -70,8 +114,6 @@ def steps_from_flags(*, hodo=False, bcout=False, bcin=False, d5=False):
         target = "hodo"
     elif steps == default_steps("chamber"):
         target = "chamber"
-    elif steps == default_steps("both"):
-        target = "both"
     else:
         target = "custom"
     return steps, target
@@ -199,9 +241,7 @@ def resolve_calib_particle(*, pion=False, kaon=False, calib_particle=None):
     if pion and kaon:
         runner.fail("use only one of --pion / --kaon")
     if calib_particle is not None:
-        particle = str(calib_particle).lower()
-        if particle not in CALIB_PARTICLES:
-            runner.fail(f"calib_particle must be pion|kaon, got {calib_particle!r}")
+        particle = normalize_calib_particle(calib_particle)
         if pion and particle != "pion":
             runner.fail("--pion disagrees with --calib-particle")
         if kaon and particle != "kaon":
@@ -263,7 +303,7 @@ def build_session_doc(
     beam_particle_out = resolved["particle"]
     beam_particle_source = resolved["particle_source"]
     if beam_particle:
-        beam_particle_out = beam_particle
+        beam_particle_out = normalize_beam_particle(beam_particle)
         beam_particle_source = brc.SOURCE_USER_INPUT
 
     momentum_out = resolved["momentum_gev_c"]

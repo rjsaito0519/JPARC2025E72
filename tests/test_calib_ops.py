@@ -182,7 +182,7 @@ class CalibOpsTests(unittest.TestCase):
         dup2, _ = self.ops.check_dedup(3, "status", "U1", window_s=60)
         self.assertFalse(dup2)
 
-    def _write_held_state(self, run, hold_id):
+    def _write_held_state(self, run, hold_id, source="step_gate"):
         yml = self.ops.session_yml(run)
         yml.parent.mkdir(parents=True, exist_ok=True)
         yml.write_text("run: %d\nsteps:\n  - hodo\n" % run, encoding="utf-8")
@@ -191,7 +191,7 @@ class CalibOpsTests(unittest.TestCase):
             "run": run,
             "status": "held",
             "hold": {
-                "source": "step_gate",
+                "source": source,
                 "step": "hodo_hdprm",
                 "index": 0,
                 "id": hold_id,
@@ -247,6 +247,31 @@ class CalibOpsTests(unittest.TestCase):
              ) as popen:
             ok, msg = self.ops.run_dispatch(
                 "proceed", 23, hold_id="waiterid001", background_resume=True,
+            )
+        self.assertTrue(ok, msg)
+        self.assertEqual(calls, ["decide"])
+        self.assertFalse(popen.called)
+        self.assertIn("no resume", msg)
+
+    def test_proceed_exit_check_waiter_skips_resume(self):
+        self._write_held_state(24, "exithold001", source="exit_check")
+        state_path = self.out / "calib/run00024/calib_dispatch_state.json"
+        st = json.loads(state_path.read_text(encoding="utf-8"))
+        st["gate_waiter"] = True
+        state_path.write_text(json.dumps(st) + "\n", encoding="utf-8")
+        calls = []
+
+        def fake_run(cmd, capture_output=True, text=True, timeout=30.0):
+            calls.append(cmd[2])
+            return mock.Mock(returncode=0, stdout=cmd[2] + " ok\n", stderr="")
+
+        with mock.patch.object(self.ops.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(
+                 self.ops.subprocess, "Popen",
+                 return_value=mock.Mock(pid=99),
+             ) as popen:
+            ok, msg = self.ops.run_dispatch(
+                "proceed", 24, hold_id="exithold001", background_resume=True,
             )
         self.assertTrue(ok, msg)
         self.assertEqual(calls, ["decide"])

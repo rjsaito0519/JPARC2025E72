@@ -5,6 +5,7 @@ Usage:
   ./calib.py <run> [--pion|--kaon] [--hodo] [--bcout] [--bcin] [--d5]
              [--local] [--dry] [--force] [--auto]
   ./calib.py <run> --init [--local] [--dry]
+  ./calib.py --list calibration/caliblist/<name>.yml [--local]
 
 If a prior dispatch state exists:
   - TTY: ask 続きから / 初めから
@@ -14,11 +15,15 @@ If a prior dispatch state exists:
 --init: prepare Hodo.root for TDC window setting (create_runlist hodo 0 +
 decode if missing). Does not start a calib session.
 
+--list: run DEFAULT+RUN batch from caliblist YAML (one run at a time;
+Slack gates / PHC modal wait as usual).
+
 State ops: ./ops.py status|stop|… <run>  (or Slack /calib …).
 Prefer this over calib_session.py / calib_dispatch.py.
 """
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -27,6 +32,7 @@ import calib_dispatch as cd  # noqa: E402
 import calib_session as cs  # noqa: E402
 from common.lib import (  # noqa: E402
     calib_approval,
+    calib_list,
     calib_runlist,
     decode_run,
     hodo_btof_monitor,
@@ -41,7 +47,14 @@ CHOICE_RESTART = "restart"
 #_____________________________________________________________________________
 def parse_args():
     p = runner.Parser(__doc__)
-    p.add_argument("run", type=int, help="run number")
+    p.add_argument(
+        "run", type=int, nargs="?", default=None,
+        help="run number (omit with --list)",
+    )
+    p.add_argument(
+        "--list", type=Path, default=None,
+        help="caliblist YAML (DEFAULT+RUN batch)",
+    )
     p.add_argument("--init", action="store_true",
                    help="prepare Hodo.root for TDC windows; no session/chain")
     p.add_argument("--pion", action="store_true", help="calib window pion (default)")
@@ -49,7 +62,10 @@ def parse_args():
     p.add_argument("--hodo", action="store_true", help="include hodo step")
     p.add_argument("--bcout", action="store_true", help="include BcOut dc_chamber")
     p.add_argument("--bcin", action="store_true", help="include BcIn dc_chamber")
-    p.add_argument("--d5", action="store_true", help="include d5_align")
+    p.add_argument(
+        "--d5", action="store_true",
+        help="include d5_align (also forces bcout+bcin)",
+    )
     p.add_argument("--local", action="store_true",
                    help="myrun --local (default: bsub)")
     p.add_argument("--dry", "--dry-run", dest="dry_run", action="store_true",
@@ -250,7 +266,7 @@ def continue_from_state(cfg, st, dry_run):
 
 
 #_____________________________________________________________________________
-def restart_from_beginning(a, calib_particle, steps, target):
+def restart_from_beginning(a, calib_particle, steps, target, *, max_iter=10, hdphc_iter=3):
     """Clear dispatch state + progress, rewrite session, start at step 0."""
     run = a.run
     runner.info(f"run{run:05d}: restarting from the beginning")
@@ -264,10 +280,15 @@ def restart_from_beginning(a, calib_particle, steps, target):
         steps=steps,
         target=target,
         momentum=a.momentum,
+        beam_particle=getattr(a, "beam_particle", None),
+        charge=getattr(a, "charge", None),
+        write_table=bool(getattr(a, "write_table", False)),
+        max_iter=max_iter,
         local=a.local,
         auto=a.auto,
         overwrite=True,
-        prompt_if_missing=True,
+        prompt_if_missing=a.momentum is None,
+        hdphc_iter=hdphc_iter,
     )
     if a.local:
         cs.set_session_local(path, True)
@@ -279,8 +300,66 @@ def restart_from_beginning(a, calib_particle, steps, target):
 
 
 #_____________________________________________________________________________
+def run_one_from_opts(run, opts, *, cli_local=False):
+    """Start one run from caliblist-normalized opts (always fresh start)."""
+    local = bool(opts.get("local")) or bool(cli_local)
+    dry_run = bool(opts.get("dry_run"))
+    auto = bool(opts.get("auto"))
+    force = bool(opts.get("force"))
+    calib_particle = cs.normalize_calib_particle(opts.get("calib_particle", "pion"))
+    beam_particle = opts.get("beam_particle")
+    if beam_particle is not None:
+        beam_particle = cs.normalize_beam_particle(beam_particle)
+    steps, target = cs.steps_from_flags(
+        hodo=opts.get("hodo", False),
+        bcout=opts.get("bcout", False),
+        bcin=opts.get("bcin", False),
+        d5=opts.get("d5", False),
+    )
+    announce_chain(run, calib_particle, steps)
+    a = SimpleNamespace(
+        run=run,
+        dry_run=dry_run,
+        local=local,
+        auto=auto,
+        force=force,
+        momentum=opts.get("momentum"),
+        beam_particle=beam_particle,
+        charge=opts.get("charge"),
+        write_table=bool(opts.get("write_table")),
+    )
+    restart_from_beginning(
+        a, calib_particle, steps, target,
+        max_iter=int(opts.get("max_iter", 10)),
+        hdphc_iter=int(opts.get("hdphc_iter", 3)),
+    )
+
+
+#_____________________________________________________________________________
+def do_list(path, *, cli_local=False):
+    """Run caliblist entries sequentially (each blocks through gates)."""
+    entries = calib_list.load_caliblist(path)
+    runner.info(f"caliblist {path}: {len(entries)} run(s)")
+    for run, opts in entries:
+        runner.info(f"caliblist next run{run:05d}")
+        run_one_from_opts(run, opts, cli_local=cli_local)
+    runner.info(f"caliblist done: {path}")
+    sys.exit(runner.EXIT_OK)
+
+
+#_____________________________________________________________________________
 def main():
     a = parse_args()
+    if a.list is not None:
+        if a.init:
+            runner.fail("--list cannot be combined with --init")
+        if a.run is not None:
+            runner.fail("--list does not take a run argument")
+        do_list(a.list, cli_local=a.local)
+        return
+
+    if a.run is None:
+        runner.fail("run number required (or pass --list PATH)")
     if a.run < 1:
         runner.fail("run must be >= 1")
 

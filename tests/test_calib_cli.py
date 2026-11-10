@@ -85,9 +85,13 @@ class CalibCliHelpersTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         lines = result.stdout.strip().splitlines()
-        self.assertEqual(lines[0], "both 4")
+        # No flags → full chain (former both); d5 forces bcout+bcin.
+        self.assertEqual(lines[0], "custom 4")
         self.assertEqual(lines[1], "hodo ['hodo']")
-        self.assertEqual(lines[2], "custom ['dc_chamber', 'd5_align']")
+        self.assertEqual(
+            lines[2],
+            "chamber ['dc_chamber', {'dc_chamber': {'bcin': True}}, 'd5_align']",
+        )
 
     def test_expand_coarse_steps(self):
         result = self.py(

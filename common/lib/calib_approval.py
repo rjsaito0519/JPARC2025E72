@@ -802,13 +802,95 @@ def step_gate_action_blocks(
 
 
 #_____________________________________________________________________________
+def exit_check_action_blocks(
+    run: int, step: str, index: int, hold_id: str = "",
+) -> list[dict[str, Any]]:
+    """Block Kit Proceed / Refit / Stop after EXIT_CHECK (human review)."""
+    run_s = str(int(run))
+    step_s = str(step or "?")
+    hold_s = str(hold_id or "").strip()
+    value = f"{run_s}:{hold_s}" if hold_s else run_s
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*run{int(run):05d}* step `{step_s}` "
+                    f"(index {int(index)}) needs review (EXIT_CHECK). "
+                    "Proceed, refit, or stop — QA / PHC controls above."
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "block_id": f"calib_exit_check_{run_s}_{int(index)}",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "calib_step_proceed",
+                    "text": {"type": "plain_text", "text": "次へ進む"},
+                    "style": "primary",
+                    "value": value,
+                },
+                {
+                    "type": "button",
+                    "action_id": "calib_step_refit",
+                    "text": {"type": "plain_text", "text": "手直ししてやり直し"},
+                    "value": value,
+                },
+                {
+                    "type": "button",
+                    "action_id": "calib_step_stop",
+                    "text": {"type": "plain_text", "text": "止める"},
+                    "style": "danger",
+                    "value": value,
+                },
+            ],
+        },
+    ]
+
+
+#_____________________________________________________________________________
+def notify_exit_check_slack(
+    run: int, hold: dict[str, Any] | None,
+) -> tuple[bool, str]:
+    """Notify EXIT_CHECK hold; skip if PHC range UI already posted."""
+    from . import slack_notify
+
+    hold = hold if isinstance(hold, dict) else {}
+    reason = str(hold.get("reason") or "")
+    if reason.startswith("phc_range_proposal") or "phc_range_proposal:" in reason:
+        # Dedicated Accept / Custom modal already notified; waiter still runs.
+        return True, "slack skip: phc_range_proposal already notified"
+    step_s = str(hold.get("step") or "?")
+    index = hold.get("index")
+    index_i = int(index) if isinstance(index, int) else 0
+    hold_s = str(hold.get("id") or "").strip()
+    text = (
+        f"run{int(run):05d}: EXIT_CHECK after step {step_s}. "
+        f"Proceed, refit, or stop? "
+        f"/calib decide {int(run)} continue|refit"
+    )
+    key = f"exit_check:{index_i}:{step_s}"
+    key = f"{key}:{hold_s}" if hold_s else f"{key}:noid"
+    return slack_notify.try_notify_failure(
+        int(run),
+        key,
+        text,
+        blocks=exit_check_action_blocks(
+            int(run), step_s, index_i, hold_id=hold_s,
+        ),
+    )
+
+
+#_____________________________________________________________________________
 def notify_held_slack(
     run: int, hold: dict[str, Any] | None,
 ) -> tuple[bool, str]:
-    """Thread note when dispatch enters held (EXIT_CHECK or manual hold).
+    """Thread note when dispatch enters held (manual hold, etc.).
 
-    Skips step_gate (has its own buttons) and phc_range_proposal (dedicated
-    Accept/Custom message already posted).
+    Skips step_gate / exit_check (buttoned notifies) and phc_range_proposal.
     """
     from . import slack_notify
 
@@ -816,6 +898,8 @@ def notify_held_slack(
     source = str(hold.get("source") or "hold")
     if source == "step_gate":
         return True, "slack skip: step_gate uses notify_step_gate_slack"
+    if source == "exit_check":
+        return True, "slack skip: exit_check uses notify_exit_check_slack"
     reason = str(hold.get("reason") or "")
     if reason.startswith("phc_range_proposal") or "phc_range_proposal:" in reason:
         return True, "slack skip: phc_range_proposal already notified"
@@ -825,7 +909,8 @@ def notify_held_slack(
     text = (
         f"run{int(run):05d}: held after step {step_s} "
         f"(source={source}, index={index_s}): {reason or '(no reason)'}. "
-        f"/calib decide {int(run)} refit|continue then /calib resume {int(run)}"
+        f"/calib decide {int(run)} refit|continue "
+        f"(in-process waiter continues; else resume)"
     )
     return slack_notify.try_notify_failure(
         int(run),

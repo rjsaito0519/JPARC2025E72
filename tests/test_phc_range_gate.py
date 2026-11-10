@@ -85,27 +85,55 @@ class PhcRangeGateTests(unittest.TestCase):
                 3,
                 {
                     "source": "exit_check",
-                    "reason": "step hodo EXIT_CHECK (rc=3): phc_range_proposal: BHT",
-                    "step": "hodo",
-                    "index": 0,
-                },
-            )
-            self.assertTrue(ok)
-            self.assertIn("phc_range_proposal", msg)
-            notify.assert_not_called()
-
-            ok, msg = calib_approval.notify_held_slack(
-                3,
-                {
-                    "source": "exit_check",
                     "reason": "step hodo EXIT_CHECK (rc=3): other anomaly",
                     "step": "hodo",
                     "index": 0,
                 },
             )
             self.assertTrue(ok)
+            self.assertIn("exit_check", msg)
+            notify.assert_not_called()
+
+            ok, msg = calib_approval.notify_exit_check_slack(
+                3,
+                {
+                    "source": "exit_check",
+                    "reason": "step hodo EXIT_CHECK (rc=3): phc_range_proposal: BHT",
+                    "step": "hodo",
+                    "index": 0,
+                    "id": "abc",
+                },
+            )
+            self.assertTrue(ok)
+            self.assertIn("phc_range_proposal", msg)
+            notify.assert_not_called()
+
+            ok, msg = calib_approval.notify_exit_check_slack(
+                3,
+                {
+                    "source": "exit_check",
+                    "reason": "step hodo EXIT_CHECK (rc=3): other anomaly",
+                    "step": "hodo",
+                    "index": 0,
+                    "id": "def",
+                },
+            )
+            self.assertTrue(ok)
             self.assertEqual(msg, "notified")
             notify.assert_called_once()
+
+    def test_phc_blocks_include_custom(self):
+        blocks = self.gate.phc_range_action_blocks(
+            9, [{"det": "BHT", "first": 1, "last": 10, "bad": 2, "total": 5}],
+        )
+        actions = blocks[1]["elements"]
+        ids = [e["action_id"] for e in actions]
+        self.assertEqual(ids, ["calib_phc_accept", "calib_phc_custom"])
+        view = self.gate.phc_custom_modal_view(
+            9, [{"det": "BHT", "first": 1, "last": 10}],
+        )
+        self.assertEqual(view["callback_id"], "calib_phc_custom_modal")
+        self.assertEqual(view["private_metadata"], "9")
 
 
 if __name__ == "__main__":

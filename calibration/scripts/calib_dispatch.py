@@ -589,10 +589,11 @@ def mark_gate_waiter(run, *, waiting=True):
 
 
 #_____________________________________________________________________________
-def wait_step_gate_decision(run, hold_id, *, poll_s=None):
+def wait_held_decision(run, hold_id, *, poll_s=None, label="gate"):
     """Block until Slack/CLI decide (or gate-stop) for this hold id.
 
     Returns 'continue' | 'refit' | 'stop'.
+    Used for step_gate and exit_check in-process waits.
     """
     if poll_s is None:
         try:
@@ -605,7 +606,7 @@ def wait_step_gate_decision(run, hold_id, *, poll_s=None):
 
     ok_bot, bot_msg = slack_bot_ensure.ensure_slack_bot(required=True)
     if not ok_bot:
-        runner.fail(f"slack bot required for step_gate: {bot_msg}")
+        runner.fail(f"slack bot required for {label}: {bot_msg}")
     runner.info(bot_msg)
     runner.info(
         f"waiting for Slack Proceed / Refit / Stop "
@@ -631,6 +632,14 @@ def wait_step_gate_decision(run, hold_id, *, poll_s=None):
                 return decision
     finally:
         mark_gate_waiter(run, waiting=False)
+
+
+#_____________________________________________________________________________
+def wait_step_gate_decision(run, hold_id, *, poll_s=None):
+    """Alias for wait_held_decision (step_gate label)."""
+    return wait_held_decision(
+        run, hold_id, poll_s=poll_s, label="step_gate",
+    )
 
 
 #_____________________________________________________________________________
@@ -1208,55 +1217,78 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
             tmp = clear_unverified_through(tmp, i)
             unverified = list(tmp.get("unverified") or [])
         if not should_continue(rc, opts):
-            if not dry_run:
-                base = make_payload(
-                    cfg["run"], i, name, opts, rc, False, steps_hist, "stopped",
-                    session=session, plan=plan, unverified=unverified,
-                )
-                if rc == runner.EXIT_CHECK:
-                    from common.lib import calib_anomaly
-                    detail = calib_anomaly.read_check_reason(cfg["run"])
-                    reason = (
-                        f"step {name} EXIT_CHECK (rc={rc})"
-                        + (f": {detail}" if detail else "")
-                    )
-                    hold = make_hold(
-                        "exit_check",
-                        reason,
-                        name, i, rc,
-                    )
-                    enter_held(
-                        cfg["run"], base, hold, "hold", cfg_steps=cfg["steps"],
-                    )
-                    append_progress(
-                        cfg["run"], "exit_check",
-                        step=name, index=i, rc=rc, status="held",
-                        hold_source="exit_check",
-                    )
-                    ok_slack, slack_msg = calib_approval.notify_held_slack(
-                        cfg["run"], hold,
-                    )
-                    if not ok_slack:
-                        runner.warn(f"held Slack note failed: {slack_msg}")
-                    runner.warn(
-                        f"held after step {name} (rc={rc}); "
-                        f"decide --action refit|continue before resume"
-                    )
-                else:
-                    write_state(cfg["run"], base)
-                    append_progress(
-                        cfg["run"], "step_stop",
-                        step=name, index=i, rc=rc, status="stopped",
-                    )
-                    ok_slack, slack_msg = calib_approval.notify_stopped_slack(
-                        cfg["run"], name, i, rc,
-                    )
-                    if not ok_slack:
-                        runner.warn(f"stopped Slack note failed: {slack_msg}")
-                    runner.warn(f"stopping after step {name} (rc={rc})")
-            else:
+            if dry_run:
                 runner.warn(f"stopping after step {name} (rc={rc})")
-            sys.exit(rc)
+                sys.exit(rc)
+            base = make_payload(
+                cfg["run"], i, name, opts, rc, False, steps_hist, "stopped",
+                session=session, plan=plan, unverified=unverified,
+            )
+            if rc != runner.EXIT_CHECK:
+                write_state(cfg["run"], base)
+                append_progress(
+                    cfg["run"], "step_stop",
+                    step=name, index=i, rc=rc, status="stopped",
+                )
+                ok_slack, slack_msg = calib_approval.notify_stopped_slack(
+                    cfg["run"], name, i, rc,
+                )
+                if not ok_slack:
+                    runner.warn(f"stopped Slack note failed: {slack_msg}")
+                runner.warn(f"stopping after step {name} (rc={rc})")
+                sys.exit(rc)
+
+            # EXIT_CHECK: hold and wait in-process (Slack / CLI decide).
+            from common.lib import calib_anomaly
+            detail = calib_anomaly.read_check_reason(cfg["run"])
+            reason = (
+                f"step {name} EXIT_CHECK (rc={rc})"
+                + (f": {detail}" if detail else "")
+            )
+            hold = make_hold("exit_check", reason, name, i, rc)
+            enter_held(
+                cfg["run"], base, hold, "hold", cfg_steps=cfg["steps"],
+            )
+            append_progress(
+                cfg["run"], "exit_check",
+                step=name, index=i, rc=rc, status="held",
+                hold_source="exit_check",
+            )
+            _ensure_slack_bot_for_gates(cfg, dry_run)
+            ok_slack, slack_msg = calib_approval.notify_exit_check_slack(
+                cfg["run"], hold,
+            )
+            if not ok_slack:
+                runner.warn(f"held Slack note failed: {slack_msg}")
+            runner.info(
+                f"held after step {name} (exit_check rc={rc}); "
+                f"waiting for Slack Proceed / Refit / Stop "
+                f"(or ./ops.py decide {cfg['run']} continue|refit)"
+            )
+            decision = wait_held_decision(
+                cfg["run"], hold.get("id"), label="exit_check",
+            )
+            if decision == "stop":
+                runner.info(
+                    f"exit_check stop; staying held after {name} (rc={rc})"
+                )
+                sys.exit(rc)
+            if decision == "refit":
+                runner.info(f"exit_check refit; re-running {name}")
+                append_progress(
+                    cfg["run"], "exit_check_refit",
+                    step=name, index=i, rc=rc, status="running",
+                    hold_source="exit_check",
+                )
+                continue
+            runner.info(f"exit_check continue; next step after {name}")
+            append_progress(
+                cfg["run"], "exit_check_continue",
+                step=name, index=i, rc=rc, status="running",
+                hold_source="exit_check",
+            )
+            i += 1
+            continue
 
         # Cooperative hold: honor hold_requested before the next step.
         if not dry_run and i + 1 < n_steps and hold_requested(cfg["run"]):
@@ -1334,7 +1366,9 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 f"waiting for Slack Proceed / Refit / Stop "
                 f"(or ./ops.py decide {cfg['run']} continue|refit)"
             )
-            decision = wait_step_gate_decision(cfg["run"], hold.get("id"))
+            decision = wait_held_decision(
+                cfg["run"], hold.get("id"), label="step_gate",
+            )
             if decision == "stop":
                 runner.info(
                     f"step_gate stop; staying held after {name} (rc={rc})"

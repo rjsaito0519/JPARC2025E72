@@ -85,6 +85,12 @@ def populate_dispatch_lib(
         "    return True, 'slack skip: disabled'\n",
         encoding="utf-8",
     )
+    (lib / "slack_bot_ensure.py").write_text(
+        "TMUX_SESSION = 'e72_calib_slack_bot'\n"
+        "def ensure_slack_bot(*, required=False):\n"
+        "    return True, 'slack bot ensure stub (tests)'\n",
+        encoding="utf-8",
+    )
 
     shutil.copy(repo / "calibration" / "scripts" / "calib_dispatch.py", scripts)
     for name in (
