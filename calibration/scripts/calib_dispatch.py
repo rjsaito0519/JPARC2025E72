@@ -1083,7 +1083,7 @@ def parse_args():
                    help="decide: refit (retry step) or continue (advance)")
     p.add_argument("--note", default=None,
                    help="decide/approve: optional note for journal")
-    p.add_argument("--via", default="cli", choices=("cli", "slack"),
+    p.add_argument("--via", default="cli", choices=("cli", "slack", "web"),
                    help="approve: how the approval was issued")
     p.add_argument("--user-id", default=None,
                    help="approve: Slack user id when --via slack")

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"/>
+<title>Calib final approval</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1.5rem; max-width: 960px; }
+  h1 { font-size: 1.25rem; }
+  .row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin: 0.75rem 0; }
+  button { padding: 0.4rem 0.9rem; cursor: pointer; }
+  #msg { white-space: pre-wrap; background: #f4f4f4; padding: 0.75rem; min-height: 2rem; }
+  ul { padding-left: 1.2rem; }
+  .meta { color: #444; font-size: 0.95rem; }
+</style>
+</head>
+<body>
+  <h1>Calib final QA approval</h1>
+  <div class="row">
+    <label>run <select id="run"></select></label>
+    <button id="reload">reload</button>
+    <button id="approve">Approve</button>
+    <button id="revoke">Revoke</button>
+  </div>
+  <div id="meta" class="meta"></div>
+  <h2>QA PDFs</h2>
+  <ul id="pdfs"></ul>
+  <h2>Message</h2>
+  <div id="msg"></div>
+<script>
+async function jget(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+async function jpost(url, body) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  });
+  return r.json();
+}
+function el(id) { return document.getElementById(id); }
+function showState(st) {
+  el("meta").textContent =
+    `status=${st.status}  subject_sha=${(st.subject_sha||"").slice(0,8)}…  ` +
+    `unverified=${JSON.stringify(st.unverified||[])}  ` +
+    `open_flags=${(st.open_flags||[]).length}`;
+  const ul = el("pdfs");
+  ul.innerHTML = "";
+  const pdfs = (st.pdf_index && st.pdf_index.pdfs) || [];
+  if (!pdfs.length) {
+    ul.innerHTML = "<li>(no QA PDFs found)</li>";
+    return;
+  }
+  for (const p of pdfs) {
+    const li = document.createElement("li");
+    const a = document.createElement("a");
+    a.href = `/pdf?run=${st.run}&name=${encodeURIComponent(p.name)}`;
+    a.textContent = p.name;
+    a.target = "_blank";
+    li.appendChild(a);
+    ul.appendChild(li);
+  }
+}
+async function loadRuns() {
+  const data = await jget("/runs");
+  const sel = el("run");
+  sel.innerHTML = "";
+  for (const r of data.runs) {
+    const o = document.createElement("option");
+    o.value = r; o.textContent = r;
+    if (data.first && r === data.first) o.selected = true;
+    sel.appendChild(o);
+  }
+  if (!sel.value && data.runs.length) sel.value = data.runs[data.runs.length - 1];
+}
+async function reload() {
+  const run = Number(el("run").value);
+  if (!run) return;
+  const st = await jget(`/state?run=${run}`);
+  showState(st);
+  el("msg").textContent = "loaded";
+}
+el("reload").onclick = reload;
+el("run").onchange = reload;
+el("approve").onclick = async () => {
+  const run = Number(el("run").value);
+  const res = await jpost("/approve", {run});
+  el("msg").textContent = res.message || JSON.stringify(res);
+  if (res.state) showState(res.state);
+};
+el("revoke").onclick = async () => {
+  const run = Number(el("run").value);
+  const res = await jpost("/revoke", {run, reason: "web revoke"});
+  el("msg").textContent = res.message || JSON.stringify(res);
+  if (res.state) showState(res.state);
+};
+(async () => { await loadRuns(); await reload(); })();
+</script>
+</body>
+</html>

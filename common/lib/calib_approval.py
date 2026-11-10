@@ -233,11 +233,15 @@ def notify_awaiting_slack(run: int, sha: str) -> tuple[bool, str]:
     """Short thread note that final approval is needed (with Block Kit buttons)."""
     from . import slack_notify
 
+    from . import final_qa_index
+
     short = (sha or "")[:8]
+    n_pdf = final_qa_index.index_summary(int(run)).get("n_pdf", 0)
     text = (
         f"run{int(run):05d}: awaiting final QA approval "
-        f"(subject_sha={short}…). "
-        f"/calib approve {int(run)}"
+        f"(subject_sha={short}…, QA PDFs={n_pdf}). "
+        f"/calib approve {int(run)}  "
+        f"(Web: final_approval_web port 8766)"
     )
     return slack_notify.try_notify_failure(
         int(run),
