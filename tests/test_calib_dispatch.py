@@ -6,11 +6,12 @@ Only site configuration, color, and unused ROOT-facing helpers are stubbed.
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+
+from dispatch_isolation import populate_dispatch_lib
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -20,52 +21,14 @@ class DispatchTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.scripts = self.root / "calibration/scripts"
-        self.scripts.mkdir(parents=True)
-        lib = self.root / "common/lib"
-        lib.mkdir(parents=True)
-        (lib / "__init__.py").touch()
-        data = self.root / "data"
-        decode = self.root / "decode"
-        scratch = self.root / "scratch"
-        (lib / "config.py").write_text(
-            "from pathlib import Path\n"
-            f"OUTPUT_DIR = Path({str(self.root / 'out')!r})\n"
-            f"PARAM_DIR = Path({str(self.root / 'param')!r})\n"
-            f"DATA_DIR = Path({str(data)!r})\n"
-            f"DECODE_DIR = Path({str(decode)!r})\n"
-            f"SCRATCH_DIR = Path({str(scratch)!r})\n"
-            "SUB_DIR = 'e72'\n"
-        )
-        (lib / "input_check.py").write_text("def check_input(*a): return True\n")
-        (lib / "param.py").write_text("def backup_file(*a): pass\n")
-        (self.root / "termcolor.py").write_text("def colored(text, *a, **kw): return text\n")
-        shutil.copy(REPO / "calibration/scripts/calib_dispatch.py", self.scripts)
-        shutil.copy(REPO / "common/lib/runner.py", lib)
-        shutil.copy(REPO / "common/lib/calib_approval.py", lib)
-        shutil.copy(REPO / "common/lib/qa_session.py", lib)
-        (lib / "channel_flags.py").write_text(
-            "def open_needs_review(*a, **k):\n"
-            "    return []\n"
-            "def write_blocked_by_flags(*a, **k):\n"
-            "    return False, ''\n"
-        )
-        (lib / "final_qa_index.py").write_text(
-            "def index_summary(*a, **k):\n"
-            "    return {'n_pdf': 0, 'pdfs': []}\n"
-        )
-        shutil.copy(REPO / "common/lib/calib_anomaly.py", lib)
-        # Slack notify is best-effort on awaiting; stub as skip.
-        (lib / "slack_notify.py").write_text(
-            "def try_notify_failure(*a, **k):\n"
-            "    return True, 'slack skip: disabled'\n"
-        )
+        paths = populate_dispatch_lib(REPO, self.root)
+        self.scripts = paths["scripts"]
+        self.data = paths["data"]
+        self.decode = paths["decode"]
+        self.scratch = paths["scratch"]
         self.state = self.root / "out/calib/run00001/calib_dispatch_state.json"
         self.cfg = self.root / "config.yml"
         self.env = {**os.environ, "PYTHONPATH": str(self.root)}
-        self.data = data
-        self.decode = decode
-        self.scratch = scratch
 
     def seed_subject_files(self, *, hodo=True, dc=True, d5=False):
         """Minimal param/decode/QA files so approve subject has no missing."""

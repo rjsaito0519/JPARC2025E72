@@ -9,6 +9,8 @@ import unittest
 
 import yaml
 
+from dispatch_isolation import populate_dispatch_lib
+
 REPO = Path(__file__).resolve().parents[1]
 
 
@@ -17,8 +19,6 @@ class BeamSessionTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.scripts = self.root / "calibration/scripts"
-        self.scripts.mkdir(parents=True)
         cfg = self.root / "calibration/config"
         cfg.mkdir(parents=True)
         self.table = cfg / "beam_run_condition.yml"
@@ -27,27 +27,13 @@ class BeamSessionTests(unittest.TestCase):
             "  - {first: 100, last: 110, particle: pion, momentum_gev_c: 1.0, charge: -1}\n"
             "  - {first: 200, last: 200, particle: kaon, momentum_gev_c: 0.9, charge: -1}\n"
         )
-        lib = self.root / "common/lib"
-        lib.mkdir(parents=True)
-        (lib / "__init__.py").touch()
-        (lib / "config.py").write_text(
-            "from pathlib import Path\n"
-            f"OUTPUT_DIR = Path({str(self.root / 'out')!r})\n"
-            f"PARAM_DIR = Path({str(self.root / 'param')!r})\n"
-            f"ANALYZER_DIR = Path({str(self.root / 'analyzer')!r})\n"
-            "SUB_DIR = 'e72'\n"
+        paths = populate_dispatch_lib(
+            REPO, self.root, analyzer_dir=self.root / "analyzer",
         )
+        self.scripts = paths["scripts"]
+        lib = paths["lib"]
         shutil.copy(REPO / "common/lib/beam_run_condition.py", lib)
-        shutil.copy(REPO / "common/lib/runner.py", lib)
-        (lib / "input_check.py").write_text(
-            "def check_input(*a, **k): return True\n"
-            "def stale_params(*a, **k): return []\n"
-        )
-        (lib / "param.py").write_text("def backup_file(*a): pass\n")
         shutil.copy(REPO / "calibration/scripts/calib_session.py", self.scripts)
-        shutil.copy(REPO / "calibration/scripts/calib_dispatch.py", self.scripts)
-        (self.root / "termcolor.py").write_text(
-            "def colored(text, *a, **kw): return text\n")
         # Force table path to the fixture file.
         text = (lib / "beam_run_condition.py").read_text()
         text = text.replace(
