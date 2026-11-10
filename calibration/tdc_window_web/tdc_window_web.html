@@ -149,21 +149,29 @@ function show(d) {
     xaxis: {title: "TDC [ch]", range: initialRange(h.edges), showspikes: true, spikemode: "across", spikethickness: 1},
     yaxis: {type: "log", title: "counts"}, ...overlay(), margin: {t: 50}
   }, {displaylogo: false, responsive: true});
-  // Map plot-area clicks to x (works in zero-count gaps; skip drag-zoom).
-  const drag = plot.querySelector(".nsewdrag");
-  let press = null;
-  if (drag) {
-    drag.onmousedown = e => { press = {x: e.clientX, y: e.clientY}; };
-    drag.onmouseup = e => {
-      if (!press) return;
-      const moved = Math.hypot(e.clientX - press.x, e.clientY - press.y);
-      press = null;
-      if (moved > 4) return;
-      const xval = plot._fullLayout.xaxis.p2d(e.clientX - drag.getBoundingClientRect().left);
-      if (Number.isFinite(xval)) addClick(xval);
-    };
-  }
+  bindPlotClick();
   status();
+}
+
+// Delegated on #plot so handlers survive Plotly.relayout (which recreates .nsewdrag).
+let plotPress = null;
+function bindPlotClick() {
+  if (plot._tdcClickBound) return;
+  plot._tdcClickBound = true;
+  plot.addEventListener("mousedown", e => {
+    if (!e.target.closest(".nsewdrag")) return;
+    plotPress = {x: e.clientX, y: e.clientY};
+  });
+  plot.addEventListener("mouseup", e => {
+    if (!plotPress) return;
+    const moved = Math.hypot(e.clientX - plotPress.x, e.clientY - plotPress.y);
+    plotPress = null;
+    if (moved > 4) return;
+    const drag = plot.querySelector(".nsewdrag");
+    if (!drag || !plot._fullLayout || !plot._fullLayout.xaxis) return;
+    const xval = plot._fullLayout.xaxis.p2d(e.clientX - drag.getBoundingClientRect().left);
+    if (Number.isFinite(xval)) addClick(xval);
+  });
 }
 
 function addClick(x) {
