@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Hodo calibration chain for one run: hdprm → decode → t0 → decode → hdphc×N → adopt.
+"""Hodo calibration chain: create_runlist → decode → fit → recreate runlist …
 
 Usage: iterate_hodo_chain.py <run> [--kaon] [--ftof] [--force] [--dry-run]
-                             [--hodo-runlist PATH] [--skip-t0] [--skip-hdphc]
-                             [--hdphc-iter N] [--adopt auto|K] [--skip-hdphc-adopt]
+                             [--skip-t0] [--skip-hdphc] [--hdphc-iter N]
+                             [--adopt auto|K] [--skip-hdphc-adopt] [--local]
+                             [--assume-window] [--skip-window-bootstrap]
 
-hdprm/t0 run once. hdphc repeats N times (default 3): each pass fits, writes HDPHC,
-re-decodes, scores CBTOF robust width, and snapshots the param plus fit-time QA PDFs.
-After the loop, the round with the smallest width is restored (or --adopt K), then a
-final decode runs and `run_hodo hdphc --qa-only` regenerates post-adopt QA (no param write)
-with a manifest tied to the adopted round.
-
-Continue only on run_hodo EXIT_OK (0) for each step.
+Full order (wiki Hodoscope-Calibration / TDC-Window):
+  0) if TDC window unset: create_runlist --hodo RUN 0 → decode → EXIT_CHECK
+  1) create_runlist {Pi|K}_hdprm → decode → run_hodo hdprm
+  2) create_runlist {Pi|K}_t0    → decode → run_hodo t0
+  3) create_runlist {Pi|K}_hdphc → hdphc×N (fit→decode) → adopt → decode → qa-only
 
 Does not run htof. Does not roll back hdprm/t0.
 """
@@ -20,6 +19,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from common.lib import (  # noqa: E402
+    calib_runlist,
     config,
     decode_run,
     hodo_btof_monitor,
@@ -31,32 +31,8 @@ from common.lib import (  # noqa: E402
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_HODO = SCRIPT_DIR / "run_hodo.py"
 MYRUN = config.ANALYZER_DIR / "runmanager" / "myrun.py"
-RUNLIST_DIR = config.ANALYZER_DIR / "runmanager" / "runlist"
 OK_DRIVER = (runner.EXIT_OK, runner.EXIT_FAIL, runner.EXIT_NOT_CONVERGED,
              runner.EXIT_CHECK, runner.EXIT_SKIP)
-
-
-#_____________________________________________________________________________
-def default_hodo_runlist(run):
-    return RUNLIST_DIR / config.SUB_DIR / f"hodo_run{run:05d}.yml"
-
-
-#_____________________________________________________________________________
-def resolve_hodo_runlist(run, explicit, require_exists=True):
-    if explicit is not None:
-        path = Path(explicit).expanduser()
-        if not path.is_absolute():
-            path = (Path.cwd() / path).resolve()
-        if require_exists and not path.is_file():
-            runner.fail(f"hodo runlist not found: {path}")
-        return path
-    path = default_hodo_runlist(run)
-    if path.is_file() or not require_exists:
-        return path
-    runner.fail(
-        f"hodo runlist not found: {path} "
-        f"(create_runlist.py {run} --hodo, or pass --hodo-runlist)"
-    )
 
 
 #_____________________________________________________________________________
@@ -89,6 +65,24 @@ def run_hodo_ok(cmd, label):
 
 
 #_____________________________________________________________________________
+def stage_prepare_and_decode(run, kaon, stage, *, local, dry_run):
+    """create_runlist for hodo stage, then myrun decode. Returns runlist path."""
+    suffix = calib_runlist.hodo_suffix(kaon, stage)
+    calib_runlist.run_create_runlist("--hodo", run, suffix, dry_run=dry_run)
+    runlist = (
+        config.ANALYZER_DIR / "runmanager" / "runlist" / config.SUB_DIR
+        / f"hodo_run{run:05d}.yml"
+    )
+    if dry_run:
+        decode_run.run_decode(runlist, dry_run=True, local=local)
+        return runlist
+    if not runlist.is_file():
+        runner.fail(f"hodo runlist missing after create_runlist: {runlist}")
+    decode_run.run_decode(runlist, local=local)
+    return runlist
+
+
+#_____________________________________________________________________________
 def parse_args():
     p = runner.Parser(__doc__)
     p.add_argument("run", type=int)
@@ -97,9 +91,7 @@ def parse_args():
                    help="passed to run_hodo hdprm/hdphc (FTOF detector set)")
     p.add_argument("--force", action="store_true", help="passed through to run_hodo")
     p.add_argument("--dry-run", action="store_true", help="print commands only")
-    p.add_argument("--hodo-runlist", type=Path, default=None,
-                   help="Hodo myrun yml (default: runmanager/runlist/<sub>/hodo_runXXXXX.yml)")
-    p.add_argument("--skip-t0", action="store_true", help="omit t0 and its following decode")
+    p.add_argument("--skip-t0", action="store_true", help="omit t0 stage")
     p.add_argument("--skip-hdphc", action="store_true",
                    help="omit hdphc loop and adopt")
     p.add_argument("--hdphc-iter", type=int, default=3,
@@ -110,6 +102,10 @@ def parse_args():
                    help="leave the last hdphc write as-is (no restore/final decode)")
     p.add_argument("--local", action="store_true",
                    help="myrun --local (default: bsub)")
+    p.add_argument("--assume-window", action="store_true",
+                   help="skip TDC window gate (windows already set)")
+    p.add_argument("--skip-window-bootstrap", action="store_true",
+                   help="do not run create_runlist 0 / decode for window setup")
     return p.parse_args()
 
 
@@ -126,7 +122,6 @@ def main():
         if k < 1:
             runner.fail("--adopt round must be >= 1")
 
-    runlist = resolve_hodo_runlist(a.run, a.hodo_runlist, require_exists=not a.dry_run)
     if not MYRUN.is_file() and not a.dry_run:
         runner.fail(f"myrun not found: {MYRUN}")
     if not RUN_HODO.is_file():
@@ -135,50 +130,91 @@ def main():
     suffix = "K" if a.kaon else "Pi"
     n_hdphc = 0 if a.skip_hdphc else a.hdphc_iter
     runner.info(
-        f"iterate_hodo_chain run={a.run:05d} hdphc_iter={n_hdphc} adopt={a.adopt} "
-        f"runlist={runlist}"
+        f"iterate_hodo_chain run={a.run:05d} hdphc_iter={n_hdphc} adopt={a.adopt}"
         + (" --kaon" if a.kaon else "")
         + (" --ftof" if a.ftof else "")
         + (" --skip-t0" if a.skip_t0 else "")
         + (" --skip-hdphc" if a.skip_hdphc else "")
-        + (" --skip-hdphc-adopt" if a.skip_hdphc_adopt else "")
         + (" --local" if a.local else "")
+        + (" --assume-window" if a.assume_window else "")
         + (" dry-run" if a.dry_run else "")
     )
+    runner.info(
+        "chain includes create_runlist per stage "
+        "(UserParam / conf / runlist → decode → fit)"
+    )
+
+    # --- TDC window gate ---
+    ready, upath, detail = calib_runlist.tdc_windows_ready(a.run)
+    if a.assume_window:
+        ready = True
+        detail = "assumed via --assume-window"
+    runner.info(f"TDC window: ready={ready} ({detail}); UserParam={upath}")
+
+    if not ready:
+        if a.dry_run:
+            runner.step("iterate_hodo_chain dry-run (window unset)")
+            if not a.skip_window_bootstrap:
+                calib_runlist.run_create_runlist(
+                    "--hodo", a.run, "0", dry_run=True,
+                )
+                print("[dry-run] myrun decode (suffix 0)")
+            calib_runlist.announce_tdc_window(a.run)
+            print("[dry-run] would stop with EXIT_CHECK until windows are set")
+            sys.exit(runner.EXIT_OK)
+        if not a.skip_window_bootstrap:
+            stage_prepare_and_decode(
+                a.run, a.kaon, "0", local=a.local, dry_run=False,
+            )
+        calib_runlist.announce_tdc_window(a.run)
+        # EXIT_CHECK → dispatch held; decide refit then resume after setting windows.
+        sys.exit(runner.EXIT_CHECK)
 
     if a.dry_run:
         runner.step("iterate_hodo_chain dry-run")
+        stage_prepare_and_decode(a.run, a.kaon, "hdprm", local=a.local, dry_run=True)
         print(f"[dry-run] {hodo_cmd(a.run, 'hdprm', a.kaon, a.ftof, a.force)}")
-        decode_run.run_decode(runlist, dry_run=True, local=a.local)
         if not a.skip_t0:
+            stage_prepare_and_decode(a.run, a.kaon, "t0", local=a.local, dry_run=True)
             print(f"[dry-run] {hodo_cmd(a.run, 't0', a.kaon, a.ftof, a.force)}")
-            decode_run.run_decode(runlist, dry_run=True, local=a.local)
-        for i in range(1, n_hdphc + 1):
-            print(
-                f"[dry-run] ({i}/{n_hdphc}) "
-                f"{hodo_cmd(a.run, 'hdphc', a.kaon, a.ftof, a.force, skip_qa=True)}"
+        if n_hdphc:
+            stage_prepare_and_decode(
+                a.run, a.kaon, "hdphc", local=a.local, dry_run=True,
             )
-            decode_run.run_decode(runlist, dry_run=True, local=a.local)
-            print(f"[dry-run] score_btof + snapshot round_{i:02d}")
-        if n_hdphc and not a.skip_hdphc_adopt:
-            print(
-                f"[dry-run] adopt {a.adopt} -> restore HDPHC + decode + "
-                f"run_hodo hdphc --qa-only"
-            )
+            for i in range(1, n_hdphc + 1):
+                print(
+                    f"[dry-run] ({i}/{n_hdphc}) "
+                    f"{hodo_cmd(a.run, 'hdphc', a.kaon, a.ftof, a.force, skip_qa=True)}"
+                )
+                print("[dry-run] myrun decode + score_btof + snapshot")
+            if not a.skip_hdphc_adopt:
+                print(
+                    f"[dry-run] adopt {a.adopt} → restore HDPHC + decode + "
+                    f"run_hodo hdphc --qa-only"
+                )
         sys.exit(runner.EXIT_OK)
 
-    # hdprm
+    # --- HDPRM ---
+    runlist = stage_prepare_and_decode(
+        a.run, a.kaon, "hdprm", local=a.local, dry_run=False,
+    )
     run_hodo_ok(hodo_cmd(a.run, "hdprm", a.kaon, a.ftof, a.force), "hdprm")
-    decode_run.run_decode(runlist, local=a.local)
 
+    # --- T0 ---
     if not a.skip_t0:
+        runlist = stage_prepare_and_decode(
+            a.run, a.kaon, "t0", local=a.local, dry_run=False,
+        )
         run_hodo_ok(hodo_cmd(a.run, "t0", a.kaon, a.ftof, a.force), "t0")
-        decode_run.run_decode(runlist, local=a.local)
 
     if a.skip_hdphc:
         runner.info("done: skipped hdphc")
         sys.exit(runner.EXIT_OK)
 
+    # --- HDPHC ---
+    runlist = stage_prepare_and_decode(
+        a.run, a.kaon, "hdphc", local=a.local, dry_run=False,
+    )
     hodo_hdphc_rounds.clear_rounds(a.run)
     hodo_path = hodo_btof_monitor.hodo_root(a.run)
     for i in range(1, n_hdphc + 1):
@@ -220,7 +256,6 @@ def main():
     decode_run.run_decode(runlist, local=a.local)
     hodo_hdphc_rounds.write_summary(a.run, adopted=chosen)
 
-    # Post-adopt QA: re-fit plots on the restored param / final decode; no param write.
     run_hodo_ok(
         hodo_cmd(
             a.run, "hdphc", a.kaon, a.ftof, a.force,

@@ -41,6 +41,33 @@ def parse_args():
 
 
 #_____________________________________________________________________________
+def announce_chain(run, calib_particle, steps):
+    """Short launch banner: calib owns create_runlist / UserParam start."""
+    step_names = []
+    for raw in steps:
+        if isinstance(raw, dict):
+            step_names.append(next(iter(raw)))
+        else:
+            step_names.append(str(raw))
+    runner.info(
+        f"calib run{run:05d} particle={calib_particle} "
+        f"steps={','.join(step_names) or '(default)'}"
+    )
+    runner.info(
+        "Each step runs create_runlist → decode → fit "
+        "(UserParam / conf / runlist are created in-chain; "
+        "do not hand-create runlists first)."
+    )
+    if "hodo" in step_names or not step_names:
+        runner.info(
+            "Hodo: if TDC windows still match the USER template, the chain "
+            "stops (EXIT_CHECK). Set windows (tdcwin / set_tdc_window), then "
+            f"./ops.py decide {run} refit && ./ops.py resume {run} "
+            f"(or ./calib.py {run})."
+        )
+
+
+#_____________________________________________________________________________
 def main():
     a = parse_args()
     if a.run < 1:
@@ -49,6 +76,7 @@ def main():
     steps, target = cs.steps_from_flags(
         hodo=a.hodo, bcout=a.bcout, bcin=a.bcin, d5=a.d5,
     )
+    announce_chain(a.run, calib_particle, steps)
 
     st = cd.read_state(a.run)
     if st is not None and a.force:

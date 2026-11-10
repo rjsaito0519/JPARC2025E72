@@ -313,6 +313,9 @@ def step_cmd(name, opts, cfg, dry_run):
             parts.append("--skip-reso")
     elif name == "d5_align":
         parts += ["--max-iter", str(cfg["max_iter"])]
+        mom = cfg.get("momentum_gev_c")
+        if mom is not None:
+            parts += ["--mom", str(mom)]
     elif name == "hodo":
         if opts.get("skip_t0"):
             parts.append("--skip-t0")

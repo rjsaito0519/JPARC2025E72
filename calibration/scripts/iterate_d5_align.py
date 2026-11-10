@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
-"""Iterate D5 BLC1 alignment for one run: ref → D5 decode → pos → BcIn → resi → …
+"""Iterate D5 BLC1 alignment for one run: create_runlist → ref → decode → pos → …
 
 Usage: iterate_d5_align.py <run> [--kaon] [--max-iter N] [--tol T]
-                           [--bcin-runlist PATH] [--dry-run] [--force]
+                           [--bcin-runlist PATH] [--mom P] [--dry-run] [--force]
+                           [--local]
 
-Wraps run_d5.py {ref,pos} and the decode steps that normally sit between them.
-On pos EXIT_NOT_CONVERGED (2), re-decodes BcIn, runs run_dcprm.py resi --bcin,
-re-decodes BcIn again if resi also wrote (exit 2), then starts the next outer
-pass with ref. Stops on OK (0), FAIL (1), CHECK (3), SKIP (4), or when
---max-iter is reached after a written pos (exits CHECK).
+Order:
+  create_runlist --d5 RUN {Pi|K} --mom …
+  create_runlist --bcin RUN {Pi|K}_resi   (for BcIn re-decode in the loop)
+  then: ref → D5×2 decode → pos → (exit 2) BcIn decode → resi --bcin → …
 
-Does not create runlists. BcIn defaults to create_runlist's
-runmanager/runlist/<sub>/bcin_runXXXXX.yml. D5 scratch runlists are those
-written by run_d5.py ref under runmanager/runlist/scratch/d5/.
+D5 scratch runlists are those written by run_d5.py ref under
+runmanager/runlist/scratch/d5/.
 """
 import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, decode_run, runner  # noqa: E402
+from common.lib import calib_runlist, config, decode_run, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_D5 = SCRIPT_DIR / "run_d5.py"
@@ -140,6 +139,19 @@ def require_scratch_runlists(run, s, dry_run):
 
 
 #_____________________________________________________________________________
+def prepare_runlists(run, kaon, mom, *, dry_run):
+    """create_runlist --d5 and --bcin (resi) before the align loop."""
+    d5_sfx = calib_runlist.d5_suffix(kaon)
+    calib_runlist.run_create_runlist(
+        "--d5", run, d5_sfx, mom=mom, dry_run=dry_run,
+    )
+    bcin_sfx = calib_runlist.dc_suffix(kaon, "resi")
+    calib_runlist.run_create_runlist(
+        "--bcin", run, bcin_sfx, dry_run=dry_run,
+    )
+
+
+#_____________________________________________________________________________
 def parse_args():
     p = runner.Parser(__doc__)
     p.add_argument("run", type=int)
@@ -150,6 +162,9 @@ def parse_args():
                    help=f"passed to run_d5 pos (default {DEFAULT_TOL})")
     p.add_argument("--bcin-runlist", type=Path, default=None,
                    help="BcIn myrun yml (default: runmanager/runlist/<sub>/bcin_runXXXXX.yml)")
+    p.add_argument("--mom", type=float, default=None,
+                   help="D5 central momentum [GeV/c] for create_runlist "
+                        "(default: table/UserParam)")
     p.add_argument("--dry-run", action="store_true", help="print commands only")
     p.add_argument("--force", action="store_true",
                    help="passed through to run_d5 pos and run_dcprm resi")
@@ -185,7 +200,7 @@ def stop_with(action, rc_fallback=None):
 def main():
     a = parse_args()
     s = suffix_of(a.kaon)
-    bcin_runlist = resolve_bcin_runlist(a.run, a.bcin_runlist, require_exists=not a.dry_run)
+    mom = calib_runlist.resolve_d5_mom(a.run, a.mom)
     if not MYRUN.is_file() and not a.dry_run:
         runner.fail(f"myrun not found: {MYRUN}")
     if not RUN_D5.is_file():
@@ -196,9 +211,15 @@ def main():
     p_norm, p_tag = d5_scratch_runlists(a.run, s)
     runner.info(
         f"iterate_d5_align run={a.run:05d} suffix={s} "
-        f"max_iter={a.max_iter} tol={a.tol} bcin_runlist={bcin_runlist}"
+        f"max_iter={a.max_iter} tol={a.tol} mom={mom}"
         + (" dry-run" if a.dry_run else "")
         + (" --local" if a.local else "")
+    )
+    runner.info("chain includes create_runlist --d5 and --bcin before loop")
+
+    prepare_runlists(a.run, a.kaon, mom, dry_run=a.dry_run)
+    bcin_runlist = resolve_bcin_runlist(
+        a.run, a.bcin_runlist, require_exists=not a.dry_run,
     )
 
     if a.dry_run:

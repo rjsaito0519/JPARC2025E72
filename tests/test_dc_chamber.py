@@ -38,16 +38,32 @@ class DcChamberTests(unittest.TestCase):
         (lib / "param.py").write_text("def backup_file(*a): pass\n")
         (lib / "decode_run.py").write_text(
             "from pathlib import Path\n"
-            "def run_decode(runlist, dry_run=False):\n"
+            "def run_decode(runlist, dry_run=False, local=False):\n"
             f"    Path({str(self.root / 'decoded')!r}).write_text("
             "str(runlist) + (' dry' if dry_run else '') + '\\n', encoding='utf-8')\n"
         )
+        (lib / "beam_run_condition.py").write_text(
+            "from pathlib import Path\n"
+            "def user_param_paths(run):\n"
+            "    return [Path('/no/such')]\n"
+            "def resolve(run):\n"
+            "    return {'momentum_gev_c': 1.0}\n"
+        )
+        shutil.copy(REPO / "common/lib/calib_runlist.py", lib)
         (self.root / "termcolor.py").write_text(
             "def colored(text, *a, **kw): return text\n")
         shutil.copy(REPO / "calibration/scripts/iterate_dc_resi.py", self.scripts)
         shutil.copy(REPO / "calibration/scripts/iterate_dc_reso.py", self.scripts)
         shutil.copy(REPO / "calibration/scripts/iterate_dc_chamber.py", self.scripts)
         shutil.copy(REPO / "common/lib/runner.py", lib)
+        # Stub create_runlist used by calib_runlist
+        create = self.scripts / "create_runlist.py"
+        create.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "raise SystemExit(0)\n"
+        )
+        create.chmod(0o755)
         myrun = self.root / "analyzer/runmanager/myrun.py"
         myrun.parent.mkdir(parents=True)
         myrun.write_text("#!/usr/bin/env python3\n")
@@ -76,6 +92,10 @@ class DcChamberTests(unittest.TestCase):
         result = self.run_chamber("--dry-run")
         self.assertEqual(result.returncode, 0, result.stderr)
         out = result.stdout + result.stderr
+        self.assertIn("create_runlist", out)
+        self.assertIn("Pi_tdc", out)
+        self.assertIn("Pi_drift", out)
+        self.assertIn("Pi_resi", out)
         self.assertIn(" t0 ", out)
         self.assertIn(" drift ", out)
         self.assertIn(" resi ", out)
@@ -93,7 +113,8 @@ class DcChamberTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         modes = log.read_text().split()
         self.assertEqual(modes, ["t0"])
-        self.assertFalse((self.root / "decoded").exists())
+        # create_runlist stage still decoded before t0
+        self.assertTrue((self.root / "decoded").exists())
 
     def test_success_runs_all_modes_once_when_converged(self):
         log = self.root / "dcprm_log.txt"
