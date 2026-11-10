@@ -9,6 +9,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -122,6 +123,42 @@ def _api(
 
 
 #_____________________________________________________________________________
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+#_____________________________________________________________________________
+def _archive_active_thread(state: dict[str, Any]) -> None:
+    """Move the active channel thread into history; clear posts/failures."""
+    old_ts = state.get("thread_ts")
+    old_channel = state.get("channel_id")
+    if not (isinstance(old_ts, str) and old_ts) and old_channel is None:
+        state["posts"] = {}
+        state["failures"] = {}
+        state.pop("thread_ts", None)
+        state.pop("channel_id", None)
+        return
+    entry = {
+        "channel_id": old_channel,
+        "thread_ts": old_ts if isinstance(old_ts, str) else None,
+        "posts": state.get("posts") if isinstance(state.get("posts"), dict) else {},
+        "failures": (
+            state.get("failures") if isinstance(state.get("failures"), dict) else {}
+        ),
+        "closed_at": _utc_now(),
+    }
+    history = state.get("history")
+    if not isinstance(history, list):
+        history = []
+    history.append(entry)
+    state["history"] = history
+    state["posts"] = {}
+    state["failures"] = {}
+    state.pop("thread_ts", None)
+    state.pop("channel_id", None)
+
+
+#_____________________________________________________________________________
 def ensure_run_thread(
     run: int,
     text: str,
@@ -137,15 +174,23 @@ def ensure_run_thread(
         if status != "ok" or cfg is None:
             return False, f"slack config: {status}", None
 
+        channel_id = cfg["channel_id"]
         state = load_state(run)
         existing = state.get("thread_ts")
-        if isinstance(existing, str) and existing:
+        if (
+            isinstance(existing, str)
+            and existing
+            and state.get("channel_id") == channel_id
+        ):
             return True, f"reuse thread_ts={existing}", existing
+
+        if isinstance(existing, str) and existing:
+            _archive_active_thread(state)
 
         ok, body, msg = _api(
             "chat.postMessage",
             cfg["token"],
-            {"channel": cfg["channel_id"], "text": text},
+            {"channel": channel_id, "text": text},
         )
         if not ok:
             return False, msg, None
@@ -153,8 +198,9 @@ def ensure_run_thread(
         if not isinstance(ts, str) or not ts:
             return False, "chat.postMessage: no ts", None
         state["thread_ts"] = ts
-        state["channel_id"] = cfg["channel_id"]
+        state["channel_id"] = channel_id
         state.setdefault("posts", {})
+        state.setdefault("failures", {})
         if not save_state(run, state):
             return False, "state save failed", None
         return True, f"created thread_ts={ts}", ts
@@ -353,6 +399,14 @@ def notify_failure(
         if status != "ok" or cfg is None:
             return False, f"slack config: {status}", False
 
+        parent = f"calib QA run{run:05d}"
+        ok, msg, thread_ts = ensure_run_thread(
+            run, parent, config_path=config_path, dry_run=False,
+        )
+        if not ok or not thread_ts:
+            return False, msg, False
+
+        # Dedup only against the active channel after ensure_run_thread.
         state = load_state(run)
         failures = state.setdefault("failures", {})
         if not isinstance(failures, dict):
@@ -361,13 +415,6 @@ def notify_failure(
         prev = failures.get(key)
         if isinstance(prev, dict) and prev.get("text") == text:
             return True, f"dedup: {key}", False
-
-        parent = f"calib QA run{run:05d}"
-        ok, msg, thread_ts = ensure_run_thread(
-            run, parent, config_path=config_path, dry_run=False,
-        )
-        if not ok or not thread_ts:
-            return False, msg, False
 
         ok, body, msg = _api(
             "chat.postMessage",

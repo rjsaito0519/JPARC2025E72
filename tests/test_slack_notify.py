@@ -199,6 +199,100 @@ class SlackNotifyUnitTests(unittest.TestCase):
         # parent create + failure note
         self.assertEqual(sum(1 for m, _ in calls if m == "chat.postMessage"), 2)
 
+    def test_ensure_run_thread_recreates_on_channel_change(self):
+        self.sn.save_state(10, {
+            "channel_id": "COLD",
+            "thread_ts": "1.2",
+            "posts": {"k": {"pdf": "old.pdf"}},
+            "failures": {"f": {"text": "old"}},
+        })
+        self.cfg.write_text(
+            "enabled: true\ntoken: xoxb-test\nchannel_id: CNEW\n", encoding="utf-8"
+        )
+        parent_calls = []
+
+        def fake_api(method, token, payload, as_json=True):
+            if method == "chat.postMessage":
+                parent_calls.append(payload)
+                return True, {"ok": True, "ts": "9.9"}, "ok"
+            return False, {}, f"unexpected {method}"
+
+        with mock.patch.object(self.sn, "_api", side_effect=fake_api):
+            ok, msg, ts = self.sn.ensure_run_thread(
+                10, "calib QA run00010", config_path=self.cfg,
+            )
+        self.assertTrue(ok, msg)
+        self.assertEqual(ts, "9.9")
+        self.assertEqual(len(parent_calls), 1)
+        self.assertEqual(parent_calls[0]["channel"], "CNEW")
+        state = json.loads(self.sn.state_path(10).read_text())
+        self.assertEqual(state["channel_id"], "CNEW")
+        self.assertEqual(state["thread_ts"], "9.9")
+        self.assertEqual(state["posts"], {})
+        self.assertEqual(state["failures"], {})
+        self.assertEqual(len(state["history"]), 1)
+        self.assertEqual(state["history"][0]["channel_id"], "COLD")
+        self.assertEqual(state["history"][0]["thread_ts"], "1.2")
+        self.assertEqual(state["history"][0]["posts"], {"k": {"pdf": "old.pdf"}})
+        self.assertEqual(state["history"][0]["failures"], {"f": {"text": "old"}})
+
+    def test_ensure_run_thread_recreates_when_channel_missing(self):
+        self.sn.save_state(11, {"thread_ts": "1.2", "posts": {}, "failures": {}})
+        parent_calls = []
+
+        def fake_api(method, token, payload, as_json=True):
+            if method == "chat.postMessage":
+                parent_calls.append(payload)
+                return True, {"ok": True, "ts": "2.3"}, "ok"
+            return False, {}, f"unexpected {method}"
+
+        with mock.patch.object(self.sn, "_api", side_effect=fake_api):
+            ok, msg, ts = self.sn.ensure_run_thread(
+                11, "calib QA run00011", config_path=self.cfg,
+            )
+        self.assertTrue(ok, msg)
+        self.assertEqual(ts, "2.3")
+        self.assertEqual(len(parent_calls), 1)
+        state = json.loads(self.sn.state_path(11).read_text())
+        self.assertEqual(state["thread_ts"], "2.3")
+        self.assertEqual(state["channel_id"], "CCHAN")
+        self.assertEqual(state["history"][0]["thread_ts"], "1.2")
+
+    def test_notify_failure_reposts_after_channel_change(self):
+        self.cfg.write_text(
+            "enabled: true\ntoken: xoxb-test\nchannel_id: COLD\n", encoding="utf-8"
+        )
+        seq = {"n": 0}
+
+        def fake_api(method, token, payload, as_json=True):
+            if method == "chat.postMessage":
+                seq["n"] += 1
+                return True, {"ok": True, "ts": f"{seq['n']}.0"}, "ok"
+            return False, {}, f"unexpected {method}"
+
+        with mock.patch.object(self.sn, "_api", side_effect=fake_api):
+            ok1, msg1, posted1 = self.sn.notify_failure(
+                12, "hodo_merge_hdprm_Pi", "[CHECK] merge failed",
+                config_path=self.cfg,
+            )
+            self.assertTrue(ok1, msg1)
+            self.assertTrue(posted1)
+            self.cfg.write_text(
+                "enabled: true\ntoken: xoxb-test\nchannel_id: CNEW\n",
+                encoding="utf-8",
+            )
+            ok2, msg2, posted2 = self.sn.notify_failure(
+                12, "hodo_merge_hdprm_Pi", "[CHECK] merge failed",
+                config_path=self.cfg,
+            )
+        self.assertTrue(ok2, msg2)
+        self.assertTrue(posted2, msg2)
+        state = json.loads(self.sn.state_path(12).read_text())
+        self.assertEqual(state["channel_id"], "CNEW")
+        self.assertIn("hodo_merge_hdprm_Pi", state["failures"])
+        self.assertEqual(len(state["history"]), 1)
+        self.assertEqual(state["history"][0]["channel_id"], "COLD")
+
     def test_notify_failure_skip_without_config(self):
         missing = Path(self.tmp.name) / "no_such_slack.yml"
         ok, msg, posted = self.sn.notify_failure(
