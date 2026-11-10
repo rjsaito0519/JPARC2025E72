@@ -172,14 +172,28 @@ def _dc_chambers_from_plan(st: dict[str, Any]) -> set[str]:
 
 
 #_____________________________________________________________________________
+def _chamber_tag_from_meta(family: str, mode: str, meta: dict[str, Any]) -> str:
+    """Chamber tag for QA dedup (dc_qa_slack vocabulary); non-dc -> ''."""
+    if family != "dc":
+        return ""
+    if bool(meta.get("all")) and str(mode) == "reso":
+        return "all"
+    if bool(meta.get("bcin")):
+        return "bcin"
+    return "bcout"
+
+
+#_____________________________________________________________________________
 def _latest_qa_manifests(
     run: int,
     particle: str,
     families: set[str],
+    *,
+    planned_dc_chambers: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Latest qa_manifest per (family, mode) for this particle; missing families listed."""
+    """Latest qa_manifest per (family, mode, chamber); missing listed per plan."""
     root = qa_session.manifest_dir(int(run))
-    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
     if root.is_dir():
         for path in sorted(root.glob("*.json")):
             try:
@@ -194,13 +208,15 @@ def _latest_qa_manifests(
             if meta_particle is not None and str(meta_particle) != particle:
                 continue
             mode = str(meta.get("mode") or data.get("label") or "unknown")
-            key = (family, mode)
+            chamber = _chamber_tag_from_meta(family, mode, meta)
+            key = (family, mode, chamber)
             prev = by_key.get(key)
             finished = str(data.get("finished_at") or "")
             if prev is None or finished >= str(prev.get("finished_at") or ""):
                 by_key[key] = {
                     "family": family,
                     "mode": mode,
+                    "chamber": chamber,
                     "exec_id": data.get("exec_id"),
                     "manifest": path.name,
                     "finished_at": data.get("finished_at"),
@@ -221,8 +237,25 @@ def _latest_qa_manifests(
                     ],
                 }
     rows = [by_key[k] for k in sorted(by_key)]
-    present = {row["family"] for row in rows}
-    missing = [f"qa_manifest:{fam}" for fam in sorted(families) if fam not in present]
+    missing: list[str] = []
+    for fam in sorted(families):
+        if fam == "dc":
+            continue
+        if not any(row["family"] == fam for row in rows):
+            missing.append(f"qa_manifest:{fam}")
+    if "dc" in families:
+        needed = set(planned_dc_chambers or ())
+        if not needed:
+            needed = {"BcOut"}
+        present_tags = {
+            str(row.get("chamber") or "")
+            for row in rows
+            if row.get("family") == "dc"
+        }
+        for chamber in sorted(needed):
+            tag = "bcin" if chamber == "BcIn" else "bcout"
+            if tag not in present_tags:
+                missing.append(f"qa_manifest:dc:{chamber}")
     return rows, missing
 
 
@@ -299,7 +332,10 @@ def build_subject(run: int, st: dict[str, Any]) -> dict[str, Any]:
     if "hodo" in families and hdphc_summary_sha is None:
         missing.append("hdphc_summary")
 
-    qa_manifests, qa_missing = _latest_qa_manifests(run_i, particle, families)
+    planned_dc = _dc_chambers_from_plan(st) if "dc" in families else set()
+    qa_manifests, qa_missing = _latest_qa_manifests(
+        run_i, particle, families, planned_dc_chambers=planned_dc,
+    )
     missing.extend(qa_missing)
 
     from . import channel_flags

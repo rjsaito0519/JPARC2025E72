@@ -49,15 +49,22 @@ class BuildSubjectTests(unittest.TestCase):
         path.write_bytes(b"v1")
         return path
 
-    def _manifest(self, exec_id, family, mode, particle="pion"):
+    def _manifest(
+        self, exec_id, family, mode, particle="pion",
+        *, bcin=False, all_chambers=False, finished_at="2026-01-01T00:00:00Z",
+    ):
         man_dir = self.out / "calib/run00001/qa_manifests"
         man_dir.mkdir(parents=True, exist_ok=True)
         path = man_dir / f"{exec_id}.json"
+        meta = {"family": family, "mode": mode, "particle": particle}
+        if family == "dc":
+            meta["bcin"] = bool(bcin)
+            meta["all"] = bool(all_chambers)
         path.write_text(json.dumps({
             "exec_id": exec_id,
             "run": 1,
-            "meta": {"family": family, "mode": mode, "particle": particle},
-            "finished_at": "2026-01-01T00:00:00Z",
+            "meta": meta,
+            "finished_at": finished_at,
             "outputs": [{"name": f"{exec_id}.pdf", "sha": "dead"}],
             "params": [],
         }) + "\n", encoding="utf-8")
@@ -122,6 +129,69 @@ class BuildSubjectTests(unittest.TestCase):
         exec_ids = [m["exec_id"] for m in subject["qa_manifests"]]
         self.assertIn("k1", exec_ids)
         self.assertNotIn("p1", exec_ids)
+
+    def _both_chamber_plan(self):
+        return {
+            "plan": {
+                "calib_particle": "pion",
+                "steps": [
+                    {"name": "dc_chamber", "opts": {}},
+                    {"name": "dc_chamber", "opts": {"bcin": True}},
+                ],
+            },
+            "steps": [],
+        }
+
+    def test_keeps_bcout_and_bcin_same_mode(self):
+        self._manifest("out_t0", "dc", "t0", bcin=False)
+        self._manifest(
+            "in_t0", "dc", "t0", bcin=True, finished_at="2026-01-02T00:00:00Z",
+        )
+        subject = calib_approval.build_subject(1, self._both_chamber_plan())
+        by_chamber = {
+            m["chamber"]: m["exec_id"] for m in subject["qa_manifests"]
+        }
+        self.assertEqual(by_chamber.get("bcout"), "out_t0")
+        self.assertEqual(by_chamber.get("bcin"), "in_t0")
+        self.assertFalse(any(
+            m.startswith("qa_manifest:dc:") for m in subject["missing"]
+        ))
+
+    def test_missing_bcin_qa_when_plan_needs_both(self):
+        self._manifest("out_t0", "dc", "t0", bcin=False)
+        subject = calib_approval.build_subject(1, self._both_chamber_plan())
+        self.assertIn("qa_manifest:dc:BcIn", subject["missing"])
+        self.assertNotIn("qa_manifest:dc:BcOut", subject["missing"])
+
+    def test_bcin_does_not_drop_bcout(self):
+        self._manifest("out_t0", "dc", "t0", bcin=False)
+        st = self._both_chamber_plan()
+        s1 = calib_approval.build_subject(1, st)
+        self.assertEqual(
+            [m["exec_id"] for m in s1["qa_manifests"] if m["chamber"] == "bcout"],
+            ["out_t0"],
+        )
+        self._manifest(
+            "in_t0", "dc", "t0", bcin=True, finished_at="2026-01-03T00:00:00Z",
+        )
+        s2 = calib_approval.build_subject(1, st)
+        by_chamber = {
+            m["chamber"]: m["exec_id"] for m in s2["qa_manifests"]
+        }
+        self.assertEqual(by_chamber.get("bcout"), "out_t0")
+        self.assertEqual(by_chamber.get("bcin"), "in_t0")
+
+    def test_reso_all_is_separate_chamber_key(self):
+        self._manifest("out_t0", "dc", "t0", bcin=False)
+        self._manifest("all_reso", "dc", "reso", all_chambers=True)
+        subject = calib_approval.build_subject(1, self._both_chamber_plan())
+        by_key = {
+            (m["mode"], m["chamber"]): m["exec_id"]
+            for m in subject["qa_manifests"]
+        }
+        self.assertEqual(by_key.get(("t0", "bcout")), "out_t0")
+        self.assertEqual(by_key.get(("reso", "all")), "all_reso")
+        self.assertIn("qa_manifest:dc:BcIn", subject["missing"])
 
 
 class FinalQaIndexFilterTests(unittest.TestCase):
