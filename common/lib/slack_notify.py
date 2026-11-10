@@ -158,20 +158,21 @@ def _upload_pdf(
     if not isinstance(upload_url, str) or not isinstance(file_id, str):
         return False, "getUploadURLExternal: missing upload_url/file_id"
 
-    put_req = urllib.request.Request(
+    # Slack expects POST of the raw bytes to upload_url (not PUT).
+    upload_req = urllib.request.Request(
         upload_url,
         data=data,
-        method="PUT",
-        headers={"Content-Type": "application/pdf"},
+        method="POST",
+        headers={"Content-Type": "application/octet-stream"},
     )
     try:
-        with urllib.request.urlopen(put_req, timeout=120) as resp:
+        with urllib.request.urlopen(upload_req, timeout=180) as resp:
             if resp.status and resp.status >= 400:
-                return False, f"upload PUT HTTP {resp.status}"
+                return False, f"upload POST HTTP {resp.status}"
     except urllib.error.HTTPError as exc:
-        return False, _redact(f"upload PUT HTTP {exc.code}")
+        return False, _redact(f"upload POST HTTP {exc.code}")
     except urllib.error.URLError as exc:
-        return False, _redact(f"upload PUT: {exc.reason}")
+        return False, _redact(f"upload POST: {exc.reason}")
 
     complete: dict[str, Any] = {
         "files": [{"id": file_id, "title": pdf_path.name}],
