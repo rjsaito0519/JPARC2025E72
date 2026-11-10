@@ -4,11 +4,17 @@
 Usage:
   calib_dispatch.py start  <config.yml> [--dry-run]
   calib_dispatch.py status <config.yml>
+  calib_dispatch.py stop   <config.yml>
+  calib_dispatch.py resume <config.yml> [--dry-run]
 
 Steps: hodo | dc_resi [{bcin: true}] | d5_align
   Optional per-step: allow_skip: true  (continue after EXIT_SKIP)
-State: OUTPUT_DIR/calib/runXXXXX/calib_dispatch_state.json (no stop/resume yet).
-  status=running at step start, stopped on chain halt, finished when all steps done.
+State: OUTPUT_DIR/calib/runXXXXX/calib_dispatch_state.json
+  status=running at step start, stopped on chain halt or stop request,
+  finished when all steps done.
+  stop sets stop_requested; start/resume honor it between steps (no kill).
+  resume continues from the stopped step (retry) or the next one after a
+  continue-able stop.
 Continue on exit 0; EXIT_SKIP (4) stops unless that step has allow_skip: true.
 Final exit code is runner.worst of executed step codes (so a skip is not erased by a later 0).
 Config: unknown top-level / step keys rejected; kaon/force/step flags are YAML bool only.
@@ -198,7 +204,8 @@ def read_state(run):
 
 
 #_____________________________________________________________________________
-def make_payload(run, index, name, opts, rc, finished, steps_hist, status):
+def make_payload(run, index, name, opts, rc, finished, steps_hist, status,
+                 stop_requested=False):
     return {
         "run": run,
         "index": index,
@@ -207,9 +214,27 @@ def make_payload(run, index, name, opts, rc, finished, steps_hist, status):
         "rc": rc,
         "finished": finished,
         "status": status,
+        "stop_requested": bool(stop_requested),
         "steps": steps_hist,
         "updated_at": utc_now(),
     }
+
+
+#_____________________________________________________________________________
+def stop_requested(run):
+    st = read_state(run)
+    return bool(st and st.get("stop_requested"))
+
+
+#_____________________________________________________________________________
+def overall_rc(steps_hist, fallback=runner.EXIT_OK):
+    """Worst rc of the latest attempt per step index (resume may keep failed tries)."""
+    if not steps_hist:
+        return fallback
+    by_index = {}
+    for entry in steps_hist:
+        by_index[entry["index"]] = entry["rc"]
+    return runner.worst([by_index[i] for i in sorted(by_index)])
 
 
 #_____________________________________________________________________________
@@ -221,27 +246,77 @@ def do_status(cfg):
     runner.info(
         f"run{cfg['run']:05d}: last step[{st.get('index')}]={st.get('step')} "
         f"rc={st.get('rc')} status={st.get('status')} finished={st.get('finished')} "
-        f"updated_at={st.get('updated_at')}"
+        f"stop_requested={st.get('stop_requested')} updated_at={st.get('updated_at')}"
     )
     print(json.dumps(st, indent=2, sort_keys=True))
     sys.exit(runner.EXIT_OK)
 
 
 #_____________________________________________________________________________
-def do_start(cfg, dry_run):
+def do_stop(cfg):
+    st = read_state(cfg["run"])
+    if st is None:
+        runner.warn(f"run{cfg['run']:05d}: not started; nothing to stop")
+        sys.exit(runner.EXIT_OK)
+    if st.get("finished") or st.get("status") == "finished":
+        runner.warn(f"run{cfg['run']:05d}: already finished; stop ignored")
+        sys.exit(runner.EXIT_OK)
+    st["stop_requested"] = True
+    st["updated_at"] = utc_now()
+    write_state(cfg["run"], st)
+    runner.info(f"run{cfg['run']:05d}: stop requested (honored between steps)")
+    sys.exit(runner.EXIT_OK)
+
+
+#_____________________________________________________________________________
+def resume_start_index(st):
+    """Index to run next after a stopped state."""
+    index = st.get("index")
+    if not isinstance(index, int) or index < 0:
+        runner.fail(f"state index invalid for resume: {index!r}")
+    opts = st.get("opts") or {}
+    if not isinstance(opts, dict):
+        opts = {}
+    rc = st.get("rc")
+    if should_continue(rc, opts):
+        return index + 1
+    return index
+
+
+#_____________________________________________________________________________
+def run_steps(cfg, dry_run, start_index, steps_hist, label):
+    """Run cfg steps from start_index; exit via sys.exit."""
+    n_steps = len(cfg["steps"])
+    if start_index > n_steps:
+        runner.fail(f"{label}: start index {start_index} past end ({n_steps} steps)")
+    if start_index == n_steps:
+        done_rc = overall_rc(steps_hist)
+        if not dry_run and steps_hist:
+            last = steps_hist[-1]
+            write_state(
+                cfg["run"],
+                make_payload(
+                    cfg["run"], last["index"], last["step"], last.get("opts") or {},
+                    done_rc, True, steps_hist, "finished",
+                ),
+            )
+        runner.info(f"calib_dispatch {label} finished (no remaining steps)")
+        sys.exit(done_rc)
+
     runner.info(
-        f"calib_dispatch start run={cfg['run']:05d} n_steps={len(cfg['steps'])}"
+        f"calib_dispatch {label} run={cfg['run']:05d} "
+        f"from_step={start_index + 1}/{n_steps}"
         + (" dry-run" if dry_run else "")
     )
-    steps_hist = []
     last_rc = runner.EXIT_OK
     last_name = None
     last_opts = {}
-    last_index = -1
-    for i, raw in enumerate(cfg["steps"]):
+    last_index = start_index - 1
+    for i in range(start_index, n_steps):
+        raw = cfg["steps"][i]
         name, opts = normalize_step(raw, i)
         cmd = step_cmd(name, opts, cfg, dry_run)
-        runner.step(f"calib_dispatch {i + 1}/{len(cfg['steps'])}: {name}")
+        runner.step(f"calib_dispatch {i + 1}/{n_steps}: {name}")
         if not dry_run:
             write_state(
                 cfg["run"],
@@ -277,26 +352,62 @@ def do_start(cfg, dry_run):
             runner.warn(f"stopping after step {name} (rc={rc})")
             sys.exit(rc)
 
-    overall_rc = runner.worst([e["rc"] for e in steps_hist]) if steps_hist else last_rc
+        # Cooperative stop: honor stop_requested before the next step.
+        if not dry_run and i + 1 < n_steps and stop_requested(cfg["run"]):
+            write_state(
+                cfg["run"],
+                make_payload(
+                    cfg["run"], i, name, opts, rc, False, steps_hist, "stopped",
+                ),
+            )
+            runner.warn(f"stop requested after step {name}; chain paused")
+            sys.exit(rc)
+
+    done_rc = overall_rc(steps_hist, fallback=last_rc)
     if not dry_run:
         write_state(
             cfg["run"],
             make_payload(
-                cfg["run"], last_index, last_name, last_opts, overall_rc, True,
+                cfg["run"], last_index, last_name, last_opts, done_rc, True,
                 steps_hist, "finished",
             ),
         )
     runner.info("calib_dispatch finished")
-    sys.exit(overall_rc)
+    sys.exit(done_rc)
+
+
+#_____________________________________________________________________________
+def do_start(cfg, dry_run):
+    # start always begins at index 0; clear any prior stop request via overwrite.
+    run_steps(cfg, dry_run, 0, [], "start")
+
+
+#_____________________________________________________________________________
+def do_resume(cfg, dry_run):
+    st = read_state(cfg["run"])
+    if st is None:
+        runner.fail(f"run{cfg['run']:05d}: not started; cannot resume")
+    if st.get("finished") or st.get("status") == "finished":
+        runner.fail(f"run{cfg['run']:05d}: already finished; cannot resume")
+    if st.get("status") != "stopped":
+        runner.fail(
+            f"run{cfg['run']:05d}: status={st.get('status')!r} "
+            f"(resume requires status=stopped)"
+        )
+    start_index = resume_start_index(st)
+    hist = st.get("steps")
+    if not isinstance(hist, list):
+        hist = []
+    run_steps(cfg, dry_run, start_index, list(hist), "resume")
 
 
 #_____________________________________________________________________________
 def parse_args():
     p = runner.Parser(__doc__)
-    p.add_argument("command", choices=("start", "status"))
+    p.add_argument("command", choices=("start", "status", "stop", "resume"))
     p.add_argument("config", type=Path, help="YAML config path")
     p.add_argument("--dry-run", action="store_true",
-                   help="start: print iterate commands only (no state write)")
+                   help="start/resume: print iterate commands only (no state write)")
     return p.parse_args()
 
 
@@ -311,6 +422,12 @@ def main():
         if a.dry_run:
             runner.warn("--dry-run ignored for status")
         do_status(cfg)
+    if a.command == "stop":
+        if a.dry_run:
+            runner.warn("--dry-run ignored for stop")
+        do_stop(cfg)
+    if a.command == "resume":
+        do_resume(cfg, a.dry_run)
     do_start(cfg, a.dry_run)
 
 
