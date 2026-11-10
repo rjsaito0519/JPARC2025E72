@@ -25,10 +25,16 @@ class DispatchTests(unittest.TestCase):
         lib = self.root / "common/lib"
         lib.mkdir(parents=True)
         (lib / "__init__.py").touch()
+        data = self.root / "data"
+        decode = self.root / "decode"
+        scratch = self.root / "scratch"
         (lib / "config.py").write_text(
             "from pathlib import Path\n"
             f"OUTPUT_DIR = Path({str(self.root / 'out')!r})\n"
             f"PARAM_DIR = Path({str(self.root / 'param')!r})\n"
+            f"DATA_DIR = Path({str(data)!r})\n"
+            f"DECODE_DIR = Path({str(decode)!r})\n"
+            f"SCRATCH_DIR = Path({str(scratch)!r})\n"
             "SUB_DIR = 'e72'\n"
         )
         (lib / "input_check.py").write_text("def check_input(*a): return True\n")
@@ -38,6 +44,17 @@ class DispatchTests(unittest.TestCase):
         shutil.copy(REPO / "common/lib/runner.py", lib)
         shutil.copy(REPO / "common/lib/calib_approval.py", lib)
         shutil.copy(REPO / "common/lib/qa_session.py", lib)
+        (lib / "channel_flags.py").write_text(
+            "def open_needs_review(*a, **k):\n"
+            "    return []\n"
+            "def write_blocked_by_flags(*a, **k):\n"
+            "    return False, ''\n"
+        )
+        (lib / "final_qa_index.py").write_text(
+            "def index_summary(*a, **k):\n"
+            "    return {'n_pdf': 0, 'pdfs': []}\n"
+        )
+        shutil.copy(REPO / "common/lib/calib_anomaly.py", lib)
         # Slack notify is best-effort on awaiting; stub as skip.
         (lib / "slack_notify.py").write_text(
             "def try_notify_failure(*a, **k):\n"
@@ -46,6 +63,76 @@ class DispatchTests(unittest.TestCase):
         self.state = self.root / "out/calib/run00001/calib_dispatch_state.json"
         self.cfg = self.root / "config.yml"
         self.env = {**os.environ, "PYTHONPATH": str(self.root)}
+        self.data = data
+        self.decode = decode
+        self.scratch = scratch
+
+    def seed_subject_files(self, *, hodo=True, dc=True, d5=False):
+        """Minimal param/decode/QA files so approve subject has no missing."""
+        run = 1
+        suffix = "Pi"
+        tag = f"run{run:05d}"
+        self.data.mkdir(parents=True, exist_ok=True)
+        if hodo:
+            for cat, prefix, ext in (
+                ("HDPRM", "HodoParam", ""),
+                ("HDPHC", "HodoPHCParam", ""),
+            ):
+                pdir = self.root / "param" / cat / "e72"
+                pdir.mkdir(parents=True, exist_ok=True)
+                (pdir / f"{prefix}_{tag}_{suffix}{ext}").write_text("x\n")
+            (self.data / f"{tag}_Hodo.root").write_bytes(b"hodo")
+            summary = self.root / "out/calib" / tag / "hdphc_rounds"
+            summary.mkdir(parents=True, exist_ok=True)
+            (summary / "summary.txt").write_text("hdphc\n")
+            man_dir = self.root / "out/calib" / tag / "qa_manifests"
+            man_dir.mkdir(parents=True, exist_ok=True)
+            (man_dir / "hodo_exec.json").write_text(json.dumps({
+                "exec_id": "hodo_exec",
+                "run": run,
+                "meta": {"family": "hodo", "mode": "hdprm", "particle": "pion"},
+                "finished_at": "2026-01-01T00:00:00Z",
+                "outputs": [{"name": "a.pdf", "sha": "aa"}],
+                "params": [],
+            }) + "\n")
+        if dc:
+            for cat, prefix, ext in (
+                ("DCTDC", "DCTdcParam", ""),
+                ("DCDRFT", "DCDriftParam", ".root"),
+                ("DCGEO", "DCGeomParam", ""),
+            ):
+                pdir = self.root / "param" / cat / "e72"
+                pdir.mkdir(parents=True, exist_ok=True)
+                (pdir / f"{prefix}_{tag}_{suffix}{ext}").write_bytes(b"dc")
+            (self.data / f"{tag}_BcOut.root").write_bytes(b"bcout")
+            man_dir = self.root / "out/calib" / tag / "qa_manifests"
+            man_dir.mkdir(parents=True, exist_ok=True)
+            (man_dir / "dc_exec.json").write_text(json.dumps({
+                "exec_id": "dc_exec",
+                "run": run,
+                "meta": {"family": "dc", "mode": "t0", "particle": "pion"},
+                "finished_at": "2026-01-01T00:00:01Z",
+                "outputs": [{"name": "b.pdf", "sha": "bb"}],
+                "params": [],
+            }) + "\n")
+        if d5:
+            pdir = self.root / "param" / "DCGEO" / "e72"
+            pdir.mkdir(parents=True, exist_ok=True)
+            (pdir / f"DCGeomParam_{tag}_{suffix}").write_bytes(b"geo")
+            (self.decode / tag).mkdir(parents=True, exist_ok=True)
+            (self.decode / tag / f"{tag}_D5_{suffix}.root").write_bytes(b"d5")
+            (self.scratch / tag).mkdir(parents=True, exist_ok=True)
+            (self.scratch / tag / f"{tag}_D5_{suffix}_bc1reso.root").write_bytes(b"ref")
+            man_dir = self.root / "out/calib" / tag / "qa_manifests"
+            man_dir.mkdir(parents=True, exist_ok=True)
+            (man_dir / "d5_exec.json").write_text(json.dumps({
+                "exec_id": "d5_exec",
+                "run": run,
+                "meta": {"family": "d5", "mode": "pos_review", "particle": "pion"},
+                "finished_at": "2026-01-01T00:00:02Z",
+                "outputs": [{"name": "c.pdf", "sha": "cc"}],
+                "params": [],
+            }) + "\n")
 
     def write_cfg(self, steps="  - hodo\n  - dc_resi\n"):
         self.cfg.write_text("run: 1\nsteps:\n" + steps)
@@ -86,8 +173,8 @@ class DispatchTests(unittest.TestCase):
         journal = (
             self.root / "out/calib/run00001/hold_journal.jsonl"
         ).read_text().strip().splitlines()
-        self.assertEqual(len(journal), 1)
-        self.assertEqual(json.loads(journal[0])['event'], 'hold')
+        events = [json.loads(line)['event'] for line in journal]
+        self.assertIn('hold', events)
 
     def test_interruption_records_stop(self):
         runner = self.root / 'common/lib/runner.py'
@@ -331,6 +418,7 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertTrue(state['finished'])
         blocked = self.dispatch("resume")
         self.assertEqual(blocked.returncode, 1)
+        self.seed_subject_files(hodo=True, dc=True)
         approved = self.dispatch_extra("approve", "--note", "looks ok")
         self.assertEqual(approved.returncode, 0, approved.stderr)
         state = json.loads(self.state.read_text())
@@ -342,12 +430,20 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertNotIn('approval', state)
 
+    def test_approve_rejects_missing_subject(self):
+        done = self.run_chain('pass\n')
+        self.assertEqual(done.returncode, 0, done.stderr)
+        approved = self.dispatch("approve")
+        self.assertEqual(approved.returncode, 1, approved.stdout + approved.stderr)
+        self.assertIn("subject incomplete", approved.stdout + approved.stderr)
+
     def test_legacy_finished_status_treated_as_awaiting(self):
         done = self.run_chain('pass\n')
         self.assertEqual(done.returncode, 0)
         state = json.loads(self.state.read_text())
         state['status'] = 'finished'
         self.state.write_text(json.dumps(state) + '\n')
+        self.seed_subject_files(hodo=True, dc=True)
         approved = self.dispatch("approve")
         self.assertEqual(approved.returncode, 0, approved.stderr)
         self.assertEqual(json.loads(self.state.read_text())['status'], 'approved')

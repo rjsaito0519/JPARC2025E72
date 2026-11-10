@@ -58,14 +58,19 @@ def snapshot(run: int) -> dict:
     st = state_for(run)
     subject = calib_approval.build_subject(run, st) if st else {}
     sha = calib_approval.subject_sha(subject) if subject else ""
+    particle = subject.get("particle") if subject else None
+    families = subject.get("families") if subject else None
     return {
         "run": run,
         "status": calib_approval.effective_status(st) if st else "none",
         "subject_sha": sha,
+        "missing": list(subject.get("missing") or []) if subject else [],
         "hold": st.get("hold") if isinstance(st.get("hold"), dict) else None,
         "unverified": list(st.get("unverified") or []),
         "open_flags": channel_flags.open_needs_review(run),
-        "pdf_index": final_qa_index.index_summary(run),
+        "pdf_index": final_qa_index.index_summary(
+            run, particle=particle, families=families,
+        ),
         "has_session": SESSION(run).is_file(),
     }
 

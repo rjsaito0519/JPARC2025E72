@@ -569,7 +569,7 @@ def mark_awaiting_final(run, payload):
         "event": "awaiting",
         "subject_sha": sha,
     })
-    ok, msg = calib_approval.notify_awaiting_slack(run, sha)
+    ok, msg = calib_approval.notify_awaiting_slack(run, sha, st)
     if not ok:
         runner.warn(f"awaiting Slack note failed: {msg}")
     elif not msg.startswith("slack skip:"):
@@ -793,6 +793,12 @@ def do_approve(cfg, note, via, user_id):
             f"needs_review; clear-channel before approve"
         )
     subject = calib_approval.build_subject(cfg["run"], st)
+    missing = calib_approval.subject_missing(subject)
+    if missing:
+        runner.fail(
+            f"run{cfg['run']:05d}: subject incomplete; "
+            f"missing {missing} (finish decode/QA before approve)"
+        )
     sha = calib_approval.subject_sha(subject)
     approval = {
         "subject_sha": sha,
