@@ -193,3 +193,37 @@ def notify_awaiting_slack(run: int, sha: str) -> tuple[bool, str]:
     return slack_notify.try_notify_failure(
         int(run), f"awaiting_final_approval:{short}", text,
     )
+
+
+#_____________________________________________________________________________
+def dispatch_state_path(run: int) -> Path:
+    return (
+        Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}"
+        / "calib_dispatch_state.json"
+    )
+
+
+#_____________________________________________________________________________
+def write_blocked(run: int) -> tuple[bool, str]:
+    """True if param writes must be refused due to an active hold.
+
+    Blocks when status=held or hold_requested. Missing/unreadable state does
+    not block. awaiting_final_approval / approved do not block.
+    """
+    path = dispatch_state_path(run)
+    if not path.is_file():
+        return False, ""
+    try:
+        st = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False, ""
+    if not isinstance(st, dict):
+        return False, ""
+    if st.get("hold_requested") is True:
+        reason = st.get("hold_reason") or "hold_requested"
+        return True, f"hold_requested ({reason})"
+    if st.get("status") == "held":
+        hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+        reason = hold.get("reason") or "held"
+        return True, f"status=held ({reason})"
+    return False, ""

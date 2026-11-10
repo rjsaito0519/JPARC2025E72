@@ -294,11 +294,18 @@ def write_summary(rows, s, tol):
 
 
 def write_ofs(run, r, s):
+    """Apply residual ofs to DCGEO. Return False if a hold blocked the write."""
+    from common.lib import calib_approval
+    blocked, reason = calib_approval.write_blocked(run)
+    if blocked:
+        runner.warn(f"D5 ofs write blocked: {reason}")
+        return False
     runner.backup_file(dcgeo_path(run, s))
     opt = (f"--skip-xy --residual-offset BLC1a:{r['s']:.5f},{r['dy_a']:.5f} "
            f"--residual-offset BLC1b:{-r['s']:.5f},{r['dy_b']:.5f} --write")
     _, out = runner.sh(f"python3 {APPLY_SCRIPT} {dcgeo_path(run, s)} {opt}", capture=True)
     print(out.strip().splitlines()[-1] if out.strip() else "")
+    return True
 
 
 def make_check_pdf(run, s):
@@ -361,15 +368,26 @@ def do_pos(args, s):
         sys.exit(runner.EXIT_SKIP)
 
     written = [run for run, r in rows.items() if r["state"] == conv.WRITTEN]
+    applied = []
+    blocked_writes = []
     for run in written:
         r = rows[run]
+        # Gate before PENDING so a blocked hold does not leave an orphan journal row.
+        from common.lib import calib_approval
+        blocked, reason = calib_approval.write_blocked(run)
+        if blocked:
+            runner.warn(f"D5 ofs write blocked: {reason}")
+            blocked_writes.append(run)
+            continue
         geo = dcgeo_path(run, s)
         before = conv.file_sha256(geo)
         conv.record(
             r["hist_path"], "BLC1", r["score"], conv.PENDING,
             conv.details_with_apply(r["apply_key"], before=before, extra=r["details_extra"]),
         )
-        write_ofs(run, r, s)
+        if not write_ofs(run, r, s):
+            blocked_writes.append(run)
+            continue
         after = conv.file_sha256(geo)
         conv.record(
             r["hist_path"], "BLC1", r["score"], conv.WRITTEN,
@@ -377,10 +395,13 @@ def do_pos(args, s):
                 r["apply_key"], before=before, after=after, extra=r["details_extra"],
             ),
         )
-    if written:
-        rl = " ".join(map(str, written))
+        applied.append(run)
+    if applied:
+        rl = " ".join(map(str, applied))
         runner.warn(f"next for {rl}: myrun BcIn -> run_dcprm.py <run> resi --bcin{kaon_opt(s)} -> run_d5.py {rl} ref")
     code = conv.exit_code([r["state"] for r in rows.values()])
+    if blocked_writes:
+        code = runner.worst([code, runner.EXIT_CHECK])
     for run, r in rows.items():
         if r["state"] == conv.SETTLED:
             print(colored(f"[SETTLED] {run_tag(run)}: not converging over {conv.SETTLE_PASSES} passes; "

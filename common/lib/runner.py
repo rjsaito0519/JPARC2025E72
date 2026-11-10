@@ -116,10 +116,16 @@ def update_param(run, suffix, ptype, *opts, debug=False):
     """update_param.py <run> <suffix> <ptype> [opts]; skipped with --debug (EXIT_SKIP).
 
     Child exit codes accepted without stopping: 0, 2, 3, 4.
+    Blocked with EXIT_CHECK when calib_dispatch hold is active for the run.
     """
     if debug:
         warn(f"--debug: {ptype} params not written")
         return EXIT_SKIP
+    from . import calib_approval
+    blocked, reason = calib_approval.write_blocked(run)
+    if blocked:
+        warn(f"param write blocked for {ptype}: {reason}")
+        return EXIT_CHECK
     step(f"update params ({ptype})")
     rc, _ = sh(" ".join(["python3", str(SCRIPT_DIR / "update_param.py"), str(run), suffix, ptype, *opts]),
                ok=(EXIT_OK, EXIT_NOT_CONVERGED, EXIT_CHECK, EXIT_SKIP))
