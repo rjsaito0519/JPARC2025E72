@@ -53,7 +53,7 @@ class DispatchTests(unittest.TestCase):
         return self.dispatch("start", dry=dry)
 
     def test_nonzero_exit_records_stop(self):
-        for rc in (1, 2, 3, 4, 127, 137):
+        for rc in (1, 2, 4, 127, 137):
             with self.subTest(rc=rc):
                 result = self.run_chain(f"raise SystemExit({rc})\n")
                 self.assertEqual(result.returncode, rc, result.stderr)
@@ -63,6 +63,20 @@ class DispatchTests(unittest.TestCase):
                 self.assertFalse(state['finished'])
                 self.assertFalse(state.get('stop_requested'))
                 self.assertFalse((self.root / 'next').exists())
+
+    def test_exit_check_records_held(self):
+        result = self.run_chain('raise SystemExit(3)\n')
+        self.assertEqual(result.returncode, 3, result.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['status'], 'held')
+        self.assertEqual(state['hold']['source'], 'exit_check')
+        self.assertIsNone(state['hold']['decision'])
+        self.assertFalse((self.root / 'next').exists())
+        journal = (
+            self.root / "out/calib/run00001/hold_journal.jsonl"
+        ).read_text().strip().splitlines()
+        self.assertEqual(len(journal), 1)
+        self.assertEqual(json.loads(journal[0])['event'], 'hold')
 
     def test_interruption_records_stop(self):
         runner = self.root / 'common/lib/runner.py'
@@ -212,6 +226,82 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertIn('no plan fingerprint', resumed.stdout)
         self.assertEqual(json.loads(self.state.read_text())['status'], 'stopped')
         self.assertNotIn('plan', json.loads(self.state.read_text()))
+
+    def dispatch_extra(self, command, *extra):
+        return subprocess.run(
+            [sys.executable, str(self.scripts / "calib_dispatch.py"), command, str(self.cfg)]
+            + list(extra),
+            capture_output=True, text=True, env=self.env, timeout=15)
+
+    def test_held_blocks_resume_until_decide_refit(self):
+        first = self.run_chain('raise SystemExit(3)\n')
+        self.assertEqual(first.returncode, 3)
+        blocked = self.dispatch("resume")
+        self.assertEqual(blocked.returncode, 1, blocked.stdout + blocked.stderr)
+        self.assertIn('status=held', blocked.stdout)
+        decided = self.dispatch_extra("decide", "--action", "refit")
+        self.assertEqual(decided.returncode, 0, decided.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['status'], 'stopped')
+        self.assertEqual(state['hold']['decision'], 'refit')
+        (self.scripts / "iterate_hodo_chain.py").write_text('pass\n')
+        (self.scripts / "iterate_dc_resi.py").write_text(
+            f"from pathlib import Path\nPath({str(self.root / 'next')!r}).touch()\n")
+        resumed = self.dispatch("resume")
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['status'], 'finished')
+        self.assertEqual([e['index'] for e in state['steps']], [0, 0, 1])
+
+    def test_decide_continue_advances_past_check(self):
+        first = self.run_chain('raise SystemExit(3)\n')
+        self.assertEqual(first.returncode, 3)
+        decided = self.dispatch_extra(
+            "decide", "--action", "continue", "--note", "accept and go")
+        self.assertEqual(decided.returncode, 0, decided.stderr)
+        (self.scripts / "iterate_hodo_chain.py").write_text(
+            'raise SystemExit("hodo should not re-run")\n')
+        (self.scripts / "iterate_dc_resi.py").write_text(
+            f"from pathlib import Path\nPath({str(self.root / 'next')!r}).touch()\n")
+        resumed = self.dispatch("resume")
+        # CHECK stays in step history; overall worst exit remains 3.
+        self.assertEqual(resumed.returncode, 3, resumed.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['status'], 'finished')
+        self.assertTrue((self.root / 'next').exists())
+        self.assertEqual([e['index'] for e in state['steps']], [0, 1])
+        self.assertEqual(state['rc'], 3)
+
+    def test_manual_hold_on_stopped(self):
+        first = self.run_chain('raise SystemExit(1)\n')
+        self.assertEqual(first.returncode, 1)
+        held = self.dispatch_extra("hold", "--reason", "human flag")
+        self.assertEqual(held.returncode, 0, held.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['status'], 'held')
+        self.assertEqual(state['hold']['source'], 'manual')
+        self.assertEqual(state['hold']['reason'], 'human flag')
+        blocked = self.dispatch("resume")
+        self.assertEqual(blocked.returncode, 1)
+
+    def test_hold_requested_pauses_as_held(self):
+        state_path = str(self.state)
+        child = f"""
+import json
+from pathlib import Path
+p = Path({state_path!r})
+st = json.loads(p.read_text())
+st['hold_requested'] = True
+st['hold_reason'] = 'mid-chain flag'
+p.write_text(json.dumps(st) + '\\n')
+"""
+        result = self.run_chain(child)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['status'], 'held')
+        self.assertEqual(state['hold']['source'], 'manual')
+        self.assertEqual(state['hold']['reason'], 'mid-chain flag')
+        self.assertFalse((self.root / 'next').exists())
 
 
 if __name__ == '__main__':

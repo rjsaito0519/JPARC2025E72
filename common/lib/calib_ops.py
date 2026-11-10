@@ -162,8 +162,40 @@ def run_dispatch(
     except OSError as exc:
         return False, f"{command} failed: {type(exc).__name__}"
     text = ((result.stdout or "") + (result.stderr or "")).strip()
+    if command == "status":
+        hold_line = _status_hold_line(run)
+        if hold_line:
+            text = (hold_line + "\n" + text) if text else hold_line
     if len(text) > 1800:
         text = "…\n" + text[-1800:]
     if not text:
         text = f"{command} exit={result.returncode}"
     return result.returncode == 0, text
+
+
+#_____________________________________________________________________________
+def _status_hold_line(run: int) -> str:
+    """Prefix Slack status with a short hold summary from dispatch state."""
+    path = Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}" / "calib_dispatch_state.json"
+    if not path.is_file():
+        return ""
+    try:
+        st = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(st, dict):
+        return ""
+    hold = st.get("hold") if isinstance(st.get("hold"), dict) else None
+    bits = [
+        f"status={st.get('status')}",
+        f"hold_requested={bool(st.get('hold_requested'))}",
+    ]
+    if hold:
+        bits.append(
+            f"hold.source={hold.get('source')} "
+            f"decision={hold.get('decision')!r} "
+            f"reason={hold.get('reason')!r}"
+        )
+    else:
+        bits.append("hold=none")
+    return " ".join(bits)

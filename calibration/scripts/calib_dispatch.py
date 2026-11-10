@@ -5,6 +5,8 @@ Usage:
   calib_dispatch.py start  <config.yml> [--dry-run]
   calib_dispatch.py status <config.yml>
   calib_dispatch.py stop   <config.yml>
+  calib_dispatch.py hold   <config.yml> --reason TEXT
+  calib_dispatch.py decide <config.yml> --action refit|continue [--note TEXT]
   calib_dispatch.py resume <config.yml> [--dry-run]
 
 Steps: hodo | dc_resi [{bcin: true}] | dc_chamber [{bcin: true}] | d5_align
@@ -12,11 +14,14 @@ Steps: hodo | dc_resi [{bcin: true}] | dc_chamber [{bcin: true}] | d5_align
   dc_chamber: t0→drift→resi→reso (see iterate_dc_chamber.py)
 State: OUTPUT_DIR/calib/runXXXXX/calib_dispatch_state.json
   status=running at step start, stopped on chain halt or stop request,
+  held on EXIT_CHECK or manual hold (needs decide before resume),
   finished when all steps done.
-  stop sets stop_requested; start/resume honor it between steps (no kill).
-  resume continues from the stopped step (retry) or the next one after a
-  continue-able stop.
+  stop sets stop_requested; hold sets hold_requested (or immediate held);
+  start/resume honor them between steps (no kill).
+  resume requires status=stopped (not held). decide continue advances past
+  a non-continue-able rc; decide refit retries the same index.
 Continue on exit 0; EXIT_SKIP (4) stops unless that step has allow_skip: true.
+EXIT_CHECK (3) becomes held (not a silent resume).
 Final exit code is runner.worst of executed step codes (so a skip is not erased by a later 0).
 Config: unknown top-level / step keys rejected; kaon/force/step flags are YAML bool only.
   Session YAML from calib_session.py is accepted (calib_particle, momentum_*, …).
@@ -62,11 +67,17 @@ BOOL_STEP_OPTS = frozenset({
 MAX_ITER_MIN = 1
 MAX_ITER_MAX = 100
 RUN_MIN = 1
+DECIDE_ACTIONS = ("refit", "continue")
 
 
 #_____________________________________________________________________________
 def state_path(run):
     return config.OUTPUT_DIR / "calib" / f"run{run:05d}" / "calib_dispatch_state.json"
+
+
+#_____________________________________________________________________________
+def hold_journal_path(run):
+    return config.OUTPUT_DIR / "calib" / f"run{run:05d}" / "hold_journal.jsonl"
 
 
 #_____________________________________________________________________________
@@ -276,6 +287,29 @@ def read_state(run):
 
 
 #_____________________________________________________________________________
+def append_hold_journal(run, event):
+    path = hold_journal_path(run)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row = dict(event)
+    row["at"] = row.get("at") or utc_now()
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+#_____________________________________________________________________________
+def make_hold(source, reason, step, index, rc):
+    return {
+        "source": source,
+        "reason": reason,
+        "step": step,
+        "index": index,
+        "rc": rc,
+        "at": utc_now(),
+        "decision": None,
+    }
+
+
+#_____________________________________________________________________________
 def plan_of(cfg):
     """Normalized execution plan used to gate resume against the YAML."""
     steps = []
@@ -342,7 +376,8 @@ def require_resume_plan(cfg, st):
 
 #_____________________________________________________________________________
 def make_payload(run, index, name, opts, rc, finished, steps_hist, status,
-                 stop_requested=False, session=None, plan=None):
+                 stop_requested=False, hold_requested=False, hold=None,
+                 hold_reason=None, session=None, plan=None):
     payload = {
         "run": run,
         "index": index,
@@ -352,9 +387,14 @@ def make_payload(run, index, name, opts, rc, finished, steps_hist, status,
         "finished": finished,
         "status": status,
         "stop_requested": bool(stop_requested),
+        "hold_requested": bool(hold_requested),
         "steps": steps_hist,
         "updated_at": utc_now(),
     }
+    if hold is not None:
+        payload["hold"] = hold
+    if hold_reason is not None:
+        payload["hold_reason"] = hold_reason
     if plan is not None:
         payload["plan"] = plan
     if session:
@@ -371,6 +411,23 @@ def stop_requested(run):
 
 
 #_____________________________________________________________________________
+def hold_requested(run):
+    st = read_state(run)
+    return bool(st and st.get("hold_requested"))
+
+
+#_____________________________________________________________________________
+def hold_reason_pending(run):
+    st = read_state(run)
+    if not st:
+        return "manual hold"
+    reason = st.get("hold_reason")
+    if isinstance(reason, str) and reason.strip():
+        return reason.strip()
+    return "manual hold"
+
+
+#_____________________________________________________________________________
 def overall_rc(steps_hist, fallback=runner.EXIT_OK):
     """Worst rc of the latest attempt per step index (resume may keep failed tries)."""
     if not steps_hist:
@@ -379,6 +436,49 @@ def overall_rc(steps_hist, fallback=runner.EXIT_OK):
     for entry in steps_hist:
         by_index[entry["index"]] = entry["rc"]
     return runner.worst([by_index[i] for i in sorted(by_index)])
+
+
+#_____________________________________________________________________________
+def hold_summary(st):
+    """One-line hold summary for status / Slack."""
+    if not st:
+        return "hold=none"
+    bits = [
+        f"status={st.get('status')}",
+        f"hold_requested={bool(st.get('hold_requested'))}",
+    ]
+    hold = st.get("hold")
+    if isinstance(hold, dict):
+        bits.append(
+            f"hold.source={hold.get('source')} decision={hold.get('decision')!r} "
+            f"reason={hold.get('reason')!r}"
+        )
+    else:
+        bits.append("hold=none")
+    return " ".join(bits)
+
+
+#_____________________________________________________________________________
+def enter_held(run, payload, hold, event_type):
+    payload = dict(payload)
+    payload["status"] = "held"
+    payload["hold"] = hold
+    payload["hold_requested"] = False
+    payload["stop_requested"] = False
+    if "hold_reason" in payload:
+        del payload["hold_reason"]
+    payload["updated_at"] = utc_now()
+    write_state(run, payload)
+    append_hold_journal(run, {
+        "event": event_type,
+        "source": hold.get("source"),
+        "reason": hold.get("reason"),
+        "step": hold.get("step"),
+        "index": hold.get("index"),
+        "rc": hold.get("rc"),
+        "at": hold.get("at"),
+    })
+    return payload
 
 
 #_____________________________________________________________________________
@@ -393,6 +493,8 @@ def do_status(cfg):
         f"run{cfg['run']:05d}: last step[{st.get('index')}]={st.get('step')} "
         f"rc={st.get('rc')} status={st.get('status')} finished={st.get('finished')} "
         f"stop_requested={st.get('stop_requested')} "
+        f"hold_requested={st.get('hold_requested')} "
+        f"{hold_summary(st)} "
         f"calib_particle={st.get('calib_particle')} "
         f"momentum={mom} ({mom_src}) updated_at={st.get('updated_at')}"
     )
@@ -409,10 +511,91 @@ def do_stop(cfg):
     if st.get("finished") or st.get("status") == "finished":
         runner.warn(f"run{cfg['run']:05d}: already finished; stop ignored")
         sys.exit(runner.EXIT_OK)
+    if st.get("status") == "held":
+        runner.warn(
+            f"run{cfg['run']:05d}: already held; stop ignored "
+            f"(use decide --action refit|continue)"
+        )
+        sys.exit(runner.EXIT_OK)
     st["stop_requested"] = True
     st["updated_at"] = utc_now()
     write_state(cfg["run"], st)
     runner.info(f"run{cfg['run']:05d}: stop requested (honored between steps)")
+    sys.exit(runner.EXIT_OK)
+
+
+#_____________________________________________________________________________
+def do_hold(cfg, reason):
+    reason = (reason or "").strip()
+    if not reason:
+        runner.fail("hold requires --reason TEXT")
+    st = read_state(cfg["run"])
+    if st is None:
+        runner.fail(f"run{cfg['run']:05d}: not started; cannot hold")
+    if st.get("finished") or st.get("status") == "finished":
+        runner.fail(f"run{cfg['run']:05d}: already finished; cannot hold")
+    if st.get("status") == "held":
+        runner.warn(f"run{cfg['run']:05d}: already held; hold ignored")
+        sys.exit(runner.EXIT_OK)
+    if st.get("status") == "running":
+        st["hold_requested"] = True
+        st["hold_reason"] = reason
+        st["updated_at"] = utc_now()
+        write_state(cfg["run"], st)
+        runner.info(
+            f"run{cfg['run']:05d}: hold requested (honored between steps): {reason}"
+        )
+        sys.exit(runner.EXIT_OK)
+    # stopped (or other non-running): enter held immediately
+    hold = make_hold(
+        "manual", reason, st.get("step"), st.get("index"), st.get("rc"),
+    )
+    enter_held(cfg["run"], st, hold, "hold")
+    runner.info(f"run{cfg['run']:05d}: held (manual): {reason}")
+    sys.exit(runner.EXIT_OK)
+
+
+#_____________________________________________________________________________
+def do_decide(cfg, action, note):
+    if action not in DECIDE_ACTIONS:
+        runner.fail(f"--action must be one of {DECIDE_ACTIONS}, got {action!r}")
+    st = read_state(cfg["run"])
+    if st is None:
+        runner.fail(f"run{cfg['run']:05d}: not started; cannot decide")
+    if st.get("status") != "held":
+        runner.fail(
+            f"run{cfg['run']:05d}: status={st.get('status')!r} "
+            f"(decide requires status=held)"
+        )
+    hold = st.get("hold")
+    if not isinstance(hold, dict):
+        runner.fail(f"run{cfg['run']:05d}: held state missing hold object")
+    hold = dict(hold)
+    hold["decision"] = action
+    hold["decided_at"] = utc_now()
+    if note:
+        hold["note"] = note
+    st["hold"] = hold
+    st["status"] = "stopped"
+    st["hold_requested"] = False
+    st["stop_requested"] = False
+    st["updated_at"] = utc_now()
+    write_state(cfg["run"], st)
+    append_hold_journal(cfg["run"], {
+        "event": "decide",
+        "action": action,
+        "note": note,
+        "source": hold.get("source"),
+        "reason": hold.get("reason"),
+        "step": hold.get("step"),
+        "index": hold.get("index"),
+        "rc": hold.get("rc"),
+        "at": hold["decided_at"],
+    })
+    runner.info(
+        f"run{cfg['run']:05d}: decided {action} "
+        f"(step={hold.get('step')} index={hold.get('index')}); resume allowed"
+    )
     sys.exit(runner.EXIT_OK)
 
 
@@ -426,6 +609,9 @@ def resume_start_index(st):
     if not isinstance(opts, dict):
         opts = {}
     rc = st.get("rc")
+    hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+    if hold.get("decision") == "continue" and not should_continue(rc, opts):
+        return index + 1
     if should_continue(rc, opts):
         return index + 1
     return index
@@ -494,14 +680,38 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
         runner.info(f"step {name} exit={rc}")
         if not should_continue(rc, opts):
             if not dry_run:
-                write_state(
-                    cfg["run"],
-                    make_payload(
-                        cfg["run"], i, name, opts, rc, False, steps_hist, "stopped",
-                        session=session, plan=plan,
-                    ),
+                base = make_payload(
+                    cfg["run"], i, name, opts, rc, False, steps_hist, "stopped",
+                    session=session, plan=plan,
                 )
-            runner.warn(f"stopping after step {name} (rc={rc})")
+                if rc == runner.EXIT_CHECK:
+                    hold = make_hold(
+                        "exit_check",
+                        f"step {name} EXIT_CHECK (rc={rc})",
+                        name, i, rc,
+                    )
+                    enter_held(cfg["run"], base, hold, "hold")
+                    runner.warn(
+                        f"held after step {name} (rc={rc}); "
+                        f"decide --action refit|continue before resume"
+                    )
+                else:
+                    write_state(cfg["run"], base)
+                    runner.warn(f"stopping after step {name} (rc={rc})")
+            else:
+                runner.warn(f"stopping after step {name} (rc={rc})")
+            sys.exit(rc)
+
+        # Cooperative hold: honor hold_requested before the next step.
+        if not dry_run and i + 1 < n_steps and hold_requested(cfg["run"]):
+            reason = hold_reason_pending(cfg["run"])
+            hold = make_hold("manual", reason, name, i, rc)
+            base = make_payload(
+                cfg["run"], i, name, opts, rc, False, steps_hist, "held",
+                session=session, plan=plan,
+            )
+            enter_held(cfg["run"], base, hold, "hold")
+            runner.warn(f"hold requested after step {name}; chain held: {reason}")
             sys.exit(rc)
 
         # Cooperative stop: honor stop_requested before the next step.
@@ -531,7 +741,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
 
 #_____________________________________________________________________________
 def do_start(cfg, dry_run):
-    # start always begins at index 0; clear any prior stop request via overwrite.
+    # start always begins at index 0; clear any prior stop/hold via overwrite.
     run_steps(cfg, dry_run, 0, [], "start")
 
 
@@ -542,6 +752,11 @@ def do_resume(cfg, dry_run):
         runner.fail(f"run{cfg['run']:05d}: not started; cannot resume")
     if st.get("finished") or st.get("status") == "finished":
         runner.fail(f"run{cfg['run']:05d}: already finished; cannot resume")
+    if st.get("status") == "held":
+        runner.fail(
+            f"run{cfg['run']:05d}: status=held; "
+            f"decide --action refit|continue before resume"
+        )
     if st.get("status") != "stopped":
         runner.fail(
             f"run{cfg['run']:05d}: status={st.get('status')!r} "
@@ -558,10 +773,17 @@ def do_resume(cfg, dry_run):
 #_____________________________________________________________________________
 def parse_args():
     p = runner.Parser(__doc__)
-    p.add_argument("command", choices=("start", "status", "stop", "resume"))
+    p.add_argument(
+        "command",
+        choices=("start", "status", "stop", "hold", "decide", "resume"),
+    )
     p.add_argument("config", type=Path, help="YAML config path")
     p.add_argument("--dry-run", action="store_true",
                    help="start/resume: print iterate commands only (no state write)")
+    p.add_argument("--reason", default=None, help="hold: required short reason")
+    p.add_argument("--action", default=None, choices=DECIDE_ACTIONS,
+                   help="decide: refit (retry step) or continue (advance)")
+    p.add_argument("--note", default=None, help="decide: optional note for journal")
     return p.parse_args()
 
 
@@ -580,6 +802,16 @@ def main():
         if a.dry_run:
             runner.warn("--dry-run ignored for stop")
         do_stop(cfg)
+    if a.command == "hold":
+        if a.dry_run:
+            runner.warn("--dry-run ignored for hold")
+        do_hold(cfg, a.reason)
+    if a.command == "decide":
+        if a.dry_run:
+            runner.warn("--dry-run ignored for decide")
+        if not a.action:
+            runner.fail("decide requires --action refit|continue")
+        do_decide(cfg, a.action, a.note)
     if a.command == "resume":
         do_resume(cfg, a.dry_run)
     do_start(cfg, a.dry_run)
