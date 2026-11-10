@@ -193,7 +193,11 @@ def apply_status(hist_path, group, apply_key, param_path):
             before = dm.get("before")
             after = dm.get("after")
             if state == WRITTEN and after is not None:
-                return APPLY_DONE if after == current else APPLY_NEEDED
+                if after == current:
+                    return APPLY_DONE
+                if before is not None and before == current:
+                    return APPLY_NEEDED
+                return APPLY_MISMATCH
             if state == PENDING:
                 if before is not None and before == current:
                     return APPLY_NEEDED
