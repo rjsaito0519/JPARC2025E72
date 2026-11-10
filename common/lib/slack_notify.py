@@ -105,11 +105,11 @@ def ensure_run_thread(
     dry_run: bool = False,
 ) -> tuple[bool, str, Optional[str]]:
     """Ensure a parent message for the run; return (ok, message, thread_ts)."""
+    if dry_run:
+        return True, f"dry-run: ensure thread run{run:05d}", "dry-run-ts"
     cfg, status = load_slack_config(config_path)
     if status != "ok" or cfg is None:
         return False, f"slack config: {status}", None
-    if dry_run:
-        return True, f"dry-run: ensure thread run{run:05d}", "dry-run-ts"
 
     state = load_state(run)
     existing = state.get("thread_ts")
@@ -203,16 +203,16 @@ def post_pdf(
     dry_run: bool = False,
 ) -> tuple[bool, str]:
     """Upload a PDF into the run's Slack thread. Records the post in state."""
-    cfg, status = load_slack_config(config_path)
-    if status != "ok" or cfg is None:
-        return False, f"slack config: {status}"
-
     pdf_path = Path(pdf_path)
     key = post_key(mode, particle_suffix, pdf_path.name)
     parent_text = f"calib QA run{run:05d}"
 
     if dry_run:
         return True, f"dry-run: post {pdf_path.name} key={key}"
+
+    cfg, status = load_slack_config(config_path)
+    if status != "ok" or cfg is None:
+        return False, f"slack config: {status}"
 
     ok, msg, thread_ts = ensure_run_thread(
         run, parent_text, config_path=config_path, dry_run=False,
