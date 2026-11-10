@@ -122,7 +122,9 @@ void analyze(TString path, TString particle){
         nth_pad++;
 
         key = Form("t1-%d-u", i);
-        conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
+        conf.hdprm_mip_range_left = ana_helper::hdprm_mip_left_override(
+            key.Data(),
+            param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0);
         result = ana_helper::adc_fit(h_t1_adc[0][i], c_t1, nth_pad);
         adc_up.push_back(result);
         nth_pad++;

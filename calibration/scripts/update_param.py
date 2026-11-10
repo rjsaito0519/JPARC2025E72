@@ -148,7 +148,7 @@ def collect_hdprm(a, pf):
     for det, path in found.items():
         if _hdprm_skip_anomaly(a, det, path):
             return {}, [conv.SETTLED]
-        d = update_hdprm.make_dictdata(str(path), det)
+        d = update_hdprm.make_dictdata(str(path), det, run=a.run)
         data.update(d)
         ok(f"{det:<6}", len(d))
     return data, []
@@ -197,6 +197,7 @@ def collect_htofprm(a, pf):
             )
             return {}, [conv.SETTLED]
         d = update_hdprm.make_htofprm_dictdata(path)
+        d = update_hdprm._drop_locked(a.run, "HTOF", d, mode="htofprm")
         data.update(d)
         ok("HTOF ADC", len(d))
     return data, []

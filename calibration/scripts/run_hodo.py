@@ -82,6 +82,10 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
         },
     )
     runner.step(f"run{run:05d}: {bin_suffix} fit for {dets}")
+    import os
+    from common.lib import fit_overrides
+    flat = fit_overrides.write_flat_mip_left(run)
+    os.environ["E72_FIT_OVERRIDE"] = str(flat)
     for b in bins:
         runner.sh(f"{b} {root} {suffix}")
     rc = runner.update_param(

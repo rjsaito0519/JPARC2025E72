@@ -73,6 +73,11 @@ namespace ana_helper {
     TString get_root_dir(const TString& base_output_dir, Int_t run_num);
     TString get_scratch_dir(const TString& base_output_dir, Int_t run_num);
 
+    // Run-local HDPRM MIP left overrides (env E72_FIT_OVERRIDE = text file
+    // with lines "key value", key like bh2-6-u). Missing file → no override.
+    void load_fit_override_file();
+    Double_t hdprm_mip_left_override(const std::string& key, Double_t fallback);
+
     TCanvas* add_tab(TGTab *tab, const char* tabName);
 
     // -- hodo -----

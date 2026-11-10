@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"/>
+<title>Hodo fit Web</title>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1rem; }
+  .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin: 0.5rem 0; }
+  #plot { width: 100%; height: 420px; }
+  #msg { white-space: pre-wrap; background: #f5f5f5; padding: 0.5rem; }
+  label { font-size: 0.9rem; }
+</style>
+</head>
+<body>
+  <h1>Hodo fit (run-local overrides)</h1>
+  <div class="row">
+    <label>run <input id="run" type="number" min="1" style="width:6rem"/></label>
+    <label>mode
+      <select id="mode">
+        <option value="hdprm">hdprm</option>
+        <option value="t0">t0</option>
+        <option value="hdphc">hdphc</option>
+        <option value="htofprm">htofprm</option>
+      </select>
+    </label>
+    <label>det <select id="det"></select></label>
+    <label>seg <input id="seg" type="number" min="0" value="0" style="width:4rem"/></label>
+    <label>side
+      <select id="side"><option>U</option><option>D</option></select>
+    </label>
+    <label>kind
+      <select id="kind"><option>ADC</option><option>TDC</option></select>
+    </label>
+    <button id="load">load</button>
+  </div>
+  <div class="row">
+    <label>mip_left <input id="mip" type="number" step="1" style="width:6rem"/></label>
+    <button id="save">save override</button>
+    <button id="refit">re-fit (C++)</button>
+    <button id="adopt">adopt → update_param</button>
+    <button id="lock">toggle calib lock (ADC)</button>
+    <button id="flag">flag needs_review</button>
+  </div>
+  <div id="meta"></div>
+  <div id="plot"></div>
+  <div id="msg"></div>
+<script>
+let meta = {};
+let last = null;
+function el(id){ return document.getElementById(id); }
+async function jget(u){ return (await fetch(u)).json(); }
+async function jpost(u,b){
+  return (await fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)})).json();
+}
+function plotHist(hist, fit){
+  if (!hist) { Plotly.purge("plot"); return; }
+  const x = [];
+  for (let i=0;i<hist.counts.length;i++) x.push(0.5*(hist.edges[i]+hist.edges[i+1]));
+  const traces = [{x, y: hist.counts, type:"bar", name: hist.name}];
+  const shapes = [];
+  if (fit && fit.adc_mip) {
+    const side = el("side").value === "U" ? 0 : 1;
+    shapes.push({type:"line", x0:fit.adc_mip[side], x1:fit.adc_mip[side], y0:0, y1:1, yref:"paper", line:{color:"red"}});
+    shapes.push({type:"line", x0:fit.adc_ped[side], x1:fit.adc_ped[side], y0:0, y1:1, yref:"paper", line:{color:"green", dash:"dot"}});
+  }
+  Plotly.newPlot("plot", traces, {margin:{t:30}, shapes, bargap:0}, {responsive:true});
+}
+async function load(){
+  const run = Number(el("run").value);
+  const q = new URLSearchParams({
+    run, det: el("det").value, seg: el("seg").value, side: el("side").value,
+    kind: el("kind").value, mode: el("mode").value, suffix: meta.suffix || "Pi",
+  });
+  last = await jget("/channel?"+q.toString());
+  el("meta").textContent =
+    `fit_key=${last.fit_key}  override=${JSON.stringify(last.override||{})}  ` +
+    `locks=${JSON.stringify(last.calib_locks||[])}  fit=${JSON.stringify(last.fit||{})}`;
+  if (last.override && last.override.mip_left != null) el("mip").value = last.override.mip_left;
+  plotHist(last.hist, last.fit);
+  el("msg").textContent = last.hist_error || "loaded";
+}
+el("load").onclick = load;
+el("save").onclick = async () => {
+  const res = await jpost("/override", {
+    run: Number(el("run").value), det: el("det").value, mode: el("mode").value,
+    seg: Number(el("seg").value), side: el("side").value, mip_left: Number(el("mip").value),
+  });
+  el("msg").textContent = JSON.stringify(res);
+  await load();
+};
+el("refit").onclick = async () => {
+  const res = await jpost("/refit", {
+    run: Number(el("run").value), det: el("det").value, mode: el("mode").value,
+    suffix: meta.suffix || "Pi",
+  });
+  el("msg").textContent = res.message || JSON.stringify(res);
+  await load();
+};
+el("adopt").onclick = async () => {
+  const res = await jpost("/adopt", {
+    run: Number(el("run").value), suffix: meta.suffix || "Pi",
+  });
+  el("msg").textContent = res.message || JSON.stringify(res);
+};
+el("lock").onclick = async () => {
+  if (!last || !last.param_keys) return;
+  const key = last.param_keys.adc;
+  const locked = !(last.calib_locks || []).includes(key);
+  const res = await jpost("/lock", {
+    run: Number(el("run").value), det: el("det").value, mode: el("mode").value,
+    param_key: key, locked,
+  });
+  el("msg").textContent = JSON.stringify(res);
+  await load();
+};
+el("flag").onclick = async () => {
+  const res = await jpost("/flag", {
+    run: Number(el("run").value), det: el("det").value, mode: el("mode").value,
+    channel: `${el("seg").value}${el("side").value}`, reason: "web needs_review",
+  });
+  el("msg").textContent = JSON.stringify(res);
+};
+(async () => {
+  meta = await jget("/meta");
+  const det = el("det");
+  for (const d of (meta.dets || ["BH2"])) {
+    const o = document.createElement("option"); o.value=d; o.textContent=d; det.appendChild(o);
+  }
+  det.value = meta.default_det || "BH2";
+  if (meta.first) el("run").value = meta.first;
+})();
+</script>
+</body>
+</html>

@@ -10,7 +10,23 @@ from pathlib import Path
 import uproot
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, runner  # noqa: E402
+from common.lib import config, fit_overrides, runner  # noqa: E402
+
+
+def _drop_locked(run, det, data, mode="hdprm"):
+    """Remove calib-locked param keys so auto update does not overwrite them."""
+    if run is None:
+        return data
+    locked = fit_overrides.calib_lock_keys(int(run), det, mode=mode)
+    if not locked:
+        return data
+    out = {}
+    for key, val in data.items():
+        if key in locked:
+            runner.warn(f"{det}: calib lock keeps current value for {key}")
+            continue
+        out[key] = val
+    return out
 
 TDC_GAIN = -0.0009765625  # ns per TDC channel (-1/1024), written as the TDC gain column
 
@@ -76,16 +92,18 @@ def htof_tdc_rows(tree, cid):
     return data
 
 
-def make_dictdata(root_file_path, det):
+def make_dictdata(root_file_path, det, run=None):
     """HDPRM rows of one detector's *_HDPRM fit output."""
     tree, cid = read_tree(root_file_path), config.DETECTOR_I_LIST[det]
     if det == "HTOF":
-        return htof_tdc_rows(tree, cid)
-    if det == "BAC":
-        return bac_rows(tree, cid)
-    if det == "KVC":
-        return kvc_rows(tree, cid, config.DETECTOR_N_UD_LIST[det])
-    return ud_counter_rows(tree, cid, config.DETECTOR_N_UD_LIST[det])
+        data = htof_tdc_rows(tree, cid)
+    elif det == "BAC":
+        data = bac_rows(tree, cid)
+    elif det == "KVC":
+        data = kvc_rows(tree, cid, config.DETECTOR_N_UD_LIST[det])
+    else:
+        data = ud_counter_rows(tree, cid, config.DETECTOR_N_UD_LIST[det])
+    return _drop_locked(run, det, data, mode="hdprm")
 
 
 def make_t0_offset_dictdata(root_file_path):

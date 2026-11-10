@@ -96,7 +96,9 @@ void analyze(TString path, TString particle){
         Int_t seg = 3;
         auto c_dummy = new TCanvas("dummy", "", 1500, 1200);
         TString key = Form("cvc-%d-u", seg);
-        conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
+        conf.hdprm_mip_range_left = ana_helper::hdprm_mip_left_override(
+            key.Data(),
+            param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0);
         conf.hdprm_typical_value = ana_helper::adc_fit(h_cvc_adc[0][seg], c_dummy, 1);
         delete c_dummy;
     }
@@ -137,7 +139,9 @@ void analyze(TString path, TString particle){
         nth_pad++;
 
         key = Form("cvc-%d-u", i);
-        conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
+        conf.hdprm_mip_range_left = ana_helper::hdprm_mip_left_override(
+            key.Data(),
+            param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0);
         result = ana_helper::adc_fit(h_cvc_adc[0][i], c_cvc, nth_pad);
         adc_up.push_back(result);
         nth_pad++;
@@ -148,7 +152,9 @@ void analyze(TString path, TString particle){
         nth_pad++;
 
         key = Form("cvc-%d-d", i);
-        conf.hdprm_mip_range_left = param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0;
+        conf.hdprm_mip_range_left = ana_helper::hdprm_mip_left_override(
+            key.Data(),
+            param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0);
         result = ana_helper::adc_fit(h_cvc_adc[1][i], c_cvc, nth_pad);
         adc_down.push_back(result);
         nth_pad++;        
