@@ -35,7 +35,7 @@ from pathlib import Path
 from termcolor import colored
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, runner  # noqa: E402
+from common.lib import config, d5_qa_slack, runner  # noqa: E402
 import calib_convergence as conv  # noqa: E402
 
 DCGEO_DIR = config.PARAM_DIR / "DCGEO" / config.SUB_DIR
@@ -311,6 +311,18 @@ def make_check_pdf(run, s):
     return rc
 
 
+#_____________________________________________________________________________
+def after_qa_slack(run, kind, s):
+    """Post a D5 QA PDF to Slack; never changes calibration exit codes."""
+    posted, post_msg = d5_qa_slack.try_post_after_d5(
+        run, kind, kaon=(s == "K"),
+    )
+    if not posted:
+        runner.warn(f"Slack QA post failed: {post_msg}")
+    elif not post_msg.startswith("slack skip:"):
+        runner.info(post_msg)
+
+
 def check_pos_inputs(run, s, force):
     if not dcgeo_path(run, s).exists():
         runner.fail(f"{dcgeo_path(run, s)} not found (suffix {s}; --kaon for K)")
@@ -326,6 +338,9 @@ def do_pos(args, s):
         check_pos_inputs(run, s, args.force)
     rows = {run: measure(run, s) for run in args.runs}
     failed = [run for run, r in rows.items() if r is None]
+    for run, r in rows.items():
+        if r is not None:
+            after_qa_slack(run, "pos_review", s)
     if not (failed or args.debug):
         for run, r in rows.items():
             r["state"] = judge_pos(run, r, s, args.tol)
@@ -369,6 +384,8 @@ def do_pos(args, s):
             if pdf_rc != 0:
                 runner.warn(f"{run_tag(run)}: check PDF failed (exit {pdf_rc}); treating as EXIT_CHECK")
                 code = runner.worst([code, runner.EXIT_CHECK])
+            else:
+                after_qa_slack(run, "plane_resi_qa", s)
     sys.exit(code)
 
 
