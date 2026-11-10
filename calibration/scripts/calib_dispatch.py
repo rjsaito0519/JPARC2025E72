@@ -203,6 +203,68 @@ def normalize_step(raw, index):
     return name, opts
 
 
+# Downstream dependencies for unverified cascade (#24 Phase D).
+# Keys are logical families; values are families they invalidate when changed.
+CASCADE_DEPENDENTS = {
+    "hodo": ("dc_chamber", "dc_resi", "d5_align"),
+    "dc_chamber": ("d5_align",),
+    "dc_resi": ("d5_align",),
+    "d5_align": (),
+}
+
+
+#_____________________________________________________________________________
+def step_family(name):
+    if name in CASCADE_DEPENDENTS:
+        return name
+    return name
+
+
+#_____________________________________________________________________________
+def dependent_indices(cfg_steps, changed_index):
+    """Indices after changed_index whose step family depends on the changed step."""
+    if changed_index < 0 or changed_index >= len(cfg_steps):
+        return []
+    changed_name, _ = normalize_step(cfg_steps[changed_index], changed_index)
+    deps = set(CASCADE_DEPENDENTS.get(step_family(changed_name), ()))
+    if not deps:
+        return []
+    out = []
+    for j in range(changed_index + 1, len(cfg_steps)):
+        name, _ = normalize_step(cfg_steps[j], j)
+        if step_family(name) in deps:
+            out.append(j)
+    return out
+
+
+#_____________________________________________________________________________
+def mark_unverified(payload, cfg_steps, changed_index, reason):
+    """Add dependent step indices to payload['unverified']."""
+    payload = dict(payload)
+    cur = set(int(i) for i in (payload.get("unverified") or []) if isinstance(i, int))
+    added = dependent_indices(cfg_steps, changed_index)
+    cur.update(added)
+    payload["unverified"] = sorted(cur)
+    if added:
+        append_hold_journal(payload.get("run") or 0, {
+            "event": "cascade_invalidate",
+            "changed_index": changed_index,
+            "unverified": added,
+            "reason": reason,
+            "at": utc_now(),
+        })
+    return payload
+
+
+#_____________________________________________________________________________
+def clear_unverified_through(payload, completed_index):
+    """Drop unverified marks for indices <= completed_index."""
+    payload = dict(payload)
+    cur = [int(i) for i in (payload.get("unverified") or []) if isinstance(i, int)]
+    payload["unverified"] = [i for i in cur if i > completed_index]
+    return payload
+
+
 #_____________________________________________________________________________
 def should_continue(rc, opts):
     """True if the dispatch chain should proceed to the next step."""
@@ -379,7 +441,7 @@ def require_resume_plan(cfg, st):
 #_____________________________________________________________________________
 def make_payload(run, index, name, opts, rc, finished, steps_hist, status,
                  stop_requested=False, hold_requested=False, hold=None,
-                 hold_reason=None, session=None, plan=None):
+                 hold_reason=None, session=None, plan=None, unverified=None):
     payload = {
         "run": run,
         "index": index,
@@ -399,6 +461,8 @@ def make_payload(run, index, name, opts, rc, finished, steps_hist, status,
         payload["hold_reason"] = hold_reason
     if plan is not None:
         payload["plan"] = plan
+    if unverified is not None:
+        payload["unverified"] = list(unverified)
     if session:
         for key in SESSION_META_KEYS:
             if key in session and session[key] is not None:
@@ -461,7 +525,7 @@ def hold_summary(st):
 
 
 #_____________________________________________________________________________
-def enter_held(run, payload, hold, event_type):
+def enter_held(run, payload, hold, event_type, cfg_steps=None):
     payload = dict(payload)
     payload["status"] = "held"
     payload["hold"] = hold
@@ -469,6 +533,10 @@ def enter_held(run, payload, hold, event_type):
     payload["stop_requested"] = False
     if "hold_reason" in payload:
         del payload["hold_reason"]
+    if cfg_steps is not None and isinstance(hold.get("index"), int):
+        payload = mark_unverified(
+            payload, cfg_steps, hold["index"], hold.get("reason") or event_type,
+        )
     payload["updated_at"] = utc_now()
     write_state(run, payload)
     append_hold_journal(run, {
@@ -479,6 +547,7 @@ def enter_held(run, payload, hold, event_type):
         "index": hold.get("index"),
         "rc": hold.get("rc"),
         "at": hold.get("at"),
+        "unverified": payload.get("unverified") or [],
     })
     return payload
 
@@ -589,7 +658,7 @@ def do_hold(cfg, reason):
     hold = make_hold(
         "manual", reason, st.get("step"), st.get("index"), st.get("rc"),
     )
-    enter_held(cfg["run"], st, hold, "hold")
+    enter_held(cfg["run"], st, hold, "hold", cfg_steps=cfg["steps"])
     runner.info(f"run{cfg['run']:05d}: held (manual): {reason}")
     sys.exit(runner.EXIT_OK)
 
@@ -655,6 +724,13 @@ def do_flag_channel(cfg, family, mode, det, channel, reason):
         reason=str(reason).strip(),
         status="needs_review",
     )
+    st = read_state(cfg["run"])
+    if st is not None and isinstance(st.get("index"), int):
+        st = mark_unverified(
+            st, cfg["steps"], st["index"], f"flag {mode}/{det}/{channel}",
+        )
+        st["updated_at"] = utc_now()
+        write_state(cfg["run"], st)
     runner.info(
         f"run{cfg['run']:05d}: flagged {row['mode']}/{row['det']}/{row['channel']}"
     )
@@ -700,6 +776,21 @@ def do_approve(cfg, note, via, user_id):
         runner.fail(
             f"run{cfg['run']:05d}: status={eff!r} "
             f"(approve requires awaiting_final_approval)"
+        )
+    unverified = [
+        int(i) for i in (st.get("unverified") or []) if isinstance(i, int)
+    ]
+    if unverified:
+        runner.fail(
+            f"run{cfg['run']:05d}: unverified steps remain {unverified}; "
+            f"refit/resume dependents before approve"
+        )
+    from common.lib import channel_flags
+    open_flags = channel_flags.open_needs_review(cfg["run"])
+    if open_flags:
+        runner.fail(
+            f"run{cfg['run']:05d}: {len(open_flags)} channel(s) still "
+            f"needs_review; clear-channel before approve"
         )
     subject = calib_approval.build_subject(cfg["run"], st)
     sha = calib_approval.subject_sha(subject)
@@ -776,11 +867,21 @@ def resume_start_index(st):
         opts = {}
     rc = st.get("rc")
     hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+    unverified = [
+        int(i) for i in (st.get("unverified") or []) if isinstance(i, int)
+    ]
+    if hold.get("decision") == "refit" and unverified:
+        return min([index] + unverified)
     if hold.get("decision") == "continue" and not should_continue(rc, opts):
-        return index + 1
-    if should_continue(rc, opts):
-        return index + 1
-    return index
+        nxt = index + 1
+    elif should_continue(rc, opts):
+        nxt = index + 1
+    else:
+        nxt = index
+    if unverified and hold.get("decision") == "continue":
+        # Continue past the held step but re-run the earliest stale dependent.
+        return min([nxt] + [u for u in unverified if u >= nxt] or [nxt])
+    return nxt
 
 
 #_____________________________________________________________________________
@@ -795,13 +896,14 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
         done_rc = overall_rc(steps_hist)
         if not dry_run and steps_hist:
             last = steps_hist[-1]
+            prev = read_state(cfg["run"])
+            uv = list((prev or {}).get("unverified") or [])
             base = make_payload(
                 cfg["run"], last["index"], last["step"], last.get("opts") or {},
                 done_rc, True, steps_hist, calib_approval.STATUS_AWAITING,
-                session=session, plan=plan,
+                session=session, plan=plan, unverified=uv,
             )
             # Carry hold from prior state if present (decide continue path).
-            prev = read_state(cfg["run"])
             if prev and isinstance(prev.get("hold"), dict):
                 base["hold"] = prev["hold"]
             mark_awaiting_final(cfg["run"], base)
@@ -817,6 +919,8 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
     last_name = None
     last_opts = {}
     last_index = start_index - 1
+    prev0 = read_state(cfg["run"]) if not dry_run else None
+    unverified = list((prev0 or {}).get("unverified") or []) if prev0 else []
     for i in range(start_index, n_steps):
         raw = cfg["steps"][i]
         name, opts = normalize_step(raw, i)
@@ -827,7 +931,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 cfg["run"],
                 make_payload(
                     cfg["run"], i, name, opts, None, False, list(steps_hist), "running",
-                    session=session, plan=plan,
+                    session=session, plan=plan, unverified=unverified,
                 ),
             )
         if dry_run:
@@ -847,11 +951,16 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
         last_index = i
         steps_hist.append({"index": i, "step": name, "opts": opts, "rc": rc})
         runner.info(f"step {name} exit={rc}")
+        if should_continue(rc, opts) and not dry_run:
+            # Successful step clears its own unverified mark.
+            tmp = {"unverified": unverified, "run": cfg["run"]}
+            tmp = clear_unverified_through(tmp, i)
+            unverified = list(tmp.get("unverified") or [])
         if not should_continue(rc, opts):
             if not dry_run:
                 base = make_payload(
                     cfg["run"], i, name, opts, rc, False, steps_hist, "stopped",
-                    session=session, plan=plan,
+                    session=session, plan=plan, unverified=unverified,
                 )
                 if rc == runner.EXIT_CHECK:
                     from common.lib import calib_anomaly
@@ -865,7 +974,9 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                         reason,
                         name, i, rc,
                     )
-                    enter_held(cfg["run"], base, hold, "hold")
+                    enter_held(
+                        cfg["run"], base, hold, "hold", cfg_steps=cfg["steps"],
+                    )
                     runner.warn(
                         f"held after step {name} (rc={rc}); "
                         f"decide --action refit|continue before resume"
@@ -883,9 +994,11 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
             hold = make_hold("manual", reason, name, i, rc)
             base = make_payload(
                 cfg["run"], i, name, opts, rc, False, steps_hist, "held",
-                session=session, plan=plan,
+                session=session, plan=plan, unverified=unverified,
             )
-            enter_held(cfg["run"], base, hold, "hold")
+            enter_held(
+                cfg["run"], base, hold, "hold", cfg_steps=cfg["steps"],
+            )
             runner.warn(f"hold requested after step {name}; chain held: {reason}")
             sys.exit(rc)
 

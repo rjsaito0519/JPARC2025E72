@@ -103,10 +103,21 @@ def build_subject(run: int, st: dict[str, Any]) -> dict[str, Any]:
     if summary.is_file():
         hdphc_summary_sha = qa_session.file_sha256(summary)
 
+    from . import channel_flags
+    open_flags = channel_flags.open_needs_review(run)
     subject = {
         "plan": st.get("plan"),
         "steps": latest_step_rows(st.get("steps") or []),
         "hold": st.get("hold") if isinstance(st.get("hold"), dict) else None,
+        "unverified": list(st.get("unverified") or []),
+        "open_channel_flags": [
+            {
+                "mode": r.get("mode"),
+                "det": r.get("det"),
+                "channel": r.get("channel"),
+            }
+            for r in open_flags
+        ],
         "hdphc_summary_sha": hdphc_summary_sha,
         "hdphc_param_sha": _param_sha(run, "HDPHC", "HodoPHCParam", suffix),
         "hdprm_param_sha": _param_sha(run, "HDPRM", "HodoParam", suffix),
