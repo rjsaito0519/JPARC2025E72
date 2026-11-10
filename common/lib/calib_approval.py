@@ -184,14 +184,83 @@ def _chamber_tag_from_meta(family: str, mode: str, meta: dict[str, Any]) -> str:
 
 
 #_____________________________________________________________________________
+def _qa_key_label(family: str, mode: str, chamber: str = "") -> str:
+    if chamber:
+        return f"{family}:{mode}:{chamber}"
+    return f"{family}:{mode}"
+
+
+#_____________________________________________________________________________
+def required_qa_keys(st: dict[str, Any]) -> set[tuple[str, str, str]]:
+    """Required (family, mode, chamber) from plan steps and skip_* opts."""
+    plan = st.get("plan") if isinstance(st.get("plan"), dict) else {}
+    keys: set[tuple[str, str, str]] = set()
+    for entry in plan.get("steps") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        opts = entry.get("opts") if isinstance(entry.get("opts"), dict) else {}
+        if name == "hodo":
+            if not opts.get("skip_t0"):
+                keys.add(("hodo", "t0", ""))
+            keys.add(("hodo", "hdprm", ""))
+            if not opts.get("skip_hdphc"):
+                keys.add(("hodo", "hdphc", ""))
+        elif name == "dc_chamber":
+            chamber = "bcin" if opts.get("bcin") else "bcout"
+            for mode, skip in (
+                ("t0", "skip_t0"),
+                ("drift", "skip_drift"),
+                ("resi", "skip_resi"),
+                ("reso", "skip_reso"),
+            ):
+                if not opts.get(skip):
+                    keys.add(("dc", mode, chamber))
+        elif name == "dc_resi":
+            chamber = "bcin" if opts.get("bcin") else "bcout"
+            keys.add(("dc", "resi", chamber))
+        elif name == "d5_align":
+            keys.add(("d5", "pos_review", ""))
+    return keys
+
+
+#_____________________________________________________________________________
+def _decode_key_for_qa(family: str, chamber: str) -> str | None:
+    if family == "hodo":
+        return "Hodo"
+    if family == "dc":
+        if chamber == "bcin":
+            return "BcIn"
+        if chamber == "bcout":
+            return "BcOut"
+        return None
+    if family == "d5":
+        return "D5"
+    return None
+
+
+#_____________________________________________________________________________
+def _param_snapshots_from_manifest(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Name -> param entry; params_written overrides params (fit_input)."""
+    by_name: dict[str, dict[str, Any]] = {}
+    for p in data.get("params") or []:
+        if isinstance(p, dict) and p.get("name"):
+            by_name[str(p["name"])] = p
+    for p in data.get("params_written") or []:
+        if isinstance(p, dict) and p.get("name"):
+            by_name[str(p["name"])] = p
+    return by_name
+
+
+#_____________________________________________________________________________
 def _latest_qa_manifests(
     run: int,
     particle: str,
     families: set[str],
     *,
-    planned_dc_chambers: set[str] | None = None,
+    required_keys: set[tuple[str, str, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Latest qa_manifest per (family, mode, chamber); missing listed per plan."""
+    """Latest qa_manifest per (family, mode, chamber); required keys drive missing."""
     root = qa_session.manifest_dir(int(run))
     by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
     if root.is_dir():
@@ -213,6 +282,24 @@ def _latest_qa_manifests(
             prev = by_key.get(key)
             finished = str(data.get("finished_at") or "")
             if prev is None or finished >= str(prev.get("finished_at") or ""):
+                param_rows = [
+                    {
+                        "name": p.get("name"),
+                        "sha": p.get("sha"),
+                        "role": p.get("role"),
+                    }
+                    for p in (data.get("params") or [])
+                    if isinstance(p, dict)
+                ]
+                written_rows = [
+                    {
+                        "name": p.get("name"),
+                        "sha": p.get("sha"),
+                        "role": p.get("role") or "written",
+                    }
+                    for p in (data.get("params_written") or [])
+                    if isinstance(p, dict)
+                ]
                 by_key[key] = {
                     "family": family,
                     "mode": mode,
@@ -226,37 +313,94 @@ def _latest_qa_manifests(
                         for o in (data.get("outputs") or [])
                         if isinstance(o, dict)
                     ],
-                    "param_shas": [
-                        {
-                            "name": p.get("name"),
-                            "sha": p.get("sha"),
-                            "role": p.get("role"),
-                        }
-                        for p in (data.get("params") or [])
-                        if isinstance(p, dict)
-                    ],
+                    "param_shas": param_rows,
+                    "params_written": written_rows,
                 }
-    rows = [by_key[k] for k in sorted(by_key)]
+    req = set(required_keys or ())
+    rows: list[dict[str, Any]] = []
+    for key in sorted(by_key):
+        row = dict(by_key[key])
+        row["required"] = key in req
+        rows.append(row)
     missing: list[str] = []
-    for fam in sorted(families):
-        if fam == "dc":
-            continue
-        if not any(row["family"] == fam for row in rows):
-            missing.append(f"qa_manifest:{fam}")
-    if "dc" in families:
-        needed = set(planned_dc_chambers or ())
-        if not needed:
-            needed = {"BcOut"}
-        present_tags = {
-            str(row.get("chamber") or "")
-            for row in rows
-            if row.get("family") == "dc"
-        }
-        for chamber in sorted(needed):
-            tag = "bcin" if chamber == "BcIn" else "bcout"
-            if tag not in present_tags:
-                missing.append(f"qa_manifest:dc:{chamber}")
+    for family, mode, chamber in sorted(req):
+        if (family, mode, chamber) not in by_key:
+            missing.append(f"qa_manifest:{_qa_key_label(family, mode, chamber)}")
     return rows, missing
+
+
+#_____________________________________________________________________________
+def _qa_correspondence_missing(
+    run: int,
+    particle: str,
+    rows: list[dict[str, Any]],
+    params: list[dict[str, Any]],
+    decodes: list[dict[str, Any]],
+) -> list[str]:
+    """Sealed PDF / input_token / param sha checks for required QA rows."""
+    missing: list[str] = []
+    decode_by_key = {str(d.get("key")): d for d in decodes}
+    param_by_name = {str(p.get("name")): p for p in params if p.get("name")}
+    for row in rows:
+        if not row.get("required"):
+            row["checks_ok"] = True
+            row["sealed"] = []
+            continue
+        family = str(row.get("family") or "")
+        mode = str(row.get("mode") or "")
+        chamber = str(row.get("chamber") or "")
+        label = _qa_key_label(family, mode, chamber)
+        man_name = row.get("manifest")
+        man_path = qa_session.manifest_dir(int(run)) / str(man_name)
+        try:
+            data = qa_session.load_manifest(man_path)
+        except (OSError, ValueError, TypeError):
+            missing.append(f"qa_manifest:{label}")
+            row["checks_ok"] = False
+            row["sealed"] = []
+            continue
+        ok, _msg, sealed_paths = qa_session.resolve_sealed_outputs(
+            data, run=int(run), mode=mode, particle=particle,
+        )
+        if not ok:
+            missing.append(f"qa_sealed:{label}")
+            row["checks_ok"] = False
+            row["sealed"] = []
+            continue
+        row["sealed"] = [
+            {
+                "name": p.name,
+                "path": str(p),
+                "sha": qa_session.file_sha256(p),
+                "exec_id": data.get("exec_id"),
+            }
+            for p in sealed_paths
+        ]
+        tok = data.get("input_token")
+        if tok:
+            dec_key = _decode_key_for_qa(family, chamber)
+            dec = decode_by_key.get(dec_key) if dec_key else None
+            if dec is None or dec.get("token") != tok:
+                missing.append(f"qa_input:{label}")
+                row["checks_ok"] = False
+                continue
+        snaps = _param_snapshots_from_manifest(data)
+        if not snaps:
+            missing.append(f"qa_param:{label}")
+            row["checks_ok"] = False
+            continue
+        param_bad = False
+        for name, snap in snaps.items():
+            cur = param_by_name.get(name)
+            if cur is None or cur.get("sha") != snap.get("sha"):
+                missing.append(f"qa_param:{label}:{name}")
+                param_bad = True
+                break
+        if param_bad:
+            row["checks_ok"] = False
+            continue
+        row["checks_ok"] = True
+    return missing
 
 
 #_____________________________________________________________________________
@@ -323,20 +467,25 @@ def build_subject(run: int, st: dict[str, Any]) -> dict[str, Any]:
             if dec["missing"]:
                 missing.append(f"decode:{key}")
 
+    req_keys = required_qa_keys(st)
     summary = (
         Path(config.OUTPUT_DIR) / "calib" / run_tag / "hdphc_rounds" / "summary.txt"
     )
     hdphc_summary_sha = (
         qa_session.file_sha256(summary) if summary.is_file() else None
     )
-    if "hodo" in families and hdphc_summary_sha is None:
+    if ("hodo", "hdphc", "") in req_keys and hdphc_summary_sha is None:
         missing.append("hdphc_summary")
 
-    planned_dc = _dc_chambers_from_plan(st) if "dc" in families else set()
     qa_manifests, qa_missing = _latest_qa_manifests(
-        run_i, particle, families, planned_dc_chambers=planned_dc,
+        run_i, particle, families, required_keys=req_keys,
     )
     missing.extend(qa_missing)
+    missing.extend(
+        _qa_correspondence_missing(
+            run_i, particle, qa_manifests, params, decodes,
+        )
+    )
 
     from . import channel_flags
     open_flags = channel_flags.open_needs_review(run)
@@ -359,6 +508,10 @@ def build_subject(run: int, st: dict[str, Any]) -> dict[str, Any]:
         "params": params,
         "decodes": decodes,
         "qa_manifests": qa_manifests,
+        "qa_required": [
+            {"family": f, "mode": m, "chamber": c}
+            for f, m, c in sorted(req_keys)
+        ],
         "missing": missing,
         "hdphc_summary_sha": hdphc_summary_sha,
         # Flat aliases kept for older readers / journal diffs.
@@ -395,6 +548,28 @@ def approval_summary(st: Optional[dict[str, Any]]) -> str:
     else:
         bits.append("approval=none")
     return " ".join(bits)
+
+
+#_____________________________________________________________________________
+def reconcile_stale_approval(run: int) -> bool:
+    """Drop approved → awaiting when approval.subject_sha != current subject."""
+    path = dispatch_state_path(run)
+    if not path.is_file():
+        return False
+    try:
+        st = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(st, dict):
+        return False
+    if effective_status(st) != STATUS_APPROVED:
+        return False
+    approval = st.get("approval") if isinstance(st.get("approval"), dict) else {}
+    pinned = str(approval.get("subject_sha") or "")
+    current = subject_sha(build_subject(int(run), st))
+    if pinned and pinned == current:
+        return False
+    return invalidate_approval(int(run), "subject_sha_changed")
 
 
 #_____________________________________________________________________________
@@ -487,14 +662,11 @@ def notify_awaiting_slack(
     from . import final_qa_index, slack_notify
 
     short = (sha or "")[:8]
-    particle = None
-    families = None
     if isinstance(st, dict):
-        particle, _suffix = particle_suffix(st)
-        families = sorted(plan_families(st))
-    n_pdf = final_qa_index.index_summary(
-        int(run), particle=particle, families=families,
-    ).get("n_pdf", 0)
+        subject = build_subject(int(run), st)
+        n_pdf = final_qa_index.index_from_subject(int(run), subject).get("n_pdf", 0)
+    else:
+        n_pdf = final_qa_index.index_summary(int(run)).get("n_pdf", 0)
     text = (
         f"run{int(run):05d}: awaiting final QA approval "
         f"(subject_sha={short}…, QA PDFs={n_pdf}). "

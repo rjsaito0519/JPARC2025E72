@@ -30,35 +30,94 @@ class DispatchTests(unittest.TestCase):
         self.cfg = self.root / "config.yml"
         self.env = {**os.environ, "PYTHONPATH": str(self.root)}
 
+    def _sha(self, path):
+        import hashlib
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+
+    def _token(self, path):
+        path = Path(path)
+        st = path.stat()
+        return f"{path.name}:{st.st_size}:{st.st_mtime_ns}"
+
+    def _write_sealed_manifest(
+        self, *, exec_id, family, mode, decode_path, param_paths,
+        bcin=False, finished_at="2026-01-01T00:00:00Z",
+    ):
+        run = 1
+        tag = f"run{run:05d}"
+        man_dir = self.root / "out/calib" / tag / "qa_manifests"
+        man_dir.mkdir(parents=True, exist_ok=True)
+        seal_dir = man_dir / exec_id
+        seal_dir.mkdir(parents=True, exist_ok=True)
+        pdf = seal_dir / f"{exec_id}.pdf"
+        pdf.write_bytes(b"%PDF " + exec_id.encode())
+        meta = {"family": family, "mode": mode, "particle": "pion"}
+        if family == "dc":
+            meta["bcin"] = bool(bcin)
+            meta["all"] = False
+        written = []
+        for path in param_paths:
+            path = Path(path)
+            written.append({
+                "name": path.name,
+                "path": str(path),
+                "sha": self._sha(path),
+                "role": "written",
+            })
+        (man_dir / f"{exec_id}.json").write_text(json.dumps({
+            "exec_id": exec_id,
+            "run": run,
+            "meta": meta,
+            "finished_at": finished_at,
+            "input_token": self._token(decode_path),
+            "outputs": [{
+                "name": pdf.name,
+                "path": str(pdf),
+                "sha": self._sha(pdf),
+            }],
+            "params": [],
+            "params_written": written,
+        }) + "\n")
+
     def seed_subject_files(self, *, hodo=True, dc=True, d5=False):
-        """Minimal param/decode/QA files so approve subject has no missing."""
+        """Minimal param/decode/QA files so approve subject has no missing.
+
+        Matches default plan modes: hodo (t0/hdprm/hdphc) + dc_resi (resi/bcout).
+        """
         run = 1
         suffix = "Pi"
         tag = f"run{run:05d}"
         self.data.mkdir(parents=True, exist_ok=True)
         if hodo:
+            paths = {}
             for cat, prefix, ext in (
                 ("HDPRM", "HodoParam", ""),
                 ("HDPHC", "HodoPHCParam", ""),
             ):
                 pdir = self.root / "param" / cat / "e72"
                 pdir.mkdir(parents=True, exist_ok=True)
-                (pdir / f"{prefix}_{tag}_{suffix}{ext}").write_text("x\n")
-            (self.data / f"{tag}_Hodo.root").write_bytes(b"hodo")
+                path = pdir / f"{prefix}_{tag}_{suffix}{ext}"
+                path.write_text("x\n")
+                paths[prefix] = path
+            hodo_root = self.data / f"{tag}_Hodo.root"
+            hodo_root.write_bytes(b"hodo")
             summary = self.root / "out/calib" / tag / "hdphc_rounds"
             summary.mkdir(parents=True, exist_ok=True)
             (summary / "summary.txt").write_text("hdphc\n")
-            man_dir = self.root / "out/calib" / tag / "qa_manifests"
-            man_dir.mkdir(parents=True, exist_ok=True)
-            (man_dir / "hodo_exec.json").write_text(json.dumps({
-                "exec_id": "hodo_exec",
-                "run": run,
-                "meta": {"family": "hodo", "mode": "hdprm", "particle": "pion"},
-                "finished_at": "2026-01-01T00:00:00Z",
-                "outputs": [{"name": "a.pdf", "sha": "aa"}],
-                "params": [],
-            }) + "\n")
+            self._write_sealed_manifest(
+                exec_id="hodo_t0", family="hodo", mode="t0",
+                decode_path=hodo_root, param_paths=[paths["HodoParam"]],
+            )
+            self._write_sealed_manifest(
+                exec_id="hodo_hdprm", family="hodo", mode="hdprm",
+                decode_path=hodo_root, param_paths=[paths["HodoParam"]],
+            )
+            self._write_sealed_manifest(
+                exec_id="hodo_hdphc", family="hodo", mode="hdphc",
+                decode_path=hodo_root, param_paths=[paths["HodoPHCParam"]],
+            )
         if dc:
+            paths = {}
             for cat, prefix, ext in (
                 ("DCTDC", "DCTdcParam", ""),
                 ("DCDRFT", "DCDriftParam", ".root"),
@@ -66,36 +125,32 @@ class DispatchTests(unittest.TestCase):
             ):
                 pdir = self.root / "param" / cat / "e72"
                 pdir.mkdir(parents=True, exist_ok=True)
-                (pdir / f"{prefix}_{tag}_{suffix}{ext}").write_bytes(b"dc")
-            (self.data / f"{tag}_BcOut.root").write_bytes(b"bcout")
-            man_dir = self.root / "out/calib" / tag / "qa_manifests"
-            man_dir.mkdir(parents=True, exist_ok=True)
-            (man_dir / "dc_exec.json").write_text(json.dumps({
-                "exec_id": "dc_exec",
-                "run": run,
-                "meta": {"family": "dc", "mode": "t0", "particle": "pion"},
-                "finished_at": "2026-01-01T00:00:01Z",
-                "outputs": [{"name": "b.pdf", "sha": "bb"}],
-                "params": [],
-            }) + "\n")
+                path = pdir / f"{prefix}_{tag}_{suffix}{ext}"
+                path.write_bytes(b"dc")
+                paths[prefix] = path
+            bcout = self.data / f"{tag}_BcOut.root"
+            bcout.write_bytes(b"bcout")
+            # Default dispatch cfg uses dc_resi → require resi/bcout only.
+            self._write_sealed_manifest(
+                exec_id="dc_resi", family="dc", mode="resi",
+                decode_path=bcout, param_paths=[paths["DCGeomParam"]],
+                finished_at="2026-01-01T00:00:01Z",
+            )
         if d5:
             pdir = self.root / "param" / "DCGEO" / "e72"
             pdir.mkdir(parents=True, exist_ok=True)
-            (pdir / f"DCGeomParam_{tag}_{suffix}").write_bytes(b"geo")
+            geo = pdir / f"DCGeomParam_{tag}_{suffix}"
+            geo.write_bytes(b"geo")
             (self.decode / tag).mkdir(parents=True, exist_ok=True)
-            (self.decode / tag / f"{tag}_D5_{suffix}.root").write_bytes(b"d5")
+            d5_root = self.decode / tag / f"{tag}_D5_{suffix}.root"
+            d5_root.write_bytes(b"d5")
             (self.scratch / tag).mkdir(parents=True, exist_ok=True)
             (self.scratch / tag / f"{tag}_D5_{suffix}_bc1reso.root").write_bytes(b"ref")
-            man_dir = self.root / "out/calib" / tag / "qa_manifests"
-            man_dir.mkdir(parents=True, exist_ok=True)
-            (man_dir / "d5_exec.json").write_text(json.dumps({
-                "exec_id": "d5_exec",
-                "run": run,
-                "meta": {"family": "d5", "mode": "pos_review", "particle": "pion"},
-                "finished_at": "2026-01-01T00:00:02Z",
-                "outputs": [{"name": "c.pdf", "sha": "cc"}],
-                "params": [],
-            }) + "\n")
+            self._write_sealed_manifest(
+                exec_id="d5_pos", family="d5", mode="pos_review",
+                decode_path=d5_root, param_paths=[geo],
+                finished_at="2026-01-01T00:00:02Z",
+            )
 
     def write_cfg(self, steps="  - hodo\n  - dc_resi\n"):
         self.cfg.write_text("run: 1\nsteps:\n" + steps)

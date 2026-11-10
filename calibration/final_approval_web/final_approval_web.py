@@ -19,6 +19,7 @@ from common.lib import (  # noqa: E402
     channel_flags,
     config,
     final_qa_index,
+    qa_session,
 )
 
 HERE = Path(__file__).resolve().parent
@@ -55,11 +56,10 @@ def available_runs() -> list[int]:
 
 #_____________________________________________________________________________
 def snapshot(run: int) -> dict:
+    calib_approval.reconcile_stale_approval(run)
     st = state_for(run)
     subject = calib_approval.build_subject(run, st) if st else {}
     sha = calib_approval.subject_sha(subject) if subject else ""
-    particle = subject.get("particle") if subject else None
-    families = subject.get("families") if subject else None
     return {
         "run": run,
         "status": calib_approval.effective_status(st) if st else "none",
@@ -68,8 +68,9 @@ def snapshot(run: int) -> dict:
         "hold": st.get("hold") if isinstance(st.get("hold"), dict) else None,
         "unverified": list(st.get("unverified") or []),
         "open_flags": channel_flags.open_needs_review(run),
-        "pdf_index": final_qa_index.index_summary(
-            run, particle=particle, families=families,
+        "pdf_index": (
+            final_qa_index.index_from_subject(run, subject) if subject
+            else {"run": run, "n_pdf": 0, "pdfs": [], "source": "subject_sealed"}
         ),
         "has_session": SESSION(run).is_file(),
     }
@@ -146,20 +147,41 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/pdf":
             qs = parse_qs(u.query)
             name = (qs.get("name") or [""])[0]
+            exec_id = (qs.get("exec_id") or [""])[0]
             try:
                 run = int((qs.get("run") or [0])[0])
             except ValueError:
                 self._send(400, b"bad run", "text/plain")
                 return
-            path = final_qa_index.img_dir(run) / name
-            if not path.is_file() or path.suffix.lower() != ".pdf":
-                self._send(404, b"not found", "text/plain")
+            if not name or not exec_id or run < 1:
+                self._send(400, b"bad pdf query", "text/plain")
                 return
-            # Stay inside img_dir.
-            if path.resolve().parent != final_qa_index.img_dir(run).resolve():
+            man_root = qa_session.manifest_dir(run).resolve()
+            man_path = man_root / f"{exec_id}.json"
+            sealed = (man_root / exec_id / name).resolve()
+            try:
+                sealed.relative_to(man_root)
+            except ValueError:
                 self._send(403, b"forbidden", "text/plain")
                 return
-            self._send(200, path.read_bytes(), "application/pdf")
+            if not man_path.is_file() or not sealed.is_file():
+                self._send(404, b"not found", "text/plain")
+                return
+            if sealed.suffix.lower() != ".pdf":
+                self._send(404, b"not found", "text/plain")
+                return
+            try:
+                manifest = qa_session.load_manifest(man_path)
+            except (OSError, ValueError, TypeError):
+                self._send(404, b"not found", "text/plain")
+                return
+            ok, _msg, paths = qa_session.resolve_sealed_outputs(
+                manifest, run=run,
+            )
+            if not ok or sealed not in {p.resolve() for p in paths}:
+                self._send(409, b"sealed sha mismatch", "text/plain")
+                return
+            self._send(200, sealed.read_bytes(), "application/pdf")
             return
         self._send(404, b"not found", "text/plain")
 

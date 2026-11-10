@@ -58,10 +58,17 @@ function showState(st) {
   for (const p of pdfs) {
     const li = document.createElement("li");
     const a = document.createElement("a");
-    a.href = `/pdf?run=${st.run}&name=${encodeURIComponent(p.name)}`;
+    const execId = encodeURIComponent(p.exec_id || "");
+    a.href = `/pdf?run=${st.run}&exec_id=${execId}&name=${encodeURIComponent(p.name)}`;
     a.textContent = p.name;
     a.target = "_blank";
     li.appendChild(a);
+    if (p.mode) {
+      const hint = document.createTextNode(
+        ` (${p.family || ""}/${p.mode}${p.chamber ? "/" + p.chamber : ""})`
+      );
+      li.appendChild(hint);
+    }
     ul.appendChild(li);
   }
 }

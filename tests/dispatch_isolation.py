@@ -74,7 +74,10 @@ def populate_dispatch_lib(
     )
     (lib / "final_qa_index.py").write_text(
         "def index_summary(*a, **k):\n"
-        "    return {'n_pdf': 0, 'pdfs': []}\n",
+        "    return {'n_pdf': 0, 'pdfs': []}\n"
+        "def index_from_subject(run, subject):\n"
+        "    return {'run': int(run), 'n_pdf': 0, 'pdfs': [], "
+        "'source': 'subject_sealed'}\n",
         encoding="utf-8",
     )
     (lib / "slack_notify.py").write_text(

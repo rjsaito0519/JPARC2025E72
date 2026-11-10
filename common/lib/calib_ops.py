@@ -379,6 +379,13 @@ def _status_summary_line(run: int) -> str:
         return ""
     if not isinstance(st, dict):
         return ""
+    calib_approval.reconcile_stale_approval(int(run))
+    try:
+        st = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        st = {}
+    if not isinstance(st, dict):
+        return ""
     hold = st.get("hold") if isinstance(st.get("hold"), dict) else None
     bits = [
         f"status={calib_approval.effective_status(st) or st.get('status')}",

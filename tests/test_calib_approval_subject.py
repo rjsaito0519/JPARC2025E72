@@ -1,4 +1,4 @@
-"""Subject composition for final approval (#37)."""
+"""Subject composition / correspondence for final approval (#37)."""
 import json
 import sys
 import tempfile
@@ -42,33 +42,106 @@ class BuildSubjectTests(unittest.TestCase):
         for key, value in self._old.items():
             setattr(config, key, value)
 
-    def _write_param(self, cat, prefix, suffix="Pi", ext=""):
+    def _write_param(self, cat, prefix, suffix="Pi", ext="", content=b"v1"):
         pdir = self.param / cat / "e72"
         pdir.mkdir(parents=True, exist_ok=True)
         path = pdir / f"{prefix}_run00001_{suffix}{ext}"
-        path.write_bytes(b"v1")
+        path.write_bytes(content)
         return path
 
-    def _manifest(
-        self, exec_id, family, mode, particle="pion",
-        *, bcin=False, all_chambers=False, finished_at="2026-01-01T00:00:00Z",
+    def _sealed_manifest(
+        self,
+        exec_id,
+        family,
+        mode,
+        *,
+        particle="pion",
+        bcin=False,
+        all_chambers=False,
+        decode_path=None,
+        param_paths=None,
+        finished_at="2026-01-01T00:00:00Z",
+        seal_bytes=b"%PDF sealed",
     ):
         man_dir = self.out / "calib/run00001/qa_manifests"
         man_dir.mkdir(parents=True, exist_ok=True)
-        path = man_dir / f"{exec_id}.json"
+        seal_dir = man_dir / exec_id
+        seal_dir.mkdir(parents=True, exist_ok=True)
+        pdf = seal_dir / f"{exec_id}.pdf"
+        pdf.write_bytes(seal_bytes)
+        sha = qa_session.file_sha256(pdf)
         meta = {"family": family, "mode": mode, "particle": particle}
         if family == "dc":
             meta["bcin"] = bool(bcin)
             meta["all"] = bool(all_chambers)
+        written = []
+        for path in param_paths or []:
+            path = Path(path)
+            written.append({
+                "name": path.name,
+                "path": str(path),
+                "sha": qa_session.file_sha256(path),
+                "role": "written",
+            })
+        tok = None
+        if decode_path is not None and Path(decode_path).is_file():
+            tok = qa_session.input_token(decode_path)
+        path = man_dir / f"{exec_id}.json"
         path.write_text(json.dumps({
             "exec_id": exec_id,
             "run": 1,
             "meta": meta,
             "finished_at": finished_at,
-            "outputs": [{"name": f"{exec_id}.pdf", "sha": "dead"}],
+            "input_token": tok,
+            "outputs": [{"name": pdf.name, "path": str(pdf), "sha": sha}],
             "params": [],
+            "params_written": written,
         }) + "\n", encoding="utf-8")
         return path
+
+    def _seed_hodo_complete(self):
+        hdprm = self._write_param("HDPRM", "HodoParam")
+        hdphc = self._write_param("HDPHC", "HodoPHCParam")
+        hodo = self.data / "run00001_Hodo.root"
+        hodo.write_bytes(b"hodo")
+        (self.out / "calib/run00001/hdphc_rounds").mkdir(parents=True)
+        (self.out / "calib/run00001/hdphc_rounds/summary.txt").write_text("ok\n")
+        for mode, exec_id, params in (
+            ("t0", "h_t0", [hdprm]),
+            ("hdprm", "h_hdprm", [hdprm]),
+            ("hdphc", "h_hdphc", [hdphc]),
+        ):
+            self._sealed_manifest(
+                exec_id, "hodo", mode, decode_path=hodo, param_paths=params,
+            )
+        return hdprm, hdphc, hodo
+
+    def _seed_dc_chamber(self, *, bcin=False, modes=None):
+        dctdc = self._write_param("DCTDC", "DCTdcParam", content=b"tdc")
+        dcdrft = self._write_param(
+            "DCDRFT", "DCDriftParam", ext=".root", content=b"drft",
+        )
+        geo = self._write_param("DCGEO", "DCGeomParam", content=b"geo")
+        chamber = "BcIn" if bcin else "BcOut"
+        root = self.data / f"run00001_{chamber}.root"
+        root.write_bytes(b"bc-" + chamber.encode())
+        mode_params = {
+            "t0": [dctdc],
+            "drift": [dcdrft],
+            "resi": [geo],
+            "reso": [geo],
+        }
+        for mode in modes or ("t0", "drift", "resi", "reso"):
+            tag = "in" if bcin else "out"
+            self._sealed_manifest(
+                f"dc_{tag}_{mode}",
+                "dc",
+                mode,
+                bcin=bcin,
+                decode_path=root,
+                param_paths=mode_params[mode],
+            )
+        return dctdc, dcdrft, geo, root
 
     def test_hodo_only_does_not_require_dc(self):
         st = {
@@ -83,18 +156,31 @@ class BuildSubjectTests(unittest.TestCase):
         self.assertTrue(any(m.startswith("param:HDPRM") for m in subject["missing"]))
         self.assertFalse(any("DCTDC" in m or "DCGEO" in m for m in subject["missing"]))
 
-    def test_dcgeo_change_changes_subject_sha(self):
-        self._write_param("HDPRM", "HodoParam")
-        self._write_param("HDPHC", "HodoPHCParam")
-        self._write_param("DCTDC", "DCTdcParam")
-        self._write_param("DCDRFT", "DCDriftParam", ext=".root")
-        geo = self._write_param("DCGEO", "DCGeomParam")
-        (self.data / "run00001_Hodo.root").write_bytes(b"hodo")
-        (self.data / "run00001_BcOut.root").write_bytes(b"bc")
-        (self.out / "calib/run00001/hdphc_rounds").mkdir(parents=True)
-        (self.out / "calib/run00001/hdphc_rounds/summary.txt").write_text("ok\n")
-        self._manifest("h1", "hodo", "hdprm")
-        self._manifest("d1", "dc", "t0")
+    def test_required_modes_and_matching_set_ok(self):
+        self._seed_hodo_complete()
+        self._seed_dc_chamber(bcin=False)
+        st = {
+            "plan": {
+                "calib_particle": "pion",
+                "steps": [
+                    {"name": "hodo", "opts": {}},
+                    {"name": "dc_chamber", "opts": {}},
+                ],
+            },
+            "steps": [],
+        }
+        subject = calib_approval.build_subject(1, st)
+        self.assertEqual(subject["missing"], [])
+        req = {(r["family"], r["mode"], r["chamber"]) for r in subject["qa_required"]}
+        self.assertIn(("hodo", "hdprm", ""), req)
+        self.assertIn(("dc", "reso", "bcout"), req)
+        self.assertTrue(all(
+            m.get("checks_ok") for m in subject["qa_manifests"] if m.get("required")
+        ))
+
+    def test_dcgeo_change_blocks_and_changes_sha(self):
+        self._seed_hodo_complete()
+        _tdc, _drft, geo, _root = self._seed_dc_chamber(bcin=False)
         st = {
             "plan": {
                 "calib_particle": "pion",
@@ -110,12 +196,40 @@ class BuildSubjectTests(unittest.TestCase):
         sha1 = calib_approval.subject_sha(s1)
         geo.write_bytes(b"v2-changed")
         s2 = calib_approval.build_subject(1, st)
-        sha2 = calib_approval.subject_sha(s2)
-        self.assertNotEqual(sha1, sha2)
+        self.assertNotEqual(sha1, calib_approval.subject_sha(s2))
+        self.assertTrue(any(m.startswith("qa_param:") for m in s2["missing"]))
+
+    def test_sealed_pdf_missing_blocks(self):
+        self._seed_hodo_complete()
+        st = {
+            "plan": {
+                "calib_particle": "pion",
+                "steps": [{"name": "hodo", "opts": {"skip_t0": True}}],
+            },
+            "steps": [],
+        }
+        # Corrupt sealed file for hdprm.
+        pdf = self.out / "calib/run00001/qa_manifests/h_hdprm/h_hdprm.pdf"
+        pdf.unlink()
+        subject = calib_approval.build_subject(1, st)
+        self.assertIn("qa_sealed:hodo:hdprm", subject["missing"])
+
+    def test_stale_input_token_blocks(self):
+        self._seed_hodo_complete()
+        st = {
+            "plan": {
+                "calib_particle": "pion",
+                "steps": [{"name": "hodo", "opts": {"skip_t0": True}}],
+            },
+            "steps": [],
+        }
+        (self.data / "run00001_Hodo.root").write_bytes(b"hodo-rewritten")
+        subject = calib_approval.build_subject(1, st)
+        self.assertTrue(any(m.startswith("qa_input:hodo:") for m in subject["missing"]))
 
     def test_particle_filters_manifest(self):
-        self._manifest("k1", "hodo", "hdprm", particle="kaon")
-        self._manifest("p1", "hodo", "hdprm", particle="pion")
+        self._sealed_manifest("k1", "hodo", "hdprm", particle="kaon")
+        self._sealed_manifest("p1", "hodo", "hdprm", particle="pion")
         st = {
             "plan": {
                 "calib_particle": "kaon",
@@ -143,47 +257,46 @@ class BuildSubjectTests(unittest.TestCase):
         }
 
     def test_keeps_bcout_and_bcin_same_mode(self):
-        self._manifest("out_t0", "dc", "t0", bcin=False)
-        self._manifest(
+        self._sealed_manifest("out_t0", "dc", "t0", bcin=False)
+        self._sealed_manifest(
             "in_t0", "dc", "t0", bcin=True, finished_at="2026-01-02T00:00:00Z",
         )
         subject = calib_approval.build_subject(1, self._both_chamber_plan())
         by_chamber = {
-            m["chamber"]: m["exec_id"] for m in subject["qa_manifests"]
+            (m["mode"], m["chamber"]): m["exec_id"]
+            for m in subject["qa_manifests"]
         }
-        self.assertEqual(by_chamber.get("bcout"), "out_t0")
-        self.assertEqual(by_chamber.get("bcin"), "in_t0")
-        self.assertFalse(any(
-            m.startswith("qa_manifest:dc:") for m in subject["missing"]
-        ))
+        self.assertEqual(by_chamber.get(("t0", "bcout")), "out_t0")
+        self.assertEqual(by_chamber.get(("t0", "bcin")), "in_t0")
 
-    def test_missing_bcin_qa_when_plan_needs_both(self):
-        self._manifest("out_t0", "dc", "t0", bcin=False)
+    def test_missing_bcin_mode_when_plan_needs_both(self):
+        self._sealed_manifest("out_t0", "dc", "t0", bcin=False)
         subject = calib_approval.build_subject(1, self._both_chamber_plan())
-        self.assertIn("qa_manifest:dc:BcIn", subject["missing"])
-        self.assertNotIn("qa_manifest:dc:BcOut", subject["missing"])
+        self.assertIn("qa_manifest:dc:t0:bcin", subject["missing"])
+        self.assertNotIn("qa_manifest:dc:t0:bcout", subject["missing"])
 
     def test_bcin_does_not_drop_bcout(self):
-        self._manifest("out_t0", "dc", "t0", bcin=False)
+        self._sealed_manifest("out_t0", "dc", "t0", bcin=False)
         st = self._both_chamber_plan()
         s1 = calib_approval.build_subject(1, st)
         self.assertEqual(
             [m["exec_id"] for m in s1["qa_manifests"] if m["chamber"] == "bcout"],
             ["out_t0"],
         )
-        self._manifest(
+        self._sealed_manifest(
             "in_t0", "dc", "t0", bcin=True, finished_at="2026-01-03T00:00:00Z",
         )
         s2 = calib_approval.build_subject(1, st)
         by_chamber = {
-            m["chamber"]: m["exec_id"] for m in s2["qa_manifests"]
+            (m["mode"], m["chamber"]): m["exec_id"]
+            for m in s2["qa_manifests"]
         }
-        self.assertEqual(by_chamber.get("bcout"), "out_t0")
-        self.assertEqual(by_chamber.get("bcin"), "in_t0")
+        self.assertEqual(by_chamber.get(("t0", "bcout")), "out_t0")
+        self.assertEqual(by_chamber.get(("t0", "bcin")), "in_t0")
 
     def test_reso_all_is_separate_chamber_key(self):
-        self._manifest("out_t0", "dc", "t0", bcin=False)
-        self._manifest("all_reso", "dc", "reso", all_chambers=True)
+        self._sealed_manifest("out_t0", "dc", "t0", bcin=False)
+        self._sealed_manifest("all_reso", "dc", "reso", all_chambers=True)
         subject = calib_approval.build_subject(1, self._both_chamber_plan())
         by_key = {
             (m["mode"], m["chamber"]): m["exec_id"]
@@ -191,7 +304,30 @@ class BuildSubjectTests(unittest.TestCase):
         }
         self.assertEqual(by_key.get(("t0", "bcout")), "out_t0")
         self.assertEqual(by_key.get(("reso", "all")), "all_reso")
-        self.assertIn("qa_manifest:dc:BcIn", subject["missing"])
+        self.assertIn("qa_manifest:dc:t0:bcin", subject["missing"])
+        # --all does not satisfy per-chamber reso requirement.
+        self.assertIn("qa_manifest:dc:reso:bcout", subject["missing"])
+
+    def test_reconcile_stale_approval(self):
+        self._seed_hodo_complete()
+        st = {
+            "status": "approved",
+            "finished": True,
+            "plan": {
+                "calib_particle": "pion",
+                "steps": [{"name": "hodo", "opts": {"skip_t0": True}}],
+            },
+            "steps": [],
+            "approval": {"subject_sha": "deadbeefdeadbeef", "via": "test"},
+        }
+        state_path = self.out / "calib/run00001/calib_dispatch_state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps(st) + "\n", encoding="utf-8")
+        changed = calib_approval.reconcile_stale_approval(1)
+        self.assertTrue(changed)
+        new_st = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(new_st["status"], "awaiting_final_approval")
+        self.assertNotIn("approval", new_st)
 
 
 class FinalQaIndexFilterTests(unittest.TestCase):
@@ -217,6 +353,39 @@ class FinalQaIndexFilterTests(unittest.TestCase):
         rows = self.idx.list_qa_pdfs(1, particle="pion", families=["hodo"])
         names = [r["name"] for r in rows]
         self.assertEqual(names, ["run00001_hodo_hdprm_Pi.pdf"])
+
+    def test_index_from_subject_uses_sealed(self):
+        subject = {
+            "qa_manifests": [
+                {
+                    "required": True,
+                    "checks_ok": True,
+                    "family": "hodo",
+                    "mode": "hdprm",
+                    "chamber": "",
+                    "exec_id": "e1",
+                    "sealed": [{
+                        "name": "a.pdf",
+                        "path": "/x/a.pdf",
+                        "sha": "aa",
+                        "exec_id": "e1",
+                    }],
+                },
+                {
+                    "required": True,
+                    "checks_ok": False,
+                    "family": "hodo",
+                    "mode": "hdphc",
+                    "chamber": "",
+                    "exec_id": "e2",
+                    "sealed": [],
+                },
+            ],
+        }
+        idx = self.idx.index_from_subject(1, subject)
+        self.assertEqual(idx["n_pdf"], 1)
+        self.assertEqual(idx["pdfs"][0]["exec_id"], "e1")
+        self.assertEqual(idx["source"], "subject_sealed")
 
 
 if __name__ == "__main__":

@@ -97,3 +97,41 @@ def index_summary(
         "particle": particle,
         "families": list(families) if families is not None else None,
     }
+
+
+#_____________________________________________________________________________
+def index_from_subject(
+    run: int,
+    subject: dict[str, Any],
+) -> dict[str, Any]:
+    """QA PDF index from subject-validated sealed outputs (required + checks_ok)."""
+    pdfs: list[dict[str, Any]] = []
+    for row in subject.get("qa_manifests") or []:
+        if not isinstance(row, dict):
+            continue
+        if not row.get("required") or not row.get("checks_ok"):
+            continue
+        family = str(row.get("family") or "")
+        for sealed in row.get("sealed") or []:
+            if not isinstance(sealed, dict):
+                continue
+            name = sealed.get("name")
+            if not name:
+                continue
+            pdfs.append({
+                "name": name,
+                "path": sealed.get("path"),
+                "sha": sealed.get("sha"),
+                "exec_id": sealed.get("exec_id") or row.get("exec_id"),
+                "family": family,
+                "mode": row.get("mode"),
+                "chamber": row.get("chamber") or "",
+                "sealed": True,
+            })
+    pdfs.sort(key=lambda r: (str(r.get("exec_id") or ""), str(r.get("name") or "")))
+    return {
+        "run": int(run),
+        "n_pdf": len(pdfs),
+        "pdfs": pdfs,
+        "source": "subject_sealed",
+    }
