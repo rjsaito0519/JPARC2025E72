@@ -31,8 +31,10 @@ Config: unknown top-level / step keys rejected; kaon/force/step flags are YAML b
   Session YAML from calib_session.py is accepted (calib_particle, momentum_*, …).
 """
 import json
+import os
 import secrets
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -564,6 +566,63 @@ def make_hold(source, reason, step, index, rc):
         "decision": None,
         "id": secrets.token_hex(8),
     }
+
+
+GATE_WAIT_POLL_S = 1.0
+
+
+#_____________________________________________________________________________
+def mark_gate_waiter(run, *, waiting=True):
+    """Set or clear in-process step_gate waiter flags on dispatch state."""
+    st = read_state(run)
+    if st is None:
+        return None
+    if waiting:
+        st["gate_waiter"] = True
+        st["gate_waiter_pid"] = os.getpid()
+    else:
+        st.pop("gate_waiter", None)
+        st.pop("gate_waiter_pid", None)
+    st["updated_at"] = utc_now()
+    write_state(run, st)
+    return st
+
+
+#_____________________________________________________________________________
+def wait_step_gate_decision(run, hold_id, *, poll_s=None):
+    """Block until Slack/CLI decide (or gate-stop) for this hold id.
+
+    Returns 'continue' | 'refit' | 'stop'.
+    """
+    if poll_s is None:
+        try:
+            poll_s = float(os.environ.get("CALIB_GATE_WAIT_POLL_S", GATE_WAIT_POLL_S))
+        except (TypeError, ValueError):
+            poll_s = GATE_WAIT_POLL_S
+        if poll_s <= 0:
+            poll_s = GATE_WAIT_POLL_S
+    runner.info(
+        f"waiting for Slack Proceed / Refit / Stop "
+        f"(hold_id={hold_id}; pid={os.getpid()})"
+    )
+    mark_gate_waiter(run, waiting=True)
+    try:
+        while True:
+            time.sleep(poll_s)
+            st = read_state(run)
+            if st is None:
+                continue
+            hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+            if hold_id and str(hold.get("id") or "") not in ("", str(hold_id)):
+                # Replaced by a newer hold; keep waiting on current id only.
+                continue
+            decision = hold.get("decision")
+            if decision in ("continue", "refit", "stop"):
+                return decision
+            if st.get("status") == "stopped" and decision in ("continue", "refit"):
+                return decision
+    finally:
+        mark_gate_waiter(run, waiting=False)
 
 
 #_____________________________________________________________________________
@@ -1104,7 +1163,8 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
     last_index = start_index - 1
     prev0 = read_state(cfg["run"]) if not dry_run else None
     unverified = list((prev0 or {}).get("unverified") or []) if prev0 else []
-    for i in range(start_index, n_steps):
+    i = start_index
+    while i < n_steps:
         raw = cfg["steps"][i]
         name, opts = normalize_step(raw, i)
         cmd = step_cmd(name, opts, cfg, dry_run)
@@ -1235,7 +1295,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
             runner.warn(f"stop requested after step {name}; chain paused")
             sys.exit(rc)
 
-        # Human next-step gate: pause after OK when more steps remain.
+        # Human next-step gate: wait in-process for Slack/CLI decide.
         # --auto / session auto: true skips gates (coarse or fine steps).
         if not dry_run and i + 1 < n_steps and not cfg.get("auto"):
             hold = make_hold(
@@ -1261,10 +1321,30 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 runner.warn(f"step-gate Slack note failed: {slack_msg}")
             runner.info(
                 f"held after step {name} (step_gate); "
-                f"Slack Proceed / Refit / Stop, or "
-                f"./ops.py decide {cfg['run']} continue|refit then resume"
+                f"waiting for Slack Proceed / Refit / Stop "
+                f"(or ./ops.py decide {cfg['run']} continue|refit)"
             )
-            sys.exit(rc)
+            decision = wait_step_gate_decision(cfg["run"], hold.get("id"))
+            if decision == "stop":
+                runner.info(
+                    f"step_gate stop; staying held after {name} (rc={rc})"
+                )
+                sys.exit(rc)
+            if decision == "refit":
+                runner.info(f"step_gate refit; re-running {name}")
+                append_progress(
+                    cfg["run"], "step_gate_refit",
+                    step=name, index=i, rc=rc, status="running",
+                    hold_source="step_gate",
+                )
+                continue
+            runner.info(f"step_gate continue; next step after {name}")
+            append_progress(
+                cfg["run"], "step_gate_continue",
+                step=name, index=i, rc=rc, status="running",
+                hold_source="step_gate",
+            )
+        i += 1
 
     done_rc = overall_rc(steps_hist, fallback=last_rc)
     if not dry_run:

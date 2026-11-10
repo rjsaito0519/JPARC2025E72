@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 from dispatch_isolation import populate_dispatch_lib
@@ -28,7 +29,11 @@ class DispatchTests(unittest.TestCase):
         self.scratch = paths["scratch"]
         self.state = self.root / "out/calib/run00001/calib_dispatch_state.json"
         self.cfg = self.root / "config.yml"
-        self.env = {**os.environ, "PYTHONPATH": str(self.root)}
+        self.env = {
+            **os.environ,
+            "PYTHONPATH": str(self.root),
+            "CALIB_GATE_WAIT_POLL_S": "0.05",
+        }
 
     def _sha(self, path):
         import hashlib
@@ -168,8 +173,83 @@ class DispatchTests(unittest.TestCase):
         self.write_cfg(steps)
         return self.dispatch("start", dry=dry)
 
-    def continue_through_gates(self, max_gates=5):
-        """Decide continue + resume while status is held at step_gate."""
+    def start_chain_async(self, child, steps="  - hodo\n  - dc_resi\n"):
+        """Start dispatch in the background (for in-process step_gate wait)."""
+        (self.scripts / "iterate_hodo_chain.py").write_text(child)
+        (self.scripts / "iterate_dc_resi.py").write_text(
+            f"from pathlib import Path\nPath({str(self.root / 'next')!r}).touch()\n")
+        self.write_cfg(steps)
+        return subprocess.Popen(
+            [sys.executable, str(self.scripts / "calib_dispatch.py"),
+             "start", str(self.cfg)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=self.env,
+        )
+
+    def wait_for_step_gate(self, timeout_s=5.0):
+        """Poll until held at step_gate with gate_waiter (or process ended)."""
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if self.state.is_file():
+                state = json.loads(self.state.read_text())
+                hold = state.get("hold") if isinstance(state.get("hold"), dict) else {}
+                if (
+                    state.get("status") == "held"
+                    and hold.get("source") == "step_gate"
+                    and state.get("gate_waiter")
+                ):
+                    return state
+            time.sleep(0.05)
+        self.fail("timed out waiting for step_gate waiter")
+
+    def dispatch_async(self, command):
+        return subprocess.Popen(
+            [sys.executable, str(self.scripts / "calib_dispatch.py"),
+             command, str(self.cfg)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=self.env,
+        )
+
+    def drive_until_done(self, proc, timeout_s=15.0):
+        """While proc waits at step_gate, decide continue until it exits."""
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                return proc.returncode
+            if self.state.is_file():
+                state = json.loads(self.state.read_text())
+                hold = (
+                    state.get("hold") if isinstance(state.get("hold"), dict) else {}
+                )
+                if (
+                    state.get("status") == "held"
+                    and hold.get("source") == "step_gate"
+                    and state.get("gate_waiter")
+                    and hold.get("decision") is None
+                ):
+                    decided = self.dispatch_extra("decide", "--action", "continue")
+                    self.assertEqual(
+                        decided.returncode, 0, decided.stderr + decided.stdout,
+                    )
+            time.sleep(0.05)
+        proc.kill()
+        self.fail("timed out driving step_gate waiters")
+
+    def run_to_awaiting(self, child="pass\n", steps="  - hodo\n  - dc_resi\n"):
+        """Start chain and Proceed through all step_gates to awaiting."""
+        proc = self.start_chain_async(child, steps)
+        rc = self.drive_until_done(proc)
+        out, err = proc.communicate(timeout=5)
+        self.assertEqual(rc, 0, err + out)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state["status"], "awaiting_final_approval")
+        return state
+
+    def continue_through_gates(self, proc=None, max_gates=5):
+        """Decide continue while in-process waiter is at step_gate."""
+        if proc is not None:
+            self.drive_until_done(proc)
+            return
         for _ in range(max_gates):
             if not self.state.is_file():
                 return
@@ -179,12 +259,7 @@ class DispatchTests(unittest.TestCase):
                 return
             decided = self.dispatch_extra("decide", "--action", "continue")
             self.assertEqual(decided.returncode, 0, decided.stderr + decided.stdout)
-            resumed = self.dispatch("resume")
-            # resume may exit with overall worst rc from history
-            self.assertIn(
-                resumed.returncode, (0, 2, 3, 4),
-                resumed.stderr + resumed.stdout,
-            )
+            time.sleep(0.1)
 
     def test_nonzero_exit_records_stop(self):
         for rc in (1, 2, 4, 127, 137):
@@ -226,20 +301,28 @@ class DispatchTests(unittest.TestCase):
     def test_success_and_allowed_skip(self):
         for rc in (0, 4):
             with self.subTest(rc=rc):
-                result = self.run_chain(f'raise SystemExit({rc})\n',
-                                        '  - hodo: {allow_skip: true}\n  - dc_resi\n')
-                self.assertEqual(result.returncode, rc, result.stderr)
                 if rc == 0:
-                    state = json.loads(self.state.read_text())
-                    self.assertEqual(state['status'], 'held')
+                    proc = self.start_chain_async(
+                        f'raise SystemExit({rc})\n',
+                        '  - hodo: {allow_skip: true}\n  - dc_resi\n',
+                    )
+                    state = self.wait_for_step_gate()
                     self.assertEqual(state['hold']['source'], 'step_gate')
                     self.assertFalse((self.root / 'next').exists())
-                    self.continue_through_gates()
+                    self.continue_through_gates(proc=proc)
+                    out, err = proc.communicate(timeout=10)
+                    self.assertEqual(proc.returncode, rc, err + out)
                 else:
-                    # allow_skip EXIT_SKIP still continues; then step_gate
-                    state = json.loads(self.state.read_text())
+                    # allow_skip EXIT_SKIP still continues; then step_gate wait
+                    proc = self.start_chain_async(
+                        f'raise SystemExit({rc})\n',
+                        '  - hodo: {allow_skip: true}\n  - dc_resi\n',
+                    )
+                    state = self.wait_for_step_gate()
                     if state.get('status') == 'held':
-                        self.continue_through_gates()
+                        self.continue_through_gates(proc=proc)
+                    out, err = proc.communicate(timeout=10)
+                    self.assertEqual(proc.returncode, rc, err + out)
                 self.assertTrue((self.root / 'next').exists())
                 self.assertEqual(
                     json.loads(self.state.read_text())['status'],
@@ -247,27 +330,27 @@ class DispatchTests(unittest.TestCase):
                 )
 
     def test_step_gate_holds_after_ok_before_next(self):
-        result = self.run_chain('pass\n')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        state = json.loads(self.state.read_text())
+        proc = self.start_chain_async('pass\n')
+        state = self.wait_for_step_gate()
         self.assertEqual(state['status'], 'held')
         self.assertEqual(state['hold']['source'], 'step_gate')
         self.assertEqual(state['step'], 'hodo')
         self.assertIsNone(state['hold']['decision'])
+        self.assertTrue(state.get('gate_waiter'))
         self.assertFalse((self.root / 'next').exists())
         prog = self.root / "out/calib/run00001/progress.jsonl"
         self.assertTrue(prog.is_file())
         rows = [json.loads(line) for line in prog.read_text().splitlines() if line.strip()]
         self.assertTrue(any(r.get("event") == "step_gate" for r in rows))
-        # Stop button path: stay held
+        # Stop button path: stay held (resume blocked while held)
         blocked = self.dispatch("resume")
         self.assertEqual(blocked.returncode, 1)
         self.assertIn('status=held', blocked.stdout)
-        # Proceed: continue + resume → dc → awaiting
+        # Proceed: decide only → in-process waiter runs dc → awaiting
         decided = self.dispatch_extra("decide", "--action", "continue")
         self.assertEqual(decided.returncode, 0, decided.stderr)
-        resumed = self.dispatch("resume")
-        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        out, err = proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, 0, err + out)
         state = json.loads(self.state.read_text())
         self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertTrue((self.root / 'next').exists())
@@ -319,9 +402,10 @@ p.write_text(json.dumps(st) + '\\n')
         (self.scripts / "iterate_hodo_chain.py").write_text('pass\n')
         (self.scripts / "iterate_dc_resi.py").write_text(
             f"from pathlib import Path\nPath({str(self.root / 'next')!r}).touch()\n")
-        resumed = self.dispatch("resume")
-        self.assertEqual(resumed.returncode, 0, resumed.stderr)
-        self.continue_through_gates()
+        proc = self.dispatch_async("resume")
+        rc = self.drive_until_done(proc)
+        out, err = proc.communicate(timeout=5)
+        self.assertEqual(rc, 0, err + out)
         state = json.loads(self.state.read_text())
         self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertTrue((self.root / 'next').exists())
@@ -351,13 +435,7 @@ p.write_text(json.dumps(st) + '\\n')
         self.write_cfg()
         missing = self.dispatch("resume")
         self.assertEqual(missing.returncode, 1, missing.stderr)
-        ok = self.run_chain('pass\n')
-        self.assertEqual(ok.returncode, 0, ok.stderr)
-        self.continue_through_gates()
-        self.assertEqual(
-            json.loads(self.state.read_text())['status'],
-            'awaiting_final_approval',
-        )
+        self.run_to_awaiting('pass\n')
         again = self.dispatch("resume")
         self.assertEqual(again.returncode, 1, again.stderr)
 
@@ -367,11 +445,7 @@ p.write_text(json.dumps(st) + '\\n')
         flag = self.dispatch("stop")
         self.assertEqual(flag.returncode, 0, flag.stderr)
         self.assertTrue(json.loads(self.state.read_text())['stop_requested'])
-        (self.scripts / "iterate_hodo_chain.py").write_text('pass\n')
-        (self.scripts / "iterate_dc_resi.py").write_text('pass\n')
-        done = self.dispatch("start")
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.continue_through_gates()
+        self.run_to_awaiting('pass\n')
         ignored = self.dispatch("stop")
         self.assertEqual(ignored.returncode, 0, ignored.stderr)
         self.assertEqual(
@@ -445,9 +519,10 @@ p.write_text(json.dumps(st) + '\\n')
         (self.scripts / "iterate_hodo_chain.py").write_text('pass\n')
         (self.scripts / "iterate_dc_resi.py").write_text(
             f"from pathlib import Path\nPath({str(self.root / 'next')!r}).touch()\n")
-        resumed = self.dispatch("resume")
-        self.assertEqual(resumed.returncode, 0, resumed.stderr)
-        self.continue_through_gates()
+        proc = self.dispatch_async("resume")
+        rc = self.drive_until_done(proc)
+        out, err = proc.communicate(timeout=5)
+        self.assertEqual(rc, 0, err + out)
         state = json.loads(self.state.read_text())
         self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertEqual([e['index'] for e in state['steps']], [0, 0, 1])
@@ -503,11 +578,7 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertFalse((self.root / 'next').exists())
 
     def test_approve_and_revoke(self):
-        done = self.run_chain('pass\n')
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.continue_through_gates()
-        state = json.loads(self.state.read_text())
-        self.assertEqual(state['status'], 'awaiting_final_approval')
+        state = self.run_to_awaiting('pass\n')
         self.assertTrue(state['finished'])
         blocked = self.dispatch("resume")
         self.assertEqual(blocked.returncode, 1)
@@ -524,17 +595,13 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertNotIn('approval', state)
 
     def test_approve_rejects_missing_subject(self):
-        done = self.run_chain('pass\n')
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.continue_through_gates()
+        self.run_to_awaiting('pass\n')
         approved = self.dispatch("approve")
         self.assertEqual(approved.returncode, 1, approved.stdout + approved.stderr)
         self.assertIn("subject incomplete", approved.stdout + approved.stderr)
 
     def test_approve_rejects_stale_subject_sha(self):
-        done = self.run_chain('pass\n')
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.continue_through_gates()
+        self.run_to_awaiting('pass\n')
         self.seed_subject_files(hodo=True, dc=True)
         bad = self.dispatch_extra(
             "approve", "--subject-sha", "deadbeefdeadbeef",
@@ -562,10 +629,7 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertEqual(json.loads(self.state.read_text())['status'], 'approved')
 
     def test_legacy_finished_status_treated_as_awaiting(self):
-        done = self.run_chain('pass\n')
-        self.assertEqual(done.returncode, 0)
-        self.continue_through_gates()
-        state = json.loads(self.state.read_text())
+        state = self.run_to_awaiting('pass\n')
         state['status'] = 'finished'
         self.state.write_text(json.dumps(state) + '\n')
         self.seed_subject_files(hodo=True, dc=True)

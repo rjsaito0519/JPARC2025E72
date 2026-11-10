@@ -227,6 +227,32 @@ class CalibOpsTests(unittest.TestCase):
         self.assertEqual(calls, ["decide"])
         self.assertTrue(popen.called)
 
+    def test_proceed_with_gate_waiter_skips_resume(self):
+        self._write_held_state(23, "waiterid001")
+        state_path = self.out / "calib/run00023/calib_dispatch_state.json"
+        st = json.loads(state_path.read_text(encoding="utf-8"))
+        st["gate_waiter"] = True
+        st["gate_waiter_pid"] = 4242
+        state_path.write_text(json.dumps(st) + "\n", encoding="utf-8")
+        calls = []
+
+        def fake_run(cmd, capture_output=True, text=True, timeout=30.0):
+            calls.append(cmd[2])
+            return mock.Mock(returncode=0, stdout=cmd[2] + " ok\n", stderr="")
+
+        with mock.patch.object(self.ops.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(
+                 self.ops.subprocess, "Popen",
+                 return_value=mock.Mock(pid=99),
+             ) as popen:
+            ok, msg = self.ops.run_dispatch(
+                "proceed", 23, hold_id="waiterid001", background_resume=True,
+            )
+        self.assertTrue(ok, msg)
+        self.assertEqual(calls, ["decide"])
+        self.assertFalse(popen.called)
+        self.assertIn("no resume", msg)
+
 
 class SlackBotConfigTests(unittest.TestCase):
     def setUp(self):

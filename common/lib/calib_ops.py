@@ -539,6 +539,13 @@ def run_dispatch(
 
     if command in ("proceed", "retry"):
         action = "continue" if command == "proceed" else "refit"
+        st = _read_dispatch_state(run)
+        waiter = bool(
+            isinstance(st, dict)
+            and st.get("gate_waiter")
+            and isinstance(st.get("hold"), dict)
+            and st["hold"].get("source") == "step_gate"
+        )
         ok_d, msg_d = run_dispatch(
             "decide", run,
             background_resume=False,
@@ -548,6 +555,11 @@ def run_dispatch(
         )
         if not ok_d:
             return False, f"{command}: decide {action} failed: {msg_d}"
+        if waiter:
+            return True, (
+                f"{command}: decide {action}; "
+                f"in-process waiter will continue (no resume)"
+            )
         ok_r, msg_r = run_dispatch(
             "resume", run,
             background_resume=background_resume,
@@ -567,6 +579,21 @@ def run_dispatch(
                 f"gate-stop requires status=held, got {st.get('status')!r}"
             )
         hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+        if hold.get("source") != "step_gate":
+            return False, (
+                f"gate-stop requires hold.source=step_gate, "
+                f"got {hold.get('source')!r}"
+            )
+        hold = dict(hold)
+        hold["decision"] = "stop"
+        hold["decided_at"] = _utc_now()
+        st["hold"] = hold
+        st["updated_at"] = _utc_now()
+        path = (
+            Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}"
+            / "calib_dispatch_state.json"
+        )
+        path.write_text(json.dumps(st, indent=2, sort_keys=True) + "\n")
         return True, (
             f"stopped at step_gate "
             f"(step={hold.get('step')} index={hold.get('index')}). "

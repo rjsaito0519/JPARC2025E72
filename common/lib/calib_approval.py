@@ -869,9 +869,15 @@ def notify_step_gate_slack(
         f"Proceed to the next step, refit this step, or stop? "
         f"(QA PDFs above). /calib decide {int(run)} continue|refit"
     )
+    key = f"step_gate:{int(index)}:{step_s}"
+    if hold_s:
+        key = f"{key}:{hold_s}"
+    else:
+        # Without hold_id, repeats of the same step/index can be deduped.
+        key = f"{key}:noid"
     return slack_notify.try_notify_failure(
         int(run),
-        f"step_gate:{int(index)}:{step_s}",
+        key,
         text,
         blocks=step_gate_action_blocks(
             int(run), step_s, int(index), hold_id=hold_s,
