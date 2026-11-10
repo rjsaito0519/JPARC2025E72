@@ -129,7 +129,7 @@ MODES = {
 }
 
 PARAM_DEFS = {
-    "USER:":   {"dir": "USER",   "prefix": "UserParam_run",        "tpl": "UserParam_e72_20251104"},
+    "USER:":   {"dir": "USER",   "prefix": "UserParam_run",        "tpl": "UserParam_e72_example"},
     "HDPRM:":  {"dir": "HDPRM",  "prefix": "HodoParam_run",        "tpl": "HodoParam_e72_example"},
     "HDPHC:":  {"dir": "HDPHC",  "prefix": "HodoPHCParam_run",     "tpl": "HodoPHCParam_e72_example"},
     "DCTDC:":  {"dir": "DCTDC",  "prefix": "DCTdcParam_run",       "tpl": "DCTdcParam_e72_example"},
@@ -448,6 +448,28 @@ def resolve_conf_template(conf_dir: Path, name: str) -> Path:
     sys.exit(1)
 
 
+def resolve_param_template(param_subdir: str, name: str, *, required: bool = False) -> Path:
+    """Prefer {dir}/example/<name>, then {dir}/<name>."""
+    base = config.PARAM_DIR / param_subdir
+    candidates = [base / "example" / name, base / name]
+    for path in candidates:
+        if path.is_file():
+            return path
+    if required:
+        tried = ", ".join(str(p) for p in candidates)
+        print(colored(
+            f"Error: param template not found: {name} (tried {tried})",
+            "red",
+        ))
+        sys.exit(1)
+    return candidates[0]
+
+
+def param_template_rel(param_subdir: str, name: str) -> str:
+    path = resolve_param_template(param_subdir, name, required=False)
+    return "param/" + path.relative_to(config.PARAM_DIR).as_posix()
+
+
 def ensure_tpchit_conf(run_num: int) -> str:
     conf_dir = config.PARAM_DIR / "conf"
     sub_conf_dir = conf_dir / config.SUB_DIR
@@ -629,10 +651,10 @@ def setup_calibration_run(run_num: int, mode: dict, suffixes: list, ref, mom):
         if tier1_abs.exists():
             return tier1_rel
 
-        if p_key == "D5MTX:":
-            return f"param/{p_info['dir']}/{p_info['tpl']}"
+        tier3_rel = param_template_rel(p_info["dir"], p_info["tpl"])
 
-        tier3_rel = f"param/{p_info['dir']}/{p_info['tpl']}"
+        if p_key == "D5MTX:":
+            return tier3_rel
 
         if use_ref:
             ref_conf, ref_conf_fallback = find_ref_conf(
@@ -668,12 +690,11 @@ def setup_calibration_run(run_num: int, mode: dict, suffixes: list, ref, mom):
 
     d5_mtx_dest = None
     if mode_label == "d5":
-        d5_mtx_src = config.PARAM_DIR / "TM" / "D5TransferMatrix_example.param"
+        d5_mtx_src = resolve_param_template(
+            "TM", "D5TransferMatrix_example.param", required=True,
+        )
         d5_mtx_dest = config.PARAM_DIR / "TM" / SUB_DIR / f"D5TransferMatrix_run{run_num:05d}"
         if not d5_mtx_dest.exists():
-            if not d5_mtx_src.exists():
-                print(colored(f"Error: TM template not found: {d5_mtx_src}", "red"))
-                sys.exit(1)
             shutil.copy(d5_mtx_src, d5_mtx_dest)
         if mom is not None:
             set_central_momentum(d5_mtx_dest, mom)
