@@ -31,6 +31,7 @@ Config: unknown top-level / step keys rejected; kaon/force/step flags are YAML b
   Session YAML from calib_session.py is accepted (calib_particle, momentum_*, …).
 """
 import json
+import secrets
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -561,6 +562,7 @@ def make_hold(source, reason, step, index, rc):
         "rc": rc,
         "at": utc_now(),
         "decision": None,
+        "id": secrets.token_hex(8),
     }
 
 
@@ -1253,7 +1255,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 hold_source="step_gate",
             )
             ok_slack, slack_msg = calib_approval.notify_step_gate_slack(
-                cfg["run"], name, i,
+                cfg["run"], name, i, hold_id=hold.get("id"),
             )
             if not ok_slack:
                 runner.warn(f"step-gate Slack note failed: {slack_msg}")

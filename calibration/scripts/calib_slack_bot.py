@@ -69,6 +69,7 @@ def handle_calib_request(bot_cfg, user_id, channel_id, text):
         subject_sha=extras.get("subject_sha"),
         first=extras.get("first"),
         last=extras.get("last"),
+        hold_id=extras.get("hold_id"),
     )
     calib_ops.record_op(run, op, user_id)
     prefix = f"run{run:05d} {op}: "
@@ -103,12 +104,20 @@ def build_app(bot_cfg):
     def _button_action(op):
         def _handler(ack, body, respond):
             ack()
-            user_id = str(body.get("user") or {}).get("id") or ""
-            channel_id = str(
-                (body.get("channel") or {}).get("id")
-                or body.get("channel_id")
-                or ""
-            )
+            user = body.get("user") or {}
+            if isinstance(user, dict):
+                user_id = str(user.get("id") or "")
+            else:
+                user_id = str(user or "")
+            channel = body.get("channel") or {}
+            if isinstance(channel, dict):
+                channel_id = str(
+                    channel.get("id") or body.get("channel_id") or ""
+                )
+            else:
+                channel_id = str(
+                    body.get("channel_id") or channel or ""
+                )
             actions = body.get("actions") or []
             value = ""
             if actions and isinstance(actions[0], dict):

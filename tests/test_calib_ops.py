@@ -50,10 +50,18 @@ class CalibOpsTests(unittest.TestCase):
         self.assertEqual(extras.get("action"), "continue")
         op, run, err, extras = self.ops.parse_calib_text("proceed 7")
         self.assertEqual((op, run, err), ("proceed", 7, ""))
+        self.assertEqual(extras, {})
+        op, run, err, extras = self.ops.parse_calib_text("proceed 7:deadbeef")
+        self.assertEqual((op, run, err), ("proceed", 7, ""))
+        self.assertEqual(extras.get("hold_id"), "deadbeef")
         op, run, err, extras = self.ops.parse_calib_text("retry 7")
         self.assertEqual((op, run, err), ("retry", 7, ""))
+        op, run, err, extras = self.ops.parse_calib_text("retry 7:cafebabe")
+        self.assertEqual(extras.get("hold_id"), "cafebabe")
         op, run, err, extras = self.ops.parse_calib_text("gate-stop 7")
         self.assertEqual((op, run, err), ("gate-stop", 7, ""))
+        op, run, err, extras = self.ops.parse_calib_text("gate-stop 7:aa11bb22")
+        self.assertEqual(extras.get("hold_id"), "aa11bb22")
         op, run, err, extras = self.ops.parse_calib_text("hdphc-again 3")
         self.assertEqual((op, run, err, extras), ("hdphc-again", 3, "", {}))
         op, run, err, extras = self.ops.parse_calib_text("phc-accept 2977")
@@ -173,6 +181,51 @@ class CalibOpsTests(unittest.TestCase):
         self.assertIn("dedup", msg)
         dup2, _ = self.ops.check_dedup(3, "status", "U1", window_s=60)
         self.assertFalse(dup2)
+
+    def _write_held_state(self, run, hold_id):
+        yml = self.ops.session_yml(run)
+        yml.parent.mkdir(parents=True, exist_ok=True)
+        yml.write_text("run: %d\nsteps:\n  - hodo\n" % run, encoding="utf-8")
+        state = yml.parent / "calib_dispatch_state.json"
+        state.write_text(json.dumps({
+            "run": run,
+            "status": "held",
+            "hold": {
+                "source": "step_gate",
+                "step": "hodo_hdprm",
+                "index": 0,
+                "id": hold_id,
+                "decision": None,
+            },
+        }) + "\n", encoding="utf-8")
+
+    def test_proceed_hold_id_mismatch_rejected(self):
+        self._write_held_state(21, "currentid01")
+        ok, msg = self.ops.run_dispatch(
+            "proceed", 21, hold_id="staleid9999", background_resume=False,
+        )
+        self.assertFalse(ok)
+        self.assertIn("stale step gate", msg)
+
+    def test_proceed_hold_id_match_calls_decide(self):
+        self._write_held_state(22, "matchid0001")
+        calls = []
+
+        def fake_run(cmd, capture_output=True, text=True, timeout=30.0):
+            calls.append(cmd[2])
+            return mock.Mock(returncode=0, stdout=cmd[2] + " ok\n", stderr="")
+
+        with mock.patch.object(self.ops.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(
+                 self.ops.subprocess, "Popen",
+                 return_value=mock.Mock(pid=99),
+             ) as popen:
+            ok, msg = self.ops.run_dispatch(
+                "proceed", 22, hold_id="matchid0001", background_resume=True,
+            )
+        self.assertTrue(ok, msg)
+        self.assertEqual(calls, ["decide"])
+        self.assertTrue(popen.called)
 
 
 class SlackBotConfigTests(unittest.TestCase):

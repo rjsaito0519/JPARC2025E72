@@ -24,7 +24,9 @@ class AwaitingBlocksTests(unittest.TestCase):
         self.assertEqual(actions[1]["value"], "42")
 
     def test_step_gate_blocks_have_three_actions(self):
-        blocks = self.approval.step_gate_action_blocks(7, "hodo", 0)
+        blocks = self.approval.step_gate_action_blocks(
+            7, "hodo", 0, hold_id="abc12def",
+        )
         self.assertEqual(len(blocks), 2)
         actions = blocks[1]["elements"]
         ids = [e["action_id"] for e in actions]
@@ -32,7 +34,7 @@ class AwaitingBlocksTests(unittest.TestCase):
             ids,
             ["calib_step_proceed", "calib_step_refit", "calib_step_stop"],
         )
-        self.assertEqual({e["value"] for e in actions}, {"7"})
+        self.assertEqual({e["value"] for e in actions}, {"7:abc12def"})
 
 
 if __name__ == "__main__":

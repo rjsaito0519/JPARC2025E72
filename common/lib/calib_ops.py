@@ -199,6 +199,21 @@ def parse_calib_text(
             return None, None, "approve subject_sha after ':' must be non-empty", {}
         extras["subject_sha"] = sha
         return op, run, "", extras
+    if op in ("proceed", "retry", "gate-stop") and ":" in token:
+        run_s, hold_id = token.split(":", 1)
+        try:
+            run = int(run_s)
+        except ValueError:
+            return None, None, f"run must be an integer, got {run_s!r}", {}
+        if run < 1:
+            return None, None, "run must be >= 1", {}
+        hold_id = hold_id.strip()
+        if not hold_id:
+            return None, None, (
+                f"{op} hold_id after ':' must be non-empty"
+            )
+        extras["hold_id"] = hold_id
+        return op, run, "", extras
     try:
         run = int(token)
     except ValueError:
@@ -430,6 +445,7 @@ def run_dispatch(
     subject_sha: Optional[str] = None,
     first: Optional[int] = None,
     last: Optional[int] = None,
+    hold_id: Optional[str] = None,
 ) -> tuple[bool, str]:
     """Run a defined calib op for the run's session YAML (or extra hdphc)."""
     if command not in OPS:
@@ -516,6 +532,11 @@ def run_dispatch(
         elif reason:
             cmd += ["--reason", str(reason).strip()]
 
+    if command in ("proceed", "retry", "gate-stop"):
+        ok_gate, msg_gate = _require_matching_hold(run, hold_id)
+        if not ok_gate:
+            return False, msg_gate
+
     if command in ("proceed", "retry"):
         action = "continue" if command == "proceed" else "refit"
         ok_d, msg_d = run_dispatch(
@@ -589,6 +610,31 @@ def _read_dispatch_state(run: int) -> Optional[dict[str, Any]]:
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+#_____________________________________________________________________________
+def _require_matching_hold(
+    run: int, hold_id: Optional[str],
+) -> tuple[bool, str]:
+    """When hold_id is set, require status=held and matching hold.id."""
+    if not hold_id:
+        return True, ""
+    st = _read_dispatch_state(run)
+    if not isinstance(st, dict):
+        return False, f"no dispatch state for run{run:05d}"
+    if st.get("status") != "held":
+        return False, (
+            f"stale step gate (status={st.get('status')!r}); "
+            "use the latest Slack message"
+        )
+    hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+    current = str(hold.get("id") or "")
+    if not current or current != str(hold_id):
+        return False, (
+            "stale step gate (hold id mismatch); "
+            "use the latest Slack message"
+        )
+    return True, ""
 
 
 #_____________________________________________________________________________

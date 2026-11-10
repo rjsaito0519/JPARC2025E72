@@ -753,10 +753,14 @@ def awaiting_action_blocks(
 
 
 #_____________________________________________________________________________
-def step_gate_action_blocks(run: int, step: str, index: int) -> list[dict[str, Any]]:
+def step_gate_action_blocks(
+    run: int, step: str, index: int, hold_id: str = "",
+) -> list[dict[str, Any]]:
     """Block Kit Proceed / Refit / Stop after a successful dispatch step."""
     run_s = str(int(run))
     step_s = str(step or "?")
+    hold_s = str(hold_id or "").strip()
+    value = f"{run_s}:{hold_s}" if hold_s else run_s
     return [
         {
             "type": "section",
@@ -777,20 +781,20 @@ def step_gate_action_blocks(run: int, step: str, index: int) -> list[dict[str, A
                     "action_id": "calib_step_proceed",
                     "text": {"type": "plain_text", "text": "次へ進む"},
                     "style": "primary",
-                    "value": run_s,
+                    "value": value,
                 },
                 {
                     "type": "button",
                     "action_id": "calib_step_refit",
                     "text": {"type": "plain_text", "text": "手直ししてやり直し"},
-                    "value": run_s,
+                    "value": value,
                 },
                 {
                     "type": "button",
                     "action_id": "calib_step_stop",
                     "text": {"type": "plain_text", "text": "止める"},
                     "style": "danger",
-                    "value": run_s,
+                    "value": value,
                 },
             ],
         },
@@ -853,12 +857,13 @@ def notify_stopped_slack(
 
 #_____________________________________________________________________________
 def notify_step_gate_slack(
-    run: int, step: str, index: int,
+    run: int, step: str, index: int, *, hold_id: str | None = None,
 ) -> tuple[bool, str]:
     """Thread note with next-step Proceed/Refit/Stop buttons."""
     from . import slack_notify
 
     step_s = str(step or "?")
+    hold_s = str(hold_id or "").strip()
     text = (
         f"run{int(run):05d}: step {step_s} OK. "
         f"Proceed to the next step, refit this step, or stop? "
@@ -868,7 +873,9 @@ def notify_step_gate_slack(
         int(run),
         f"step_gate:{int(index)}:{step_s}",
         text,
-        blocks=step_gate_action_blocks(int(run), step_s, int(index)),
+        blocks=step_gate_action_blocks(
+            int(run), step_s, int(index), hold_id=hold_s,
+        ),
     )
 
 
