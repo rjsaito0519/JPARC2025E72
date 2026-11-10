@@ -36,7 +36,12 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import calib_ops, local_notify_config, runner  # noqa: E402
+from common.lib import (  # noqa: E402
+    calib_ops,
+    local_notify_config,
+    runner,
+    slack_bot_ensure,
+)
 
 
 #_____________________________________________________________________________
@@ -168,10 +173,12 @@ def main():
         )
 
     app = build_app(bot_cfg)
+    slack_bot_ensure.start_heartbeat_loop()
     runner.info(
         "calib_slack_bot listening (Socket Mode); "
         f"users={len(bot_cfg['allowed_user_ids'])} "
-        f"channels={len(bot_cfg['allowed_channel_ids'])}"
+        f"channels={len(bot_cfg['allowed_channel_ids'])}; "
+        f"heartbeat={slack_bot_ensure.heartbeat_path()}"
     )
     SocketModeHandler(app, bot_cfg["app_token"]).start()
 

@@ -5,8 +5,10 @@ enabled: true
 token: xoxb-your-bot-token
 channel_id: C0123456789
 
-# Optional Socket Mode ops bot (/calib status|stop|resume).
-# Requires: pip install slack-bolt  (optional; not needed for PDF posting alone)
+# Socket Mode ops bot (Block Kit buttons + /calib).
+# Required for step_gate / Approve buttons. PDF posting works with enabled+token alone.
+# Requires: pip install slack-bolt
+# Cluster-wide: only one bot (ensure_slack_bot + heartbeat under results/calib/slack_bot/)
 bot_enabled: false
 app_token: xapp-your-app-level-token
 allowed_user_ids:

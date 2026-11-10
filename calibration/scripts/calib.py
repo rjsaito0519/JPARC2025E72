@@ -31,6 +31,7 @@ from common.lib import (  # noqa: E402
     decode_run,
     hodo_btof_monitor,
     runner,
+    slack_bot_ensure,
 )
 
 CHOICE_CONTINUE = "continue"
@@ -217,6 +218,18 @@ def choose_action(run, st, *, force, interactive):
 
 
 #_____________________________________________________________________________
+def _maybe_ensure_slack_bot(a, cfg):
+    """Ensure cluster Slack bot unless dry-run / --auto (no interactive gates)."""
+    if a.dry_run or a.auto or cfg.get("auto"):
+        return
+    ok_bot, bot_msg = slack_bot_ensure.ensure_slack_bot()
+    if not ok_bot:
+        runner.warn(f"slack bot ensure failed: {bot_msg}")
+    else:
+        runner.info(bot_msg)
+
+
+#_____________________________________________________________________________
 def continue_from_state(cfg, st, dry_run):
     """Resume from stopped, or decide-continue then resume from held."""
     status = st.get("status")
@@ -262,6 +275,7 @@ def restart_from_beginning(a, calib_particle, steps, target):
     _, cfg2 = cd.load_config(path)
     for i, raw in enumerate(cfg2["steps"]):
         cd.normalize_step(raw, i)
+    _maybe_ensure_slack_bot(a, cfg2)
     cd.do_start(cfg2, a.dry_run)
 
 
@@ -310,6 +324,7 @@ def main():
             cd.normalize_step(raw, i)
         # Re-read in case ensure_session side effects (none expected)
         st = cd.read_state(a.run) or st
+        _maybe_ensure_slack_bot(a, cfg)
         continue_from_state(cfg, st, a.dry_run)
         return
 
@@ -333,6 +348,7 @@ def main():
     if not a.dry_run:
         cd.reset_progress(a.run)
         cd.append_progress(a.run, "start", status="running")
+    _maybe_ensure_slack_bot(a, cfg)
     cd.do_start(cfg, a.dry_run)
 
 

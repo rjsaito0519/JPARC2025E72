@@ -601,9 +601,18 @@ def wait_step_gate_decision(run, hold_id, *, poll_s=None):
             poll_s = GATE_WAIT_POLL_S
         if poll_s <= 0:
             poll_s = GATE_WAIT_POLL_S
+    from common.lib import slack_bot_ensure
+
+    ok_bot, bot_msg = slack_bot_ensure.ensure_slack_bot()
+    if not ok_bot:
+        runner.warn(f"slack bot ensure failed: {bot_msg}")
+    else:
+        runner.info(bot_msg)
     runner.info(
         f"waiting for Slack Proceed / Refit / Stop "
-        f"(hold_id={hold_id}; pid={os.getpid()})"
+        f"(hold_id={hold_id}; pid={os.getpid()}; "
+        f"cluster bot tmux {slack_bot_ensure.TMUX_SESSION} "
+        f"via shared heartbeat, ensured on this host if missing)"
     )
     mark_gate_waiter(run, waiting=True)
     try:
@@ -1367,8 +1376,23 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
 
 
 #_____________________________________________________________________________
+def _ensure_slack_bot_for_gates(cfg, dry_run):
+    """Start cluster Socket Mode bot when interactive gates may be needed."""
+    if dry_run or cfg.get("auto"):
+        return
+    from common.lib import slack_bot_ensure
+
+    ok_bot, bot_msg = slack_bot_ensure.ensure_slack_bot()
+    if not ok_bot:
+        runner.warn(f"slack bot ensure failed: {bot_msg}")
+    else:
+        runner.info(bot_msg)
+
+
+#_____________________________________________________________________________
 def do_start(cfg, dry_run):
     # start always begins at index 0; clear any prior stop/hold/approval via overwrite.
+    _ensure_slack_bot_for_gates(cfg, dry_run)
     run_steps(cfg, dry_run, 0, [], "start")
 
 
@@ -1393,6 +1417,7 @@ def do_resume(cfg, dry_run):
             f"(resume requires status=stopped)"
         )
     require_resume_plan(cfg, st)
+    _ensure_slack_bot_for_gates(cfg, dry_run)
     start_index = resume_start_index(st)
     hist = st.get("steps")
     if not isinstance(hist, list):

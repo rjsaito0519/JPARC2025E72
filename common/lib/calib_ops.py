@@ -16,6 +16,7 @@ from typing import Any, Optional
 import yaml
 
 from . import config
+from .slack_bot_ensure import ensure_slack_bot  # noqa: F401  (re-export)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DISPATCH_SCRIPT = PROJECT_ROOT / "calibration" / "scripts" / "calib_dispatch.py"
