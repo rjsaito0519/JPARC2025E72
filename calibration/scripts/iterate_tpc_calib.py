@@ -45,13 +45,13 @@ try:
 except ImportError:  # pragma: no cover
     Discord = None  # type: ignore
 
-# Optional notify URL from the environment (never hard-code tokens in-tree).
-# Example: export DISCORD_WEBHOOK='https://discord.com/api/webhooks/...'
-DISCORD_WEBHOOK_ENV = "DISCORD_WEBHOOK"
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 # myanalysis root (== /home/had/sryuta/JPARC2025E72 via symlink)
 MYANALYSIS_ROOT = SCRIPT_DIR.parent.parent
+if str(MYANALYSIS_ROOT) not in sys.path:
+    sys.path.insert(0, str(MYANALYSIS_ROOT))
+from common.lib.local_notify_config import load_discord_config  # noqa: E402
+
 RUN_TPC = SCRIPT_DIR / "run_tpc.py"
 
 # Run sets: runlists (relative to the analyzer dir) for the hit (TPCHitBcOut) and trk (TPC tracking) steps.
@@ -139,12 +139,13 @@ class IterOrchestrator:
         self.log_path = self.log_dir / "iter_log.txt"
         self.step_seq = 0
         self.discord = None
-        webhook = os.environ.get(DISCORD_WEBHOOK_ENV, "").strip()
-        if not dry_run and Discord is not None and webhook:
-            self.discord = Discord(url=webhook)
-        elif not dry_run and not webhook:
+        discord_cfg, discord_status = load_discord_config()
+        if not dry_run and Discord is not None and discord_cfg is not None:
+            self.discord = Discord(url=discord_cfg["webhook_url"])
+        elif not dry_run and discord_status != "ok":
             print(
-                f"[Info] {DISCORD_WEBHOOK_ENV} unset: Discord notify disabled",
+                f"[Info] Discord notify disabled ({discord_status}; "
+                "copy calibration/config/discord_local.example.yml)",
                 flush=True,
             )
 

@@ -16,6 +16,8 @@ __pycache__/
 common/lib/paths.py
 common/lib/conf.py
 common/include/paths.h
+calibration/config/slack_local.yml
+calibration/config/discord_local.yml
 
 # Output directories
 results/root/

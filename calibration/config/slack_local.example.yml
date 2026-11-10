@@ -1,0 +1,5 @@
+# Copy to slack_local.yml (gitignored) and fill in.
+# cp calibration/config/slack_local.example.yml calibration/config/slack_local.yml
+enabled: true
+token: xoxb-your-bot-token
+channel_id: C0123456789

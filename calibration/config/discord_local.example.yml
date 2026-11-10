@@ -1,0 +1,5 @@
+# Copy to discord_local.yml (gitignored) and fill in.
+# cp calibration/config/discord_local.example.yml calibration/config/discord_local.yml
+# Used by iterate_tpc_calib.py (job-complete text notify). Replaces DISCORD_WEBHOOK env.
+enabled: true
+webhook_url: https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN

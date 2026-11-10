@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, hodo_qa_pdf, runner  # noqa: E402
+from common.lib import config, hodo_qa_pdf, runner, slack_notify  # noqa: E402
 
 
 #_____________________________________________________________________________
@@ -23,11 +23,18 @@ def after_qa_merge(run, mode, args, rc):
     """Merge detector QA PDFs; incomplete book raises the run to EXIT_CHECK."""
     if mode not in hodo_qa_pdf.MERGE_MODES:
         return rc
-    ok, message, _ = hodo_qa_pdf.merge(
+    ok, message, out = hodo_qa_pdf.merge(
         run, mode, kaon=args.kaon, ftof=args.ftof, dry_run=False,
     )
     if ok:
         runner.info(message)
+        posted, post_msg = slack_notify.try_post_hodo_after_merge(
+            run, mode, kaon=args.kaon, ftof=args.ftof, pdf_path=out,
+        )
+        if not posted:
+            runner.warn(f"Slack QA post failed: {post_msg}")
+        elif not post_msg.startswith("slack skip:"):
+            runner.info(post_msg)
         return rc
     runner.warn(f"QA PDF merge failed: {message}")
     if rc in (runner.EXIT_OK, runner.EXIT_SKIP, runner.EXIT_NOT_CONVERGED):
