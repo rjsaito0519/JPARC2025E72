@@ -1352,7 +1352,6 @@ namespace ana_helper {
         f_fit_g->SetLineWidth(2.0);
         h->Fit(f_fit_g, fit_option.Data(), "", par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
         Double_t chi_square_g = f_fit_g->GetChisquare();
-        Double_t p_value_g = TMath::Prob(chi_square_g, f_fit_g->GetNDF());
 
         
         // -- first fit -----
@@ -1382,13 +1381,11 @@ namespace ana_helper {
         f_fit_l->SetLineColor(kOrange);
         f_fit_l->SetLineWidth(2.0);
         h->Fit(f_fit_l, fit_option.Data(), "", par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
-        Double_t chi_square_l = f_fit_g->GetChisquare();
-        Double_t p_value_l = TMath::Prob(chi_square_l, f_fit_l->GetNDF());
+        Double_t chi_square_l = f_fit_l->GetChisquare();
 
         // -- draw -----
         FitResult result;
-        if (p_value_g >= p_value_l) {
-        // if (chi_square_g <= chi_square_l) {
+        if (chi_square_g <= chi_square_l) {
             for (Int_t i = 0, n_par = f_fit_g->GetNpar(); i < n_par; i++) {
                 result.par.push_back(f_fit_g->GetParameter(i));
                 result.err.push_back(f_fit_g->GetParError(i));
