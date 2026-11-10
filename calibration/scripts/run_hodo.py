@@ -21,6 +21,8 @@ from common.lib import config, hodo_qa_pdf, qa_session, runner, slack_notify  # 
 #_____________________________________________________________________________
 def after_qa_merge(run, mode, args, rc, session=None):
     """Merge detector QA PDFs; incomplete book raises the run to EXIT_CHECK."""
+    if getattr(args, "skip_qa", False):
+        return rc
     if mode not in hodo_qa_pdf.MERGE_MODES:
         return rc
     ok, message, out = hodo_qa_pdf.merge(
@@ -163,6 +165,8 @@ def main():
     parser.add_argument("--ftof", action="store_true",
                         help="hdprm/hdphc: the FTOF detector set instead of the default one "
                              f"(lib/config.py HODO_DETECTORS: {config.HODO_DETECTORS}); t0 is unchanged")
+    parser.add_argument("--skip-qa", action="store_true",
+                        help="skip QA PDF merge/Slack (for intermediate hdphc iterations)")
     args = parser.parse_args()
     suffix = runner.suffix_of(args)
     runner.info(f"mode {args.mode}, suffix {suffix}" + (", FTOF set" if args.ftof else "")

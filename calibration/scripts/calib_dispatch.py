@@ -45,7 +45,9 @@ SESSION_META_KEYS = (
 )
 # Options that apply to a given step (allow_skip is common).
 STEP_OPTS = {
-    "hodo": frozenset({"skip_t0", "skip_hdphc", "ftof", "allow_skip"}),
+    "hodo": frozenset({
+        "skip_t0", "skip_hdphc", "ftof", "allow_skip", "hdphc_iter", "adopt",
+    }),
     "dc_resi": frozenset({"bcin", "allow_skip"}),
     "dc_chamber": frozenset({
         "bcin", "allow_skip", "skip_t0", "skip_drift", "skip_resi", "skip_reso",
@@ -168,6 +170,23 @@ def normalize_step(raw, index):
     for key, value in opts.items():
         if key in BOOL_STEP_OPTS:
             require_bool(value, f"steps[{index}].{key}")
+        if key == "hdphc_iter":
+            require_int(value, f"steps[{index}].hdphc_iter", MAX_ITER_MIN, MAX_ITER_MAX)
+        if key == "adopt":
+            if isinstance(value, bool) or not isinstance(value, (str, int)):
+                runner.fail(
+                    f"steps[{index}].adopt: must be 'auto' or a positive int, got {value!r}"
+                )
+            if isinstance(value, str) and value != "auto":
+                try:
+                    value = int(value)
+                except ValueError:
+                    runner.fail(
+                        f"steps[{index}].adopt: must be 'auto' or a positive int, got {value!r}"
+                    )
+            if isinstance(value, int) and value < 1:
+                runner.fail(f"steps[{index}].adopt: round must be >= 1, got {value}")
+            opts[key] = value
     return name, opts
 
 
@@ -222,6 +241,10 @@ def step_cmd(name, opts, cfg, dry_run):
             parts.append("--skip-hdphc")
         if opts.get("ftof"):
             parts.append("--ftof")
+        if "hdphc_iter" in opts:
+            parts += ["--hdphc-iter", str(opts["hdphc_iter"])]
+        if "adopt" in opts:
+            parts += ["--adopt", str(opts["adopt"])]
 
     if cfg["kaon"] and name in ("hodo", "dc_resi", "dc_chamber", "d5_align"):
         parts.append("--kaon")
