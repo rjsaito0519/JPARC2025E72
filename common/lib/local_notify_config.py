@@ -76,6 +76,61 @@ def load_slack_config(path: Path | None = None) -> tuple[Optional[dict[str, str]
 
 
 #_____________________________________________________________________________
+def _id_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw:
+        text = str(item).strip()
+        if text:
+            out.append(text)
+    return out
+
+
+#_____________________________________________________________________________
+def load_slack_bot_config(
+    path: Path | None = None,
+) -> tuple[Optional[dict[str, Any]], str]:
+    """Return bot Socket Mode config, or (None, status).
+
+    Requires top-level enabled:true, bot_enabled:true, token, app_token,
+    and a non-empty allowed_user_ids. allowed_channel_ids defaults to [channel_id].
+    """
+    data, status = load_yaml_config(path or SLACK_LOCAL)
+    if status != "ok" or data is None:
+        return None, status
+    bot_enabled = data.get("bot_enabled", False)
+    if bot_enabled is False or bot_enabled is None:
+        return None, "bot_disabled"
+    if bot_enabled is not True:
+        return None, "bot_enabled must be true/false"
+    token = str(data.get("token") or "").strip()
+    app_token = str(data.get("app_token") or "").strip()
+    channel_id = str(data.get("channel_id") or "").strip()
+    if not token or not app_token:
+        return None, "missing token or app_token"
+    users = _id_list(data.get("allowed_user_ids"))
+    if not users:
+        return None, "missing allowed_user_ids"
+    channels = _id_list(data.get("allowed_channel_ids"))
+    if not channels:
+        if not channel_id:
+            return None, "missing channel_id or allowed_channel_ids"
+        channels = [channel_id]
+    return {
+        "token": token,
+        "app_token": app_token,
+        "channel_id": channel_id,
+        "allowed_user_ids": users,
+        "allowed_channel_ids": channels,
+    }, "ok"
+
+
+#_____________________________________________________________________________
 def load_discord_config(path: Path | None = None) -> tuple[Optional[dict[str, str]], str]:
     """Return ({webhook_url}, status). Requires enabled:true and non-empty webhook_url."""
     data, status = load_yaml_config(path or DISCORD_LOCAL)
