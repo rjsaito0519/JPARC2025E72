@@ -15,7 +15,24 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, runner  # noqa: E402
+from common.lib import config, hodo_qa_pdf, runner  # noqa: E402
+
+
+#_____________________________________________________________________________
+def after_qa_merge(run, mode, args, rc):
+    """Merge detector QA PDFs; incomplete book raises the run to EXIT_CHECK."""
+    if mode not in hodo_qa_pdf.MERGE_MODES:
+        return rc
+    ok, message, _ = hodo_qa_pdf.merge(
+        run, mode, kaon=args.kaon, ftof=args.ftof, dry_run=False,
+    )
+    if ok:
+        runner.info(message)
+        return rc
+    runner.warn(f"QA PDF merge failed: {message}")
+    if rc in (runner.EXIT_OK, runner.EXIT_SKIP, runner.EXIT_NOT_CONVERGED):
+        return runner.EXIT_CHECK
+    return rc
 
 
 #_____________________________________________________________________________
@@ -27,9 +44,10 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
     runner.step(f"run{run:05d}: {bin_suffix} fit for {dets}")
     for b in bins:
         runner.sh(f"{b} {root} {suffix}")
-    return runner.update_param(
+    rc = runner.update_param(
         run, suffix, mode, *(["--ftof"] if args.ftof else []), debug=args.debug
     )
+    return after_qa_merge(run, mode, args, rc)
 
 
 #_____________________________________________________________________________
@@ -48,7 +66,8 @@ def do_t0(run, suffix, args):
     root = runner.input_root(run, "Hodo", suffix, args.force)
     runner.step(f"run{run:05d}: T0_Offset")
     runner.sh(f"{exe} {root} {suffix}")
-    return runner.update_param(run, suffix, "t0", debug=args.debug)
+    rc = runner.update_param(run, suffix, "t0", debug=args.debug)
+    return after_qa_merge(run, "t0", args, rc)
 
 
 #_____________________________________________________________________________
