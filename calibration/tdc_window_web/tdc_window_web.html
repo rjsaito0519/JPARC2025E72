@@ -31,15 +31,16 @@
 <div id="bar">
   <button id="reset">やり直し (r)</button>
   <button id="write" disabled>書く (w)</button>
-  <label id="seplabel"><input type="checkbox" id="sep" checked> π/K の境目も決める（3 回目のクリック）</label>
+  <label id="seplabel"><input type="checkbox" id="sep" checked> π/K の境目も決める（3 回目の右クリック）</label>
 </div>
 <div id="status"></div>
 <div id="plot"></div>
-<div class="hint">クリック: 左右の端（BHT は 3 回目が π/K の境目）。ドラッグで拡大、ダブルクリックで全体。←/→ で検出器、run は上の欄（番号を打つか一覧から選ぶ）か ◀ ▶ で切り替え。灰色 = 今の window、赤 = 新しく選んだもの。</div>
+<div class="hint">右クリック: 左右の端（BHT は 3 回目が π/K の境目）。左ドラッグで拡大、ダブルクリックで全体。←/→ で検出器、run は上の欄（番号を打つか一覧から選ぶ）か ◀ ▶ で切り替え。灰色 = 今の window、赤 = 新しく選んだもの。</div>
 <script>
 let D = null, det = null, clicks = [], written = new Set(), RUNS = [];
 const plot = document.getElementById("plot");
 const runInput = document.getElementById("run");
+plot.addEventListener("contextmenu", e => { e.preventDefault(); });
 
 async function init() {
   const r = await (await fetch("/runs")).json();
@@ -152,19 +153,15 @@ function show(d) {
   status();
 }
 
+// Right-click to pick x (same as set_tdc_window); left drag stays Plotly zoom.
 // .nsewdrag is recreated by relayout; re-attach after every plot update.
-// Use addEventListener (not onmousedown=) so Plotly's zoom handlers stay intact.
 function wireDragClick() {
   const drag = plot.querySelector(".nsewdrag");
   if (!drag || drag._tdcWired) return;
   drag._tdcWired = true;
-  let press = null;
-  drag.addEventListener("mousedown", e => { press = {x: e.clientX, y: e.clientY}; });
+  drag.addEventListener("contextmenu", e => { e.preventDefault(); });
   drag.addEventListener("mouseup", e => {
-    if (!press) return;
-    const moved = Math.hypot(e.clientX - press.x, e.clientY - press.y);
-    press = null;
-    if (moved > 4) return;
+    if (e.button !== 2) return;
     const xval = plot._fullLayout.xaxis.p2d(e.clientX - drag.getBoundingClientRect().left);
     if (Number.isFinite(xval)) addClick(xval);
   });
@@ -190,7 +187,7 @@ function status() {
     t += `\n新: ${s.join(" – ")}` + (clicks.length === 3 ? `   π/K 境目 ${Math.round(clicks[2])}` : "");
   }
   const next = clicks.length >= nClicks() ? null : clicks.length < 2 ? "端" : "π/K 境目";
-  if (next) t += `\n次のクリック: ${next}`;
+  if (next) t += `\n次の右クリック: ${next}`;
   if (!sepInside()) t += `\n⚠ 境目が両端の外にあります。やり直してください。`;
   document.getElementById("status").textContent = t;
   document.getElementById("write").disabled = clicks.length !== nClicks() || !sepInside();
