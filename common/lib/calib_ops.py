@@ -22,13 +22,15 @@ DISPATCH_SCRIPT = PROJECT_ROOT / "calibration" / "scripts" / "calib_dispatch.py"
 EXTRA_HDPHC_SCRIPT = PROJECT_ROOT / "calibration" / "scripts" / "extra_hdphc_iter.py"
 OPS = (
     "status", "stop", "resume", "approve", "revoke",
-    "hold", "decide", "hdphc-again",
+    "hold", "decide", "hdphc-again", "flag", "clear",
 )
 DECIDE_ACTIONS = ("refit", "continue")
 DEDUP_SECONDS = 5
 USAGE = (
     "usage: /calib status|stop|resume|approve|revoke|hdphc-again <run> | "
-    "hold <run> <reason...> | decide <run> refit|continue"
+    "hold <run> <reason...> | decide <run> refit|continue | "
+    "flag <run> <mode> <det> <channel> <reason...> | "
+    "clear <run> <mode> <det> <channel>"
 )
 
 
@@ -102,6 +104,44 @@ def parse_calib_text(
         if action not in DECIDE_ACTIONS:
             return None, None, f"decide action must be refit|continue, got {parts[2]!r}", {}
         return op, run, "", {"action": action}
+
+    if op == "flag":
+        if len(parts) < 6:
+            return None, None, (
+                "usage: /calib flag <run> <mode> <det> <channel> <reason...>"
+            ), {}
+        try:
+            run = int(parts[1])
+        except ValueError:
+            return None, None, f"run must be an integer, got {parts[1]!r}", {}
+        if run < 1:
+            return None, None, "run must be >= 1", {}
+        reason = " ".join(parts[5:]).strip()
+        if not reason:
+            return None, None, "flag requires a non-empty reason", {}
+        return op, run, "", {
+            "mode": parts[2],
+            "det": parts[3],
+            "channel": parts[4],
+            "reason": reason,
+        }
+
+    if op == "clear":
+        if len(parts) != 5:
+            return None, None, (
+                "usage: /calib clear <run> <mode> <det> <channel>"
+            ), {}
+        try:
+            run = int(parts[1])
+        except ValueError:
+            return None, None, f"run must be an integer, got {parts[1]!r}", {}
+        if run < 1:
+            return None, None, "run must be >= 1", {}
+        return op, run, "", {
+            "mode": parts[2],
+            "det": parts[3],
+            "channel": parts[4],
+        }
 
     if len(parts) != 2:
         return None, None, USAGE, {}
@@ -215,6 +255,9 @@ def run_dispatch(
     user_id: Optional[str] = None,
     reason: Optional[str] = None,
     action: Optional[str] = None,
+    mode: Optional[str] = None,
+    det: Optional[str] = None,
+    channel: Optional[str] = None,
 ) -> tuple[bool, str]:
     """Run a defined calib op for the run's session YAML (or extra hdphc)."""
     if command not in OPS:
@@ -253,7 +296,11 @@ def run_dispatch(
 
     if not DISPATCH_SCRIPT.is_file():
         return False, f"missing dispatcher: {DISPATCH_SCRIPT}"
-    cmd = [sys.executable, str(DISPATCH_SCRIPT), command, str(yml)]
+    dispatch_cmd = {
+        "flag": "flag-channel",
+        "clear": "clear-channel",
+    }.get(command, command)
+    cmd = [sys.executable, str(DISPATCH_SCRIPT), dispatch_cmd, str(yml)]
     if command == "approve":
         cmd += ["--via", "slack"]
         if user_id:
@@ -266,6 +313,16 @@ def run_dispatch(
         if action not in DECIDE_ACTIONS:
             return False, f"decide requires action refit|continue, got {action!r}"
         cmd += ["--action", str(action)]
+    if command in ("flag", "clear"):
+        if not mode or not det or not channel:
+            return False, f"{command} requires mode det channel"
+        cmd += ["--mode", str(mode), "--det", str(det), "--channel", str(channel)]
+        if command == "flag":
+            if not reason or not str(reason).strip():
+                return False, "flag requires a reason"
+            cmd += ["--reason", str(reason).strip()]
+        elif reason:
+            cmd += ["--reason", str(reason).strip()]
 
     if command == "resume" and background_resume:
         return _spawn_background(cmd, resume_log_path(run), "resume", run)

@@ -174,7 +174,7 @@ def candidates_payload(
 
 #_____________________________________________________________________________
 def dump_candidates(run: int, rows: list[dict]) -> None:
-    """Append auto candidates for later channel_flags ingestion."""
+    """Append auto candidates to anomaly_candidates.jsonl and channel_flags."""
     if not rows:
         return
     path = (
@@ -182,6 +182,20 @@ def dump_candidates(run: int, rows: list[dict]) -> None:
         / "anomaly_candidates.jsonl"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
+    from . import channel_flags
     with path.open("a", encoding="utf-8") as fh:
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            try:
+                channel_flags.append_flag(
+                    run,
+                    family=str(row.get("family") or "hodo"),
+                    mode=str(row.get("mode") or ""),
+                    det=str(row.get("det") or ""),
+                    channel=str(row.get("channel") or ""),
+                    source="auto",
+                    reason=str(row.get("reason") or ""),
+                    status="needs_review",
+                )
+            except ValueError:
+                continue

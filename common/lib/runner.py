@@ -122,7 +122,7 @@ def update_param(run, suffix, ptype, *opts, debug=False):
         warn(f"--debug: {ptype} params not written")
         return EXIT_SKIP
     from . import calib_approval
-    blocked, reason = calib_approval.write_blocked(run)
+    blocked, reason = calib_approval.write_blocked(run, mode=ptype)
     if blocked:
         warn(f"param write blocked for {ptype}: {reason}")
         return EXIT_CHECK

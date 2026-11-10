@@ -639,6 +639,47 @@ def do_decide(cfg, action, note):
 
 
 #_____________________________________________________________________________
+def do_flag_channel(cfg, family, mode, det, channel, reason):
+    from common.lib import channel_flags
+    if not mode or not det or not channel:
+        runner.fail("flag-channel requires --mode --det --channel")
+    if not reason or not str(reason).strip():
+        runner.fail("flag-channel requires --reason")
+    row = channel_flags.append_flag(
+        cfg["run"],
+        family=family or "hodo",
+        mode=mode,
+        det=det,
+        channel=channel,
+        source="human",
+        reason=str(reason).strip(),
+        status="needs_review",
+    )
+    runner.info(
+        f"run{cfg['run']:05d}: flagged {row['mode']}/{row['det']}/{row['channel']}"
+    )
+    sys.exit(runner.EXIT_OK)
+
+
+#_____________________________________________________________________________
+def do_clear_channel(cfg, mode, det, channel, reason):
+    from common.lib import channel_flags
+    if not mode or not det or not channel:
+        runner.fail("clear-channel requires --mode --det --channel")
+    row = channel_flags.clear_channel(
+        cfg["run"],
+        mode=mode,
+        det=det,
+        channel=channel,
+        reason=str(reason or "cleared").strip(),
+    )
+    runner.info(
+        f"run{cfg['run']:05d}: cleared {row['mode']}/{row['det']}/{row['channel']}"
+    )
+    sys.exit(runner.EXIT_OK)
+
+
+#_____________________________________________________________________________
 def do_approve(cfg, note, via, user_id):
     via = via or "cli"
     st = read_state(cfg["run"])
@@ -917,13 +958,14 @@ def parse_args():
         choices=(
             "start", "status", "stop", "hold", "decide",
             "approve", "revoke", "resume",
+            "flag-channel", "clear-channel",
         ),
     )
     p.add_argument("config", type=Path, help="YAML config path")
     p.add_argument("--dry-run", action="store_true",
                    help="start/resume: print iterate commands only (no state write)")
     p.add_argument("--reason", default=None,
-                   help="hold/revoke: short reason")
+                   help="hold/revoke/flag-channel: short reason")
     p.add_argument("--action", default=None, choices=DECIDE_ACTIONS,
                    help="decide: refit (retry step) or continue (advance)")
     p.add_argument("--note", default=None,
@@ -932,6 +974,14 @@ def parse_args():
                    help="approve: how the approval was issued")
     p.add_argument("--user-id", default=None,
                    help="approve: Slack user id when --via slack")
+    p.add_argument("--mode", default=None,
+                   help="flag-channel/clear-channel: calib mode (e.g. hdprm)")
+    p.add_argument("--det", default=None,
+                   help="flag-channel/clear-channel: detector name")
+    p.add_argument("--channel", default=None,
+                   help="flag-channel/clear-channel: channel id")
+    p.add_argument("--family", default="hodo",
+                   help="flag-channel: family (default hodo)")
     return p.parse_args()
 
 
@@ -968,6 +1018,14 @@ def main():
         if a.dry_run:
             runner.warn("--dry-run ignored for revoke")
         do_revoke(cfg, a.reason)
+    if a.command == "flag-channel":
+        if a.dry_run:
+            runner.warn("--dry-run ignored for flag-channel")
+        do_flag_channel(cfg, a.family, a.mode, a.det, a.channel, a.reason)
+    if a.command == "clear-channel":
+        if a.dry_run:
+            runner.warn("--dry-run ignored for clear-channel")
+        do_clear_channel(cfg, a.mode, a.det, a.channel, a.reason)
     if a.command == "resume":
         do_resume(cfg, a.dry_run)
     do_start(cfg, a.dry_run)

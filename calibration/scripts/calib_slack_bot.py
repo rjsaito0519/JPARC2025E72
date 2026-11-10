@@ -51,6 +51,9 @@ def handle_calib_request(bot_cfg, user_id, channel_id, text):
         user_id=user_id,
         reason=extras.get("reason"),
         action=extras.get("action"),
+        mode=extras.get("mode"),
+        det=extras.get("det"),
+        channel=extras.get("channel"),
     )
     calib_ops.record_op(run, op, user_id)
     prefix = f"run{run:05d} {op}: "

@@ -44,6 +44,15 @@ class CalibOpsTests(unittest.TestCase):
         self.assertEqual(extras.get("action"), "continue")
         op, run, err, extras = self.ops.parse_calib_text("hdphc-again 3")
         self.assertEqual((op, run, err, extras), ("hdphc-again", 3, "", {}))
+        op, run, err, extras = self.ops.parse_calib_text(
+            "flag 12 hdprm BH2 seg1 looks bad",
+        )
+        self.assertEqual(op, "flag")
+        self.assertEqual(run, 12)
+        self.assertEqual(extras.get("mode"), "hdprm")
+        self.assertEqual(extras.get("channel"), "seg1")
+        op, run, err, extras = self.ops.parse_calib_text("clear 12 hdprm BH2 seg1")
+        self.assertEqual((op, run), ("clear", 12))
         op, run, err, extras = self.ops.parse_calib_text("hold 12")
         self.assertIsNone(op)
         self.assertIn("hold", err)

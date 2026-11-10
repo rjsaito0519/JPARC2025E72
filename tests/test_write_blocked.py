@@ -86,6 +86,24 @@ class WriteBlockedTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         sh.assert_called_once()
 
+    def test_channel_flag_blocks_update_param(self):
+        from common.lib import channel_flags
+
+        channel_flags.append_flag(
+            8,
+            family="hodo",
+            mode="hdprm",
+            det="BH2",
+            channel="seg1",
+            source="human",
+            reason="looks bad",
+            status="needs_review",
+        )
+        with mock.patch.object(self.runner, "sh") as sh:
+            rc = self.runner.update_param(8, "Pi", "hdprm")
+        self.assertEqual(rc, self.runner.EXIT_CHECK)
+        sh.assert_not_called()
+
     def test_do_drift_blocked_when_held(self):
         from calibration.scripts import run_dcprm
 

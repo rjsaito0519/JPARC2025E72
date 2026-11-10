@@ -204,26 +204,27 @@ def dispatch_state_path(run: int) -> Path:
 
 
 #_____________________________________________________________________________
-def write_blocked(run: int) -> tuple[bool, str]:
-    """True if param writes must be refused due to an active hold.
+def write_blocked(run: int, mode: str | None = None) -> tuple[bool, str]:
+    """True if param writes must be refused due to hold or open channel flags.
 
-    Blocks when status=held or hold_requested. Missing/unreadable state does
-    not block. awaiting_final_approval / approved do not block.
+    Blocks when status=held or hold_requested. Optional mode also blocks when
+    channel_flags has open needs_review for that mode (or any mode if mode is
+    None). Missing/unreadable state does not block. awaiting_final_approval /
+    approved do not block by themselves.
     """
     path = dispatch_state_path(run)
-    if not path.is_file():
-        return False, ""
-    try:
-        st = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False, ""
-    if not isinstance(st, dict):
-        return False, ""
-    if st.get("hold_requested") is True:
-        reason = st.get("hold_reason") or "hold_requested"
-        return True, f"hold_requested ({reason})"
-    if st.get("status") == "held":
-        hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
-        reason = hold.get("reason") or "held"
-        return True, f"status=held ({reason})"
-    return False, ""
+    if path.is_file():
+        try:
+            st = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            st = None
+        if isinstance(st, dict):
+            if st.get("hold_requested") is True:
+                reason = st.get("hold_reason") or "hold_requested"
+                return True, f"hold_requested ({reason})"
+            if st.get("status") == "held":
+                hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+                reason = hold.get("reason") or "held"
+                return True, f"status=held ({reason})"
+    from . import channel_flags
+    return channel_flags.write_blocked_by_flags(run, mode=mode)
