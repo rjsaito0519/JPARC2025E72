@@ -1,0 +1,26 @@
+# Example session produced by calib_session.py (editable; dispatch can start this file).
+#   ./calib_session.py init 3774 --calib-particle pion --target both
+#   ./calib_dispatch.py start calibration/config/calib_session_example.yml --dry-run
+#
+# calib_particle = calibration window (π/K). beam_particle = beam species from table.
+# They must not be confused.
+
+run: 3774
+calib_particle: pion
+kaon: false
+target: both
+momentum_gev_c: 0.735
+momentum_source: run_table
+beam_particle: kaon
+beam_particle_source: run_table
+charge: -1
+charge_source: run_table
+force: false
+max_iter: 10
+steps:
+  - hodo
+  - dc_chamber
+  - dc_chamber: {bcin: true}
+  - d5_align
+created_at: '2026-11-10T00:00:00Z'
+table_updated: false

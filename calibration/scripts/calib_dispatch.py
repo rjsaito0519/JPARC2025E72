@@ -19,6 +19,7 @@ State: OUTPUT_DIR/calib/runXXXXX/calib_dispatch_state.json
 Continue on exit 0; EXIT_SKIP (4) stops unless that step has allow_skip: true.
 Final exit code is runner.worst of executed step codes (so a skip is not erased by a later 0).
 Config: unknown top-level / step keys rejected; kaon/force/step flags are YAML bool only.
+  Session YAML from calib_session.py is accepted (calib_particle, momentum_*, …).
 """
 import json
 import sys
@@ -32,7 +33,16 @@ from common.lib import config, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 KNOWN_STEPS = ("hodo", "dc_resi", "dc_chamber", "d5_align")
-KNOWN_TOP_KEYS = frozenset({"run", "kaon", "force", "max_iter", "steps"})
+KNOWN_TOP_KEYS = frozenset({
+    "run", "kaon", "calib_particle", "force", "max_iter", "steps",
+    "target", "momentum_gev_c", "momentum_source",
+    "beam_particle", "beam_particle_source", "charge", "charge_source",
+    "created_at", "table_updated",
+})
+SESSION_META_KEYS = (
+    "calib_particle", "target", "momentum_gev_c", "momentum_source",
+    "beam_particle", "beam_particle_source", "charge", "charge_source",
+)
 # Options that apply to a given step (allow_skip is common).
 STEP_OPTS = {
     "hodo": frozenset({"skip_t0", "skip_hdphc", "ftof", "allow_skip"}),
@@ -100,20 +110,36 @@ def load_config(path):
     if not isinstance(steps, list) or not steps:
         runner.fail("config steps must be a non-empty list")
     kaon = False
+    calib_particle = None
+    if "calib_particle" in doc:
+        calib_particle = str(doc["calib_particle"]).lower()
+        if calib_particle not in ("pion", "kaon"):
+            runner.fail(f"config calib_particle must be pion|kaon, got {doc['calib_particle']!r}")
+        kaon = calib_particle == "kaon"
     if "kaon" in doc:
-        kaon = require_bool(doc["kaon"], "config kaon")
+        kaon_flag = require_bool(doc["kaon"], "config kaon")
+        if calib_particle is not None and kaon_flag != kaon:
+            runner.fail("config kaon disagrees with calib_particle")
+        if calib_particle is None:
+            kaon = kaon_flag
+            calib_particle = "kaon" if kaon else "pion"
+    if calib_particle is None:
+        calib_particle = "kaon" if kaon else "pion"
     force = False
     if "force" in doc:
         force = require_bool(doc["force"], "config force")
     max_iter = 10
     if "max_iter" in doc:
         max_iter = require_int(doc["max_iter"], "config max_iter", MAX_ITER_MIN, MAX_ITER_MAX)
+    meta = {key: doc.get(key) for key in SESSION_META_KEYS if key in doc}
+    meta["calib_particle"] = calib_particle
     return path, {
         "run": run,
         "kaon": kaon,
         "force": force,
         "max_iter": max_iter,
         "steps": steps,
+        "session": meta,
     }
 
 
@@ -228,8 +254,8 @@ def read_state(run):
 
 #_____________________________________________________________________________
 def make_payload(run, index, name, opts, rc, finished, steps_hist, status,
-                 stop_requested=False):
-    return {
+                 stop_requested=False, session=None):
+    payload = {
         "run": run,
         "index": index,
         "step": name,
@@ -241,6 +267,11 @@ def make_payload(run, index, name, opts, rc, finished, steps_hist, status,
         "steps": steps_hist,
         "updated_at": utc_now(),
     }
+    if session:
+        for key in SESSION_META_KEYS:
+            if key in session and session[key] is not None:
+                payload[key] = session[key]
+    return payload
 
 
 #_____________________________________________________________________________
@@ -266,10 +297,14 @@ def do_status(cfg):
     if st is None:
         runner.info(f"run{cfg['run']:05d}: not started (no {state_path(cfg['run'])})")
         sys.exit(runner.EXIT_OK)
+    mom = st.get("momentum_gev_c")
+    mom_src = st.get("momentum_source")
     runner.info(
         f"run{cfg['run']:05d}: last step[{st.get('index')}]={st.get('step')} "
         f"rc={st.get('rc')} status={st.get('status')} finished={st.get('finished')} "
-        f"stop_requested={st.get('stop_requested')} updated_at={st.get('updated_at')}"
+        f"stop_requested={st.get('stop_requested')} "
+        f"calib_particle={st.get('calib_particle')} "
+        f"momentum={mom} ({mom_src}) updated_at={st.get('updated_at')}"
     )
     print(json.dumps(st, indent=2, sort_keys=True))
     sys.exit(runner.EXIT_OK)
@@ -309,6 +344,7 @@ def resume_start_index(st):
 #_____________________________________________________________________________
 def run_steps(cfg, dry_run, start_index, steps_hist, label):
     """Run cfg steps from start_index; exit via sys.exit."""
+    session = cfg.get("session")
     n_steps = len(cfg["steps"])
     if start_index > n_steps:
         runner.fail(f"{label}: start index {start_index} past end ({n_steps} steps)")
@@ -320,7 +356,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 cfg["run"],
                 make_payload(
                     cfg["run"], last["index"], last["step"], last.get("opts") or {},
-                    done_rc, True, steps_hist, "finished",
+                    done_rc, True, steps_hist, "finished", session=session,
                 ),
             )
         runner.info(f"calib_dispatch {label} finished (no remaining steps)")
@@ -345,6 +381,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 cfg["run"],
                 make_payload(
                     cfg["run"], i, name, opts, None, False, list(steps_hist), "running",
+                    session=session,
                 ),
             )
         if dry_run:
@@ -370,6 +407,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                     cfg["run"],
                     make_payload(
                         cfg["run"], i, name, opts, rc, False, steps_hist, "stopped",
+                        session=session,
                     ),
                 )
             runner.warn(f"stopping after step {name} (rc={rc})")
@@ -381,6 +419,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 cfg["run"],
                 make_payload(
                     cfg["run"], i, name, opts, rc, False, steps_hist, "stopped",
+                    session=session,
                 ),
             )
             runner.warn(f"stop requested after step {name}; chain paused")
@@ -392,7 +431,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
             cfg["run"],
             make_payload(
                 cfg["run"], last_index, last_name, last_opts, done_rc, True,
-                steps_hist, "finished",
+                steps_hist, "finished", session=session,
             ),
         )
     runner.info("calib_dispatch finished")
