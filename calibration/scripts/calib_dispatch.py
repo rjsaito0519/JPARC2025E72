@@ -7,8 +7,9 @@ Usage:
   calib_dispatch.py stop   <config.yml>
   calib_dispatch.py resume <config.yml> [--dry-run]
 
-Steps: hodo | dc_resi [{bcin: true}] | d5_align
+Steps: hodo | dc_resi [{bcin: true}] | dc_chamber [{bcin: true}] | d5_align
   Optional per-step: allow_skip: true  (continue after EXIT_SKIP)
+  dc_chamber: t0→drift→resi→reso (see iterate_dc_chamber.py)
 State: OUTPUT_DIR/calib/runXXXXX/calib_dispatch_state.json
   status=running at step start, stopped on chain halt or stop request,
   finished when all steps done.
@@ -30,16 +31,21 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from common.lib import config, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-KNOWN_STEPS = ("hodo", "dc_resi", "d5_align")
+KNOWN_STEPS = ("hodo", "dc_resi", "dc_chamber", "d5_align")
 KNOWN_TOP_KEYS = frozenset({"run", "kaon", "force", "max_iter", "steps"})
 # Options that apply to a given step (allow_skip is common).
 STEP_OPTS = {
     "hodo": frozenset({"skip_t0", "skip_hdphc", "ftof", "allow_skip"}),
     "dc_resi": frozenset({"bcin", "allow_skip"}),
+    "dc_chamber": frozenset({
+        "bcin", "allow_skip", "skip_t0", "skip_drift", "skip_resi", "skip_reso",
+        "separate",
+    }),
     "d5_align": frozenset({"allow_skip"}),
 }
 BOOL_STEP_OPTS = frozenset({
-    "bcin", "skip_t0", "skip_hdphc", "ftof", "allow_skip",
+    "bcin", "skip_t0", "skip_hdphc", "skip_drift", "skip_resi", "skip_reso",
+    "ftof", "allow_skip", "separate",
 })
 MAX_ITER_MIN = 1
 MAX_ITER_MAX = 100
@@ -155,6 +161,7 @@ def step_cmd(name, opts, cfg, dry_run):
     parts = ["python3", str(SCRIPT_DIR / {
         "hodo": "iterate_hodo_chain.py",
         "dc_resi": "iterate_dc_resi.py",
+        "dc_chamber": "iterate_dc_chamber.py",
         "d5_align": "iterate_d5_align.py",
     }[name]), str(run)]
 
@@ -164,6 +171,22 @@ def step_cmd(name, opts, cfg, dry_run):
         else:
             parts.append("--bcout")
         parts += ["--max-iter", str(cfg["max_iter"])]
+    elif name == "dc_chamber":
+        if opts.get("bcin"):
+            parts.append("--bcin")
+        else:
+            parts.append("--bcout")
+        parts += ["--max-iter", str(cfg["max_iter"])]
+        if opts.get("separate"):
+            parts.append("--separate")
+        if opts.get("skip_t0"):
+            parts.append("--skip-t0")
+        if opts.get("skip_drift"):
+            parts.append("--skip-drift")
+        if opts.get("skip_resi"):
+            parts.append("--skip-resi")
+        if opts.get("skip_reso"):
+            parts.append("--skip-reso")
     elif name == "d5_align":
         parts += ["--max-iter", str(cfg["max_iter"])]
     elif name == "hodo":
@@ -174,7 +197,7 @@ def step_cmd(name, opts, cfg, dry_run):
         if opts.get("ftof"):
             parts.append("--ftof")
 
-    if cfg["kaon"] and name in ("hodo", "dc_resi", "d5_align"):
+    if cfg["kaon"] and name in ("hodo", "dc_resi", "dc_chamber", "d5_align"):
         parts.append("--kaon")
     if cfg["force"]:
         parts.append("--force")

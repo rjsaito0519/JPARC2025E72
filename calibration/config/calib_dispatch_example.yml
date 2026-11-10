@@ -1,14 +1,14 @@
-# Example calib_dispatch config (one run, Hodo → BcOut resi → D5).
+# Example calib_dispatch config (one run, Hodo → BcOut chamber → D5).
 # Usage:
 #   ./calib_dispatch.py start calibration/config/calib_dispatch_example.yml --dry-run
 #   ./calib_dispatch.py status calibration/config/calib_dispatch_example.yml
 #
 # Notes:
-# - After hodo, iterate_dc_resi preflights: if Bc* ROOT is missing or params are newer
-#   than the decode, it decodes once before the first resi (do not rely on force: true).
-# - d5_align assumes BcIn/BcOut t0/drift/resi/reso etc. are already done for this run
-#   (see analyzer docs/d5_beam/D5_CALIBRATION_FLOW.md). For a fresh run, stop after
-#   hodo+dc_resi or finish those stages before enabling d5_align.
+# - dc_chamber runs t0→drift→resi→reso for one chamber (BcOut by default).
+# - D5 needs BcIn chamber done as well; uncomment the bcin dc_chamber line, or
+#   finish BcIn separately before enabling d5_align
+#   (see analyzer docs/d5_beam/D5_CALIBRATION_FLOW.md).
+# - dc_resi alone remains available if only residual iteration is needed.
 
 run: 3774
 kaon: false
@@ -16,7 +16,8 @@ force: false
 max_iter: 10
 steps:
   - hodo
-  - dc_resi                 # BcOut (default)
-  # - dc_resi: {bcin: true}
-  # - dc_resi: {allow_skip: true}   # EXIT_SKIP(4) でも次へ（既定は停止）
+  - dc_chamber                 # BcOut t0→drift→resi→reso
+  # - dc_chamber: {bcin: true} # BcIn full chain (needed before D5 on a fresh run)
+  # - dc_resi                  # residual-only (legacy / already-calibrated stages)
+  # - dc_resi: {allow_skip: true}
   - d5_align

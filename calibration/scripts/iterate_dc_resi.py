@@ -13,6 +13,9 @@ the decode (non-interactive stale check), decode once first — do not rely on -
 
 Does not create runlists; pass --runlist or use create_runlist's
 runmanager/runlist/<sub>/{bcout|bcin}_runXXXXX.yml.
+
+Shared fit-loop helpers (resi/reso) live in this module for iterate_dc_reso /
+iterate_dc_chamber.
 """
 import sys
 from pathlib import Path
@@ -24,6 +27,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_DCPRM = SCRIPT_DIR / "run_dcprm.py"
 MYRUN = config.ANALYZER_DIR / "runmanager" / "myrun.py"
 DEFAULT_MAX_ITER = 10
+FIT_MODES = ("resi", "reso")
 
 # What to do after run_dcprm exits (before max-iter handling).
 STOP_OK = "stop_ok"
@@ -67,16 +71,16 @@ def default_runlist(run, bcin):
 
 
 #_____________________________________________________________________________
-def resolve_runlist(run, bcin, explicit):
+def resolve_runlist(run, bcin, explicit, require_exists=True):
     if explicit is not None:
         path = Path(explicit).expanduser()
         if not path.is_absolute():
             path = (Path.cwd() / path).resolve()
-        if not path.is_file():
+        if require_exists and not path.is_file():
             runner.fail(f"runlist not found: {path}")
         return path
     path = default_runlist(run, bcin)
-    if path.is_file():
+    if path.is_file() or not require_exists:
         return path
     runner.fail(
         f"runlist not found: {path} "
@@ -98,14 +102,105 @@ def root_mtime_msg(run, bcin):
 
 
 #_____________________________________________________________________________
-def resi_cmd(run, bcin, kaon, force):
-    parts = ["python3", str(RUN_DCPRM), str(run), "resi",
+def fit_cmd(run, mode, bcin, kaon, force, separate=False):
+    if mode not in FIT_MODES:
+        runner.fail(f"unknown fit mode: {mode!r}")
+    parts = ["python3", str(RUN_DCPRM), str(run), mode,
              "--bcin" if bcin else "--bcout"]
+    if mode == "reso" and separate:
+        parts.append("--separate")
     if kaon:
         parts.append("--kaon")
     if force:
         parts.append("--force")
     return " ".join(parts)
+
+
+#_____________________________________________________________________________
+def resi_cmd(run, bcin, kaon, force):
+    """Backward-compatible alias for fit_cmd(..., mode='resi')."""
+    return fit_cmd(run, "resi", bcin, kaon, force)
+
+
+#_____________________________________________________________________________
+def run_fit_loop(
+    run, mode, bcin, kaon, force, max_iter, runlist, dry_run,
+    separate=False, do_preflight=True, label=None,
+):
+    """Run resi/reso until terminal exit. Returns the exit code (does not sys.exit)."""
+    if mode not in FIT_MODES:
+        runner.fail(f"unknown fit mode: {mode!r}")
+    if max_iter < 1:
+        runner.fail("--max-iter must be >= 1")
+    tag = label or f"iterate_dc_{mode}"
+    runner.info(
+        f"{tag} run={run:05d} {chamber_tag(bcin)} mode={mode} "
+        f"max_iter={max_iter} runlist={runlist}"
+        + (" dry-run" if dry_run else "")
+    )
+
+    if dry_run:
+        runner.step(f"{tag} dry-run")
+        if do_preflight:
+            print("[dry-run] preflight: decode if chamber ROOT missing or params newer than decode")
+        print(f"[dry-run] {fit_cmd(run, mode, bcin, kaon, force, separate)}")
+        decode_run.run_decode(runlist, dry_run=True)
+        print(f"[dry-run] … repeat {mode} until exit 0/1/3/4 or max-iter={max_iter}")
+        runner.info(f"chamber root: {root_mtime_msg(run, bcin)}")
+        return runner.EXIT_OK
+
+    if not MYRUN.is_file():
+        runner.fail(f"myrun not found: {MYRUN}")
+    if not RUN_DCPRM.is_file():
+        runner.fail(f"run_dcprm not found: {RUN_DCPRM}")
+
+    if do_preflight:
+        suffix = "K" if kaon else "Pi"
+        root = chamber_root(run, bcin)
+        stale = input_check.stale_params(root, suffix) if root.exists() else []
+        if not root.exists() or stale:
+            reason = "missing" if not root.exists() else ("stale vs " + "; ".join(stale))
+            runner.info(f"preflight decode ({reason})")
+            decode_run.run_decode(runlist)
+            runner.info(f"after preflight decode: {root_mtime_msg(run, bcin)}")
+
+    ok_rc = (runner.EXIT_OK, runner.EXIT_FAIL, runner.EXIT_NOT_CONVERGED,
+             runner.EXIT_CHECK, runner.EXIT_SKIP)
+    last_rc = runner.EXIT_CHECK
+
+    for i in range(1, max_iter + 1):
+        runner.step(f"{tag} pass {i}/{max_iter}")
+        runner.info(f"before {mode}: {root_mtime_msg(run, bcin)}")
+        cmd = fit_cmd(run, mode, bcin, kaon, force, separate)
+        rc, _ = runner.sh(cmd, ok=ok_rc)
+        last_rc = rc
+        action = next_action(rc)
+        runner.info(f"run_dcprm {mode} exit={rc} → {action}")
+
+        if action == STOP_OK:
+            runner.info(f"{mode} converged; done")
+            return runner.EXIT_OK
+        if action == STOP_FAIL:
+            return runner.EXIT_FAIL
+        if action == STOP_CHECK:
+            runner.warn("check / settled; stop")
+            return runner.EXIT_CHECK
+        if action == STOP_SKIP:
+            runner.warn("skip; stop")
+            return runner.EXIT_SKIP
+        # DO_DECODE
+        if i >= max_iter:
+            runner.warn(f"max-iter {max_iter} reached after NOT_CONVERGED; stop as CHECK")
+            return runner.EXIT_CHECK
+
+        runner.info(f"before decode: {root_mtime_msg(run, bcin)}")
+        decode_run.run_decode(runlist)
+        runner.info(f"after decode: {root_mtime_msg(run, bcin)}")
+
+    runner.warn("loop ended without terminal state; stop as CHECK")
+    if last_rc in (runner.EXIT_OK, runner.EXIT_FAIL, runner.EXIT_CHECK, runner.EXIT_SKIP):
+        return last_rc
+    return runner.EXIT_CHECK
 
 
 #_____________________________________________________________________________
@@ -133,71 +228,11 @@ def parse_args():
 def main():
     a = parse_args()
     runlist = resolve_runlist(a.run, a.bcin, a.runlist)
-    if not MYRUN.is_file() and not a.dry_run:
-        runner.fail(f"myrun not found: {MYRUN}")
-    if not RUN_DCPRM.is_file():
-        runner.fail(f"run_dcprm not found: {RUN_DCPRM}")
-
-    runner.info(
-        f"iterate_dc_resi run={a.run:05d} {chamber_tag(a.bcin)} "
-        f"max_iter={a.max_iter} runlist={runlist}"
-        + (" dry-run" if a.dry_run else "")
+    rc = run_fit_loop(
+        a.run, "resi", a.bcin, a.kaon, a.force, a.max_iter, runlist, a.dry_run,
+        separate=False, do_preflight=True, label="iterate_dc_resi",
     )
-
-    if a.dry_run:
-        runner.step("iterate_dc_resi dry-run")
-        print(f"[dry-run] preflight: decode if chamber ROOT missing or params newer than decode")
-        print(f"[dry-run] {resi_cmd(a.run, a.bcin, a.kaon, a.force)}")
-        decode_run.run_decode(runlist, dry_run=True)
-        print(f"[dry-run] … repeat resi until exit 0/1/3/4 or max-iter={a.max_iter}")
-        runner.info(f"chamber root: {root_mtime_msg(a.run, a.bcin)}")
-        sys.exit(runner.EXIT_OK)
-
-    suffix = "K" if a.kaon else "Pi"
-    root = chamber_root(a.run, a.bcin)
-    stale = input_check.stale_params(root, suffix) if root.exists() else []
-    if not root.exists() or stale:
-        reason = "missing" if not root.exists() else ("stale vs " + "; ".join(stale))
-        runner.info(f"preflight decode ({reason})")
-        decode_run.run_decode(runlist)
-        runner.info(f"after preflight decode: {root_mtime_msg(a.run, a.bcin)}")
-
-    ok_rc = (runner.EXIT_OK, runner.EXIT_FAIL, runner.EXIT_NOT_CONVERGED,
-             runner.EXIT_CHECK, runner.EXIT_SKIP)
-    last_rc = runner.EXIT_CHECK
-
-    for i in range(1, a.max_iter + 1):
-        runner.step(f"iterate_dc_resi pass {i}/{a.max_iter}")
-        runner.info(f"before resi: {root_mtime_msg(a.run, a.bcin)}")
-        cmd = resi_cmd(a.run, a.bcin, a.kaon, a.force)
-        rc, _ = runner.sh(cmd, ok=ok_rc)
-        last_rc = rc
-        action = next_action(rc)
-        runner.info(f"run_dcprm resi exit={rc} → {action}")
-
-        if action == STOP_OK:
-            runner.info("converged; done")
-            sys.exit(runner.EXIT_OK)
-        if action == STOP_FAIL:
-            sys.exit(runner.EXIT_FAIL)
-        if action == STOP_CHECK:
-            runner.warn("check / settled; stop")
-            sys.exit(runner.EXIT_CHECK)
-        if action == STOP_SKIP:
-            runner.warn("skip; stop")
-            sys.exit(runner.EXIT_SKIP)
-        # DO_DECODE
-        if i >= a.max_iter:
-            runner.warn(f"max-iter {a.max_iter} reached after NOT_CONVERGED; stop as CHECK")
-            sys.exit(runner.EXIT_CHECK)
-
-        runner.info(f"before decode: {root_mtime_msg(a.run, a.bcin)}")
-        decode_run.run_decode(runlist)
-        runner.info(f"after decode: {root_mtime_msg(a.run, a.bcin)}")
-
-    runner.warn("loop ended without terminal state; stop as CHECK")
-    sys.exit(last_rc if last_rc in (runner.EXIT_OK, runner.EXIT_FAIL, runner.EXIT_CHECK, runner.EXIT_SKIP)
-             else runner.EXIT_CHECK)
+    sys.exit(rc)
 
 
 if __name__ == "__main__":
