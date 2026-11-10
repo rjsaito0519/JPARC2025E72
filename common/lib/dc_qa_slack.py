@@ -28,6 +28,28 @@ def particle_suffix(kaon: bool) -> str:
 
 
 #_____________________________________________________________________________
+def param_path(run: int, mode: str, *, kaon: bool = False) -> Path:
+    """Per-run DC param path touched by this mode (fit input / written)."""
+    suffix = particle_suffix(kaon)
+    if mode == "t0":
+        return (
+            config.PARAM_DIR / "DCTDC" / config.SUB_DIR
+            / f"DCTdcParam_run{run:05d}_{suffix}"
+        )
+    if mode == "drift":
+        return (
+            config.PARAM_DIR / "DCDRFT" / config.SUB_DIR
+            / f"DCDriftParam_run{run:05d}_{suffix}.root"
+        )
+    if mode in ("resi", "reso"):
+        return (
+            config.PARAM_DIR / "DCGEO" / config.SUB_DIR
+            / f"DCGeomParam_run{run:05d}_{suffix}"
+        )
+    raise ValueError(f"unsupported dc mode for param path: {mode!r}")
+
+
+#_____________________________________________________________________________
 def blc_ids(bcin: bool = False, all_chambers: bool = False) -> list[str]:
     if all_chambers:
         return ["1", "2"]
@@ -121,16 +143,21 @@ def try_post_after_dcprm(
     if status in ("missing", "disabled"):
         return True, f"slack skip: {status}"
     manifest = None
+    sealed = None
     if session is not None:
         ok, msg, hashes = qa_session.verify_sources(session)
         if not ok:
             return False, msg
         paths = [Path(p) for p in session["expected"]]
+        sealed = qa_session.seal_outputs(session, paths)
+        qa_session.attach_params(
+            session, [param_path(run, mode, kaon=kaon)], role="written",
+        )
         manifest_path = qa_session.write_manifest(
-            session, source_hashes=hashes, output_pdfs=paths,
+            session, source_hashes=hashes, output_pdfs=sealed,
         )
         manifest = qa_session.load_manifest(manifest_path)
     return post_dc_qa(
         run, mode, kaon=kaon, bcin=bcin, all_chambers=all_chambers, dry_run=False,
-        manifest=manifest,
+        manifest=manifest, pdf_paths=sealed,
     )

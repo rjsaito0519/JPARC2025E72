@@ -46,10 +46,14 @@ def main():
             manifest = qa_session.load_manifest(a.manifest)
         except (OSError, ValueError, TypeError) as e:
             runner.fail(f"manifest: {e}")
-        outputs = manifest.get("outputs") or []
-        if not outputs:
-            runner.fail("manifest has no outputs")
-        pdf_paths = [Path(e["path"]) for e in outputs]
+        ok_r, msg_r, pdf_paths = qa_session.resolve_sealed_outputs(
+            manifest,
+            run=a.run,
+            mode=a.mode,
+            particle="kaon" if a.kaon else "pion",
+        )
+        if not ok_r:
+            runner.fail(msg_r)
     else:
         pdf_paths = [a.pdf]
 

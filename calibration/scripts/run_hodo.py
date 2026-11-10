@@ -19,6 +19,22 @@ from common.lib import config, hodo_qa_pdf, qa_session, runner, slack_notify  # 
 
 
 #_____________________________________________________________________________
+def hodo_param_path(run, mode, suffix):
+    """Per-run Hodo param path written by update_param for this mode."""
+    if mode in ("hdprm", "t0"):
+        return (
+            config.PARAM_DIR / "HDPRM" / config.SUB_DIR
+            / f"HodoParam_run{run:05d}_{suffix}"
+        )
+    if mode == "hdphc":
+        return (
+            config.PARAM_DIR / "HDPHC" / config.SUB_DIR
+            / f"HodoPHCParam_run{run:05d}_{suffix}"
+        )
+    raise ValueError(f"unsupported hodo mode for param path: {mode!r}")
+
+
+#_____________________________________________________________________________
 def after_qa_merge(run, mode, args, rc, session=None):
     """Merge detector QA PDFs; incomplete book raises the run to EXIT_CHECK."""
     if getattr(args, "skip_qa", False):
@@ -31,15 +47,22 @@ def after_qa_merge(run, mode, args, rc, session=None):
     if ok:
         runner.info(message)
         manifest = None
+        post_pdf = out
         if session is not None and out is not None:
             _ok, _msg, hashes = qa_session.verify_sources(session)
+            sealed = qa_session.seal_outputs(session, [out])
+            suffix = "K" if args.kaon else "Pi"
+            qa_session.attach_params(
+                session, [hodo_param_path(run, mode, suffix)], role="written",
+            )
             manifest_path = qa_session.write_manifest(
-                session, source_hashes=hashes, output_pdfs=[out],
+                session, source_hashes=hashes, output_pdfs=sealed,
             )
             manifest = qa_session.load_manifest(manifest_path)
+            post_pdf = sealed[0]
             runner.info(f"QA manifest: {manifest_path}")
         posted, post_msg = slack_notify.try_post_hodo_after_merge(
-            run, mode, kaon=args.kaon, ftof=args.ftof, pdf_path=out,
+            run, mode, kaon=args.kaon, ftof=args.ftof, pdf_path=post_pdf,
             manifest=manifest,
         )
         if not posted:
@@ -81,6 +104,9 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
             "ftof": bool(args.ftof),
         },
     )
+    qa_session.attach_params(
+        session, [hodo_param_path(run, mode, suffix)], role="fit_input",
+    )
     runner.step(f"run{run:05d}: {bin_suffix} fit for {dets}")
     import os
     from common.lib import fit_overrides
@@ -119,6 +145,9 @@ def do_t0(run, suffix, args):
             "particle": "kaon" if args.kaon else "pion",
             "ftof": False,
         },
+    )
+    qa_session.attach_params(
+        session, [hodo_param_path(run, "t0", suffix)], role="fit_input",
     )
     runner.step(f"run{run:05d}: T0_Offset")
     runner.sh(f"{exe} {root} {suffix}")

@@ -3,12 +3,16 @@
 begin() records expected PDF hashes before a fit. verify_sources() requires
 each file to exist and differ from that snapshot (or be newly created).
 mtime alone is never used for pass/fail.
+
+Successful outputs are sealed under qa_manifests/<exec_id>/ so resend can
+re-read an immutable copy and refuse hash mismatch.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import secrets
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -114,14 +118,62 @@ def manifest_dir(run: int) -> Path:
 
 
 #_____________________________________________________________________________
+def seal_dir(session: dict[str, Any]) -> Path:
+    """Directory for immutable sealed PDFs of this exec_id."""
+    return manifest_dir(int(session["run"])) / str(session["exec_id"])
+
+
+#_____________________________________________________________________________
+def seal_outputs(session: dict[str, Any], output_pdfs) -> list[Path]:
+    """Copy output PDFs under qa_manifests/<exec_id>/; return sealed paths."""
+    dest_dir = seal_dir(session)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    sealed: list[Path] = []
+    for path in output_pdfs:
+        path = Path(path)
+        if not path.is_file():
+            raise FileNotFoundError(f"cannot seal missing PDF: {path}")
+        dest = dest_dir / path.name
+        shutil.copy2(path, dest)
+        sealed.append(dest)
+    return sealed
+
+
+#_____________________________________________________________________________
+def attach_params(session: dict[str, Any], paths, *, role: str = "fit_input") -> list[dict[str, Any]]:
+    """Snapshot parameter files onto the session (sha at call time)."""
+    entries: list[dict[str, Any]] = []
+    for path in paths:
+        path = Path(path)
+        entries.append({
+            "name": path.name,
+            "path": str(path),
+            "sha": file_sha256(path) if path.is_file() else None,
+            "role": role,
+        })
+    if role == "fit_input":
+        session["params_fit_input"] = entries
+    elif role == "written":
+        session["params_written"] = entries
+    else:
+        session[f"params_{role}"] = entries
+    return entries
+
+
+#_____________________________________________________________________________
 def write_manifest(
     session: dict[str, Any],
     *,
     source_hashes: dict[str, str],
     output_pdfs,
     param_paths=None,
+    params_written=None,
 ) -> Path:
-    """Write qa_manifests/<exec_id>.json; return the path."""
+    """Write qa_manifests/<exec_id>.json; return the path.
+
+    output_pdfs should be sealed paths when available. params come from
+    session['params_fit_input'] (preferred) or param_paths (role fit_input).
+    """
     run = int(session["run"])
     out_dir = manifest_dir(run)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -133,14 +185,27 @@ def write_manifest(
             "path": str(path),
             "sha": file_sha256(path) if path.is_file() else None,
         })
-    params = []
-    for path in (param_paths or []):
-        path = Path(path)
-        params.append({
-            "name": path.name,
-            "path": str(path),
-            "sha": file_sha256(path) if path.is_file() else None,
-        })
+    params = list(session.get("params_fit_input") or [])
+    if not params and param_paths:
+        for path in param_paths:
+            path = Path(path)
+            params.append({
+                "name": path.name,
+                "path": str(path),
+                "sha": file_sha256(path) if path.is_file() else None,
+                "role": "fit_input",
+            })
+    written = list(session.get("params_written") or [])
+    if params_written:
+        written = []
+        for path in params_written:
+            path = Path(path)
+            written.append({
+                "name": path.name,
+                "path": str(path),
+                "sha": file_sha256(path) if path.is_file() else None,
+                "role": "written",
+            })
     sources = [
         {"name": name, "sha": source_hashes.get(name)}
         for name in sorted(source_hashes)
@@ -154,6 +219,7 @@ def write_manifest(
         "sources": sources,
         "outputs": outputs,
         "params": params,
+        "params_written": written,
         "started_at": session.get("started_at"),
         "finished_at": _utc_now(),
     }
@@ -169,6 +235,77 @@ def load_manifest(path: Path | str) -> dict[str, Any]:
     if not isinstance(data, dict) or not data.get("exec_id"):
         raise ValueError(f"invalid qa manifest: {path}")
     return data
+
+
+#_____________________________________________________________________________
+def resolve_sealed_outputs(
+    manifest: dict[str, Any],
+    *,
+    run: int,
+    mode: str | None = None,
+    particle: str | None = None,
+) -> tuple[bool, str, list[Path]]:
+    """Validate run/mode/particle and on-disk sha against manifest outputs."""
+    if int(manifest.get("run", -1)) != int(run):
+        return (
+            False,
+            f"manifest run mismatch: manifest={manifest.get('run')} cli={run}",
+            [],
+        )
+    meta = manifest.get("meta") or {}
+    if mode is not None and meta.get("mode") is not None:
+        if str(meta.get("mode")) != str(mode):
+            return (
+                False,
+                f"manifest mode mismatch: manifest={meta.get('mode')} cli={mode}",
+                [],
+            )
+    if particle is not None and meta.get("particle") is not None:
+        if str(meta.get("particle")) != str(particle):
+            return (
+                False,
+                (
+                    f"manifest particle mismatch: "
+                    f"manifest={meta.get('particle')} cli={particle}"
+                ),
+                [],
+            )
+    outputs = manifest.get("outputs") or []
+    if not outputs:
+        return False, "manifest has no outputs", []
+    paths: list[Path] = []
+    for entry in outputs:
+        path = Path(entry.get("path") or "")
+        expected_sha = entry.get("sha")
+        if not path.is_file():
+            return False, f"sealed PDF missing: {path.name or path}", []
+        actual = file_sha256(path)
+        if expected_sha is not None and actual != expected_sha:
+            return (
+                False,
+                f"sealed PDF sha mismatch: {path.name} "
+                f"(manifest={expected_sha} disk={actual})",
+                [],
+            )
+        paths.append(path)
+    return True, "ok", paths
+
+
+#_____________________________________________________________________________
+def resolve_sealed_output(
+    manifest: dict[str, Any],
+    *,
+    run: int,
+    mode: str | None = None,
+    particle: str | None = None,
+) -> tuple[bool, str, Path | None]:
+    """Single-PDF wrapper around resolve_sealed_outputs."""
+    ok, message, paths = resolve_sealed_outputs(
+        manifest, run=run, mode=mode, particle=particle,
+    )
+    if not ok:
+        return False, message, None
+    return True, message, paths[0]
 
 
 #_____________________________________________________________________________

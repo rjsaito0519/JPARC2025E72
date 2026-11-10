@@ -352,13 +352,15 @@ def do_pos(args, s):
     pos_sessions = {}
     for run in args.runs:
         check_pos_inputs(run, s, args.force)
-        pos_sessions[run] = qa_session.begin(
+        session = qa_session.begin(
             run,
             "d5_pos_review",
             [d5_qa_slack.source_path(run, "pos_review", kaon=kaon)],
             input_path=d5_root(run, s),
             meta={"family": "d5", "mode": "pos_review", "particle": "kaon" if kaon else "pion"},
         )
+        qa_session.attach_params(session, [dcgeo_path(run, s)], role="fit_input")
+        pos_sessions[run] = session
     rows = {run: measure(run, s) for run in args.runs}
     failed = [run for run, r in rows.items() if r is None]
     for run, r in rows.items():
@@ -440,6 +442,9 @@ def do_pos(args, s):
                     "mode": "plane_resi_qa",
                     "particle": "kaon" if kaon else "pion",
                 },
+            )
+            qa_session.attach_params(
+                check_session, [dcgeo_path(run, s)], role="fit_input",
             )
             pdf_rc = make_check_pdf(run, s)
             if pdf_rc != 0:

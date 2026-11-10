@@ -37,7 +37,7 @@ def chamber_flag(args):
 
 #_____________________________________________________________________________
 def _dc_session(run, suffix, args, mode, input_path):
-    return qa_session.begin(
+    session = qa_session.begin(
         run,
         f"dc_{mode}",
         dc_qa_slack.source_paths(
@@ -56,6 +56,12 @@ def _dc_session(run, suffix, args, mode, input_path):
             "all": bool(getattr(args, "all", False)),
         },
     )
+    qa_session.attach_params(
+        session,
+        [dc_qa_slack.param_path(run, mode, kaon=args.kaon)],
+        role="fit_input",
+    )
+    return session
 
 
 #_____________________________________________________________________________

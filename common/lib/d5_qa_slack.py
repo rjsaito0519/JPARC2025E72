@@ -86,13 +86,23 @@ def try_post_after_d5(
     if status in ("missing", "disabled"):
         return True, f"slack skip: {status}"
     manifest = None
+    sealed_pdf = None
     if session is not None:
         ok, msg, hashes = qa_session.verify_sources(session)
         if not ok:
             return False, msg
         paths = [Path(p) for p in session["expected"]]
+        sealed = qa_session.seal_outputs(session, paths)
+        geo = (
+            config.PARAM_DIR / "DCGEO" / config.SUB_DIR
+            / f"DCGeomParam_run{run:05d}_{particle_suffix(kaon)}"
+        )
+        qa_session.attach_params(session, [geo], role="written")
         manifest_path = qa_session.write_manifest(
-            session, source_hashes=hashes, output_pdfs=paths,
+            session, source_hashes=hashes, output_pdfs=sealed,
         )
         manifest = qa_session.load_manifest(manifest_path)
-    return post_d5_qa(run, kind, kaon=kaon, dry_run=False, manifest=manifest)
+        sealed_pdf = sealed[0]
+    return post_d5_qa(
+        run, kind, kaon=kaon, dry_run=False, manifest=manifest, pdf_path=sealed_pdf,
+    )

@@ -41,10 +41,14 @@ def main():
             manifest = qa_session.load_manifest(a.manifest)
         except (OSError, ValueError, TypeError) as e:
             runner.fail(f"manifest: {e}")
-        outputs = manifest.get("outputs") or []
-        if not outputs:
-            runner.fail("manifest has no outputs")
-        pdf_path = Path(outputs[0]["path"])
+        ok_r, msg_r, pdf_path = qa_session.resolve_sealed_output(
+            manifest,
+            run=a.run,
+            mode=a.mode,
+            particle="kaon" if a.kaon else "pion",
+        )
+        if not ok_r:
+            runner.fail(msg_r)
 
     ok, message = slack_notify.post_hodo_qa(
         a.run,

@@ -39,10 +39,14 @@ def main():
             manifest = qa_session.load_manifest(a.manifest)
         except (OSError, ValueError, TypeError) as e:
             runner.fail(f"manifest: {e}")
-        outputs = manifest.get("outputs") or []
-        if not outputs:
-            runner.fail("manifest has no outputs")
-        pdf_path = Path(outputs[0]["path"])
+        ok_r, msg_r, pdf_path = qa_session.resolve_sealed_output(
+            manifest,
+            run=a.run,
+            mode=a.kind,
+            particle="kaon" if a.kaon else "pion",
+        )
+        if not ok_r:
+            runner.fail(msg_r)
 
     ok, message = d5_qa_slack.post_d5_qa(
         a.run, a.kind, kaon=a.kaon, dry_run=a.dry_run,

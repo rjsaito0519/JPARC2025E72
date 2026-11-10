@@ -116,6 +116,88 @@ class QaSessionTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--pdf", result.stdout + result.stderr)
 
+    def test_seal_and_resolve_rejects_overwritten_live_path(self):
+        """Manifest points at sealed copy; mutating live path must not change post sha."""
+        img = self.out / "img/run00005"
+        live = img / "run00005_hodo_hdprm_Pi.pdf"
+        _make_pdf(live, stamp=b"old-qa")
+        session = self.qa.begin(
+            5, "hodo_hdprm", [live],
+            meta={"family": "hodo", "mode": "hdprm", "particle": "pion"},
+        )
+        param = self.out / "HodoParam_run00005_Pi"
+        param.write_bytes(b"fit-input-param")
+        self.qa.attach_params(session, [param], role="fit_input")
+        _make_pdf(live, stamp=b"new-qa")
+        ok_v, msg_v, hashes = self.qa.verify_sources(session)
+        self.assertTrue(ok_v, msg_v)
+        sealed = self.qa.seal_outputs(session, [live])
+        self.qa.attach_params(session, [param], role="written")
+        man_path = self.qa.write_manifest(
+            session, source_hashes=hashes, output_pdfs=sealed,
+        )
+        data = json.loads(man_path.read_text())
+        self.assertEqual(data["params"][0]["role"], "fit_input")
+        self.assertEqual(data["params"][0]["sha"], self.qa.file_sha256(param))
+        self.assertTrue(str(sealed[0]).endswith(f"/{session['exec_id']}/{live.name}"))
+        sealed_sha = data["outputs"][0]["sha"]
+
+        # Overwrite the usual img path after sealing — resend must still use seal.
+        _make_pdf(live, stamp=b"even-newer")
+        ok_r, msg_r, resolved = self.qa.resolve_sealed_output(
+            data, run=5, mode="hdprm", particle="pion",
+        )
+        self.assertTrue(ok_r, msg_r)
+        self.assertEqual(self.qa.file_sha256(resolved), sealed_sha)
+        self.assertNotEqual(self.qa.file_sha256(live), sealed_sha)
+
+    def test_resolve_rejects_sha_mismatch_on_manifest_path(self):
+        img = self.out / "img/run00006"
+        live = img / "run00006_hodo_hdprm_Pi.pdf"
+        _make_pdf(live, stamp=b"old")
+        session = self.qa.begin(
+            6, "hodo_hdprm", [live],
+            meta={"family": "hodo", "mode": "hdprm", "particle": "pion"},
+        )
+        _make_pdf(live, stamp=b"new")
+        ok_v, _, hashes = self.qa.verify_sources(session)
+        self.assertTrue(ok_v)
+        # Legacy-style manifest: outputs.path is the mutable live path.
+        man_path = self.qa.write_manifest(
+            session, source_hashes=hashes, output_pdfs=[live],
+        )
+        data = json.loads(man_path.read_text())
+        old_sha = data["outputs"][0]["sha"]
+        _make_pdf(live, stamp=b"tampered")
+        data["outputs"][0]["sha"] = old_sha  # keep recorded sha, disk changed
+        ok_r, msg_r, _resolved = self.qa.resolve_sealed_output(
+            data, run=6, mode="hdprm", particle="pion",
+        )
+        self.assertFalse(ok_r)
+        self.assertIn("sha mismatch", msg_r)
+
+    def test_resolve_rejects_mode_mismatch(self):
+        img = self.out / "img/run00007"
+        live = img / "run00007_hodo_hdprm_Pi.pdf"
+        _make_pdf(live, stamp=b"a")
+        session = self.qa.begin(
+            7, "hodo_hdprm", [live],
+            meta={"family": "hodo", "mode": "hdprm", "particle": "pion"},
+        )
+        _make_pdf(live, stamp=b"b")
+        ok_v, _, hashes = self.qa.verify_sources(session)
+        self.assertTrue(ok_v)
+        sealed = self.qa.seal_outputs(session, [live])
+        man_path = self.qa.write_manifest(
+            session, source_hashes=hashes, output_pdfs=sealed,
+        )
+        data = json.loads(man_path.read_text())
+        ok_r, msg_r, _ = self.qa.resolve_sealed_output(
+            data, run=7, mode="hdphc", particle="pion",
+        )
+        self.assertFalse(ok_r)
+        self.assertIn("mode mismatch", msg_r)
+
 
 if __name__ == "__main__":
     unittest.main()
