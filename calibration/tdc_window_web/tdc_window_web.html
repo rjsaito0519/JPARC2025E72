@@ -148,36 +148,34 @@ function show(d) {
     title: `run ${D.run}  ${d} TDC`, hovermode: "x", dragmode: "zoom",
     xaxis: {title: "TDC [ch]", range: initialRange(h.edges), showspikes: true, spikemode: "across", spikethickness: 1},
     yaxis: {type: "log", title: "counts"}, ...overlay(), margin: {t: 50}
-  }, {displaylogo: false, responsive: true});
-  bindPlotClick();
+  }, {displaylogo: false, responsive: true}).then(wireDragClick);
   status();
 }
 
-// Delegated on #plot so handlers survive Plotly.relayout (which recreates .nsewdrag).
-let plotPress = null;
-function bindPlotClick() {
-  if (plot._tdcClickBound) return;
-  plot._tdcClickBound = true;
-  plot.addEventListener("mousedown", e => {
-    if (!e.target.closest(".nsewdrag")) return;
-    plotPress = {x: e.clientX, y: e.clientY};
-  });
-  plot.addEventListener("mouseup", e => {
-    if (!plotPress) return;
-    const moved = Math.hypot(e.clientX - plotPress.x, e.clientY - plotPress.y);
-    plotPress = null;
+// .nsewdrag is recreated by relayout; re-attach after every plot update.
+function wireDragClick() {
+  const drag = plot.querySelector(".nsewdrag");
+  if (!drag) return;
+  let press = null;
+  drag.onmousedown = e => { press = {x: e.clientX, y: e.clientY}; };
+  drag.onmouseup = e => {
+    if (!press) return;
+    const moved = Math.hypot(e.clientX - press.x, e.clientY - press.y);
+    press = null;
     if (moved > 4) return;
-    const drag = plot.querySelector(".nsewdrag");
-    if (!drag || !plot._fullLayout || !plot._fullLayout.xaxis) return;
     const xval = plot._fullLayout.xaxis.p2d(e.clientX - drag.getBoundingClientRect().left);
     if (Number.isFinite(xval)) addClick(xval);
-  });
+  };
+}
+
+function refreshOverlay() {
+  return Promise.resolve(Plotly.relayout(plot, overlay())).then(wireDragClick);
 }
 
 function addClick(x) {
   if (clicks.length >= nClicks()) clicks = [];
   clicks.push(x);
-  Plotly.relayout(plot, overlay());
+  refreshOverlay();
   status();
 }
 
@@ -206,9 +204,9 @@ async function write() {
   await load(D.run);
 }
 
-document.getElementById("reset").onclick = () => { clicks = []; Plotly.relayout(plot, overlay()); status(); };
+document.getElementById("reset").onclick = () => { clicks = []; refreshOverlay(); status(); };
 document.getElementById("write").onclick = write;
-document.getElementById("sep").onchange = () => { clicks = []; Plotly.relayout(plot, overlay()); status(); };
+document.getElementById("sep").onchange = () => { clicks = []; refreshOverlay(); status(); };
 runInput.addEventListener("change", () => { if (/^\d+$/.test(runInput.value)) load(parseInt(runInput.value)); });
 document.getElementById("prevrun").onclick = () => stepRun(-1);
 document.getElementById("nextrun").onclick = () => stepRun(+1);
