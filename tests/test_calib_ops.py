@@ -28,15 +28,67 @@ class CalibOpsTests(unittest.TestCase):
         self.cfg_mod.OUTPUT_DIR = self._old_out
 
     def test_parse_calib_text(self):
-        op, run, err = self.ops.parse_calib_text("status 3774")
-        self.assertEqual((op, run, err), ("status", 3774, ""))
-        op, run, err = self.ops.parse_calib_text("approve 12")
+        op, run, err, extras = self.ops.parse_calib_text("status 3774")
+        self.assertEqual((op, run, err, extras), ("status", 3774, "", {}))
+        op, run, err, extras = self.ops.parse_calib_text("approve 12")
         self.assertEqual((op, run, err), ("approve", 12, ""))
-        op, run, err = self.ops.parse_calib_text("revoke 12")
+        op, run, err, extras = self.ops.parse_calib_text("revoke 12")
         self.assertEqual((op, run, err), ("revoke", 12, ""))
-        op, run, err = self.ops.parse_calib_text("resume")
+        op, run, err, extras = self.ops.parse_calib_text("hold 12 human flag")
+        self.assertEqual(op, "hold")
+        self.assertEqual(run, 12)
+        self.assertEqual(err, "")
+        self.assertEqual(extras.get("reason"), "human flag")
+        op, run, err, extras = self.ops.parse_calib_text("decide 9 continue")
+        self.assertEqual((op, run, err), ("decide", 9, ""))
+        self.assertEqual(extras.get("action"), "continue")
+        op, run, err, extras = self.ops.parse_calib_text("hdphc-again 3")
+        self.assertEqual((op, run, err, extras), ("hdphc-again", 3, "", {}))
+        op, run, err, extras = self.ops.parse_calib_text("hold 12")
+        self.assertIsNone(op)
+        self.assertIn("hold", err)
+        op, run, err, extras = self.ops.parse_calib_text("resume")
         self.assertIsNone(op)
         self.assertIn("usage", err)
+
+    def test_run_dispatch_hold_passes_reason(self):
+        yml = self.ops.session_yml(11)
+        yml.parent.mkdir(parents=True)
+        yml.write_text("run: 11\nsteps:\n  - hodo\n", encoding="utf-8")
+
+        def fake_run(cmd, capture_output=True, text=True, timeout=30.0):
+            self.assertEqual(cmd[2], "hold")
+            self.assertIn("--reason", cmd)
+            self.assertEqual(cmd[cmd.index("--reason") + 1], "need look")
+            return mock.Mock(returncode=0, stdout="held\n", stderr="")
+
+        with mock.patch.object(self.ops.subprocess, "run", side_effect=fake_run):
+            ok, msg = self.ops.run_dispatch(
+                "hold", 11, reason="need look", background_resume=False,
+            )
+        self.assertTrue(ok)
+        self.assertIn("held", msg)
+
+    def test_run_dispatch_hdphc_again_background(self):
+        yml = self.ops.session_yml(8)
+        yml.parent.mkdir(parents=True)
+        yml.write_text(
+            "run: 8\nkaon: true\nsteps:\n  - hodo\n", encoding="utf-8",
+        )
+
+        class FakeProc:
+            pid = 5252
+
+        with mock.patch.object(
+            self.ops.subprocess, "Popen", return_value=FakeProc(),
+        ) as popen:
+            ok, msg = self.ops.run_dispatch("hdphc-again", 8)
+        self.assertTrue(ok)
+        self.assertIn("hdphc-again started", msg)
+        self.assertIn("5252", msg)
+        args = popen.call_args[0][0]
+        self.assertTrue(str(args[1]).endswith("extra_hdphc_iter.py"))
+        self.assertIn("--kaon", args)
 
     def test_user_channel_allowed(self):
         cfg = {

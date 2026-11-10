@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Slack Socket Mode bot for calib_dispatch status / stop / resume / approve / revoke.
+"""Slack Socket Mode bot for calib_dispatch / extra_hdphc_iter ops.
 
 Usage:
   pip install slack-bolt   # optional dependency
@@ -12,8 +12,11 @@ Slash command (register /calib in the Slack app):
   /calib resume <run>
   /calib approve <run>
   /calib revoke <run>
+  /calib hold <run> <reason...>
+  /calib decide <run> refit|continue
+  /calib hdphc-again <run>
 
-Does not run start or arbitrary shell. resume is started in the background.
+Does not run start or arbitrary shell. resume and hdphc-again start in the background.
 """
 from __future__ import annotations
 
@@ -34,7 +37,7 @@ def handle_calib_request(bot_cfg, user_id, channel_id, text):
     if not calib_ops.user_channel_allowed(bot_cfg, user_id, channel_id):
         return False, "not allowed for this user/channel", True
 
-    op, run, err = calib_ops.parse_calib_text(text)
+    op, run, err, extras = calib_ops.parse_calib_text(text)
     if err:
         return False, err, True
 
@@ -42,7 +45,13 @@ def handle_calib_request(bot_cfg, user_id, channel_id, text):
     if dup:
         return True, dup_msg, True
 
-    ok, message = calib_ops.run_dispatch(op, run, user_id=user_id)
+    ok, message = calib_ops.run_dispatch(
+        op,
+        run,
+        user_id=user_id,
+        reason=extras.get("reason"),
+        action=extras.get("action"),
+    )
     calib_ops.record_op(run, op, user_id)
     prefix = f"run{run:05d} {op}: "
     return ok, prefix + message, False
