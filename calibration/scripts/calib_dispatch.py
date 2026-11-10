@@ -813,9 +813,15 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                     session=session, plan=plan,
                 )
                 if rc == runner.EXIT_CHECK:
+                    from common.lib import calib_anomaly
+                    detail = calib_anomaly.read_check_reason(cfg["run"])
+                    reason = (
+                        f"step {name} EXIT_CHECK (rc={rc})"
+                        + (f": {detail}" if detail else "")
+                    )
                     hold = make_hold(
                         "exit_check",
-                        f"step {name} EXIT_CHECK (rc={rc})",
+                        reason,
                         name, i, rc,
                     )
                     enter_held(cfg["run"], base, hold, "hold")

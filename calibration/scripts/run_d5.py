@@ -35,7 +35,14 @@ from pathlib import Path
 from termcolor import colored
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, d5_qa_slack, qa_session, runner, slack_notify  # noqa: E402
+from common.lib import (  # noqa: E402
+    calib_anomaly,
+    config,
+    d5_qa_slack,
+    qa_session,
+    runner,
+    slack_notify,
+)
 import calib_convergence as conv  # noqa: E402
 
 DCGEO_DIR = config.PARAM_DIR / "DCGEO" / config.SUB_DIR
@@ -406,6 +413,10 @@ def do_pos(args, s):
         if r["state"] == conv.SETTLED:
             print(colored(f"[SETTLED] {run_tag(run)}: not converging over {conv.SETTLE_PASSES} passes; "
                           "nothing written, look at the d5_pos_review PDF", "red", attrs=["bold"]))
+            calib_anomaly.remember_check_reason(
+                run,
+                f"d5 pos SETTLED: score not converging over {conv.SETTLE_PASSES} passes",
+            )
             ok_n, nmsg = slack_notify.try_notify_failure(
                 run,
                 f"d5_pos_settled_{s}",

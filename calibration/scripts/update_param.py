@@ -25,7 +25,7 @@ import numpy as np
 from termcolor import colored
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, runner  # noqa: E402
+from common.lib import calib_anomaly, config, runner  # noqa: E402
 from common.lib.param import ParamFile  # noqa: E402
 import calib_convergence as conv  # noqa: E402
 import phc_conf  # noqa: E402
@@ -117,11 +117,37 @@ def ok(label, n, note=""):
 
 
 # -- hodoscopes --------------------------------------------------------------------
+def _hdprm_skip_anomaly(a, det, path):
+    """Refuse write when BAC/KVC skip ratio is high; return reason or None."""
+    import uproot
+    tree = uproot.open(str(path))["tree"].arrays(library="np")
+    if det == "BAC":
+        bad, total, labels = calib_anomaly.bac_skip_counts(tree)
+        family = "hdprm/BAC"
+    elif det == "KVC":
+        bad, total, labels = calib_anomaly.kvc_skip_counts(tree)
+        family = "hdprm/KVC"
+    else:
+        return None
+    reason = calib_anomaly.decide_ratio(
+        family, bad, total, calib_anomaly.HDPRM_SKIP_RATIO, labels,
+    )
+    if reason:
+        calib_anomaly.remember_check_reason(a.run, reason)
+        calib_anomaly.dump_candidates(
+            a.run,
+            calib_anomaly.candidates_payload("hodo", "hdprm", det, labels, reason),
+        )
+    return reason
+
+
 def collect_hdprm(a, pf):
     dets = config.hodo_detectors("hdprm", a.ftof)
     found = fresh_outputs(a.run, [(d, d, "HDPRM", a.suffix) for d in dets], [decode(a.run, "Hodo")])
     data = {}
     for det, path in found.items():
+        if _hdprm_skip_anomaly(a, det, path):
+            return {}, [conv.SETTLED]
         d = update_hdprm.make_dictdata(str(path), det)
         data.update(d)
         ok(f"{det:<6}", len(d))
@@ -152,11 +178,27 @@ def collect_htofprm(a, pf):
         ok("HTOF TDC", len(d))
     if "HTOF ADC" in found:
         path = str(found["HTOF ADC"])
+        flags = update_hdprm.htof_adc_quality_report(path)
+        for seg, side, flag, mip in flags:
+            runner.warn(f"HTOF ADC seg{seg}{side}: fit-quality flag {flag}, MIP {mip:.1f} (written anyway)")
+        n_flag, labels = calib_anomaly.htof_adc_flag_counts(flags)
+        # 34 segs x 3 sides is the usual HTOF layout; fall back to flagged-only total.
+        total_sides = max(34 * 3, n_flag)
+        reason = calib_anomaly.decide_ratio(
+            "htofprm/ADC", n_flag, total_sides, calib_anomaly.HTOF_FLAG_RATIO, labels,
+        )
+        if reason:
+            calib_anomaly.remember_check_reason(a.run, reason)
+            calib_anomaly.dump_candidates(
+                a.run,
+                calib_anomaly.candidates_payload(
+                    "hodo", "htofprm", "HTOF", labels, reason,
+                ),
+            )
+            return {}, [conv.SETTLED]
         d = update_hdprm.make_htofprm_dictdata(path)
         data.update(d)
         ok("HTOF ADC", len(d))
-        for seg, side, flag, mip in update_hdprm.htof_adc_quality_report(path):
-            runner.warn(f"HTOF ADC seg{seg}{side}: fit-quality flag {flag}, MIP {mip:.1f} (written anyway)")
     return data, []
 
 
@@ -184,6 +226,22 @@ def collect_phc(a, dets, inputs):
             d, not_used = update_phc.make_dictdata(str(path), det, good_ch_range=rng)
         except RuntimeError as e:
             runner.fail(f"{det}: {e}; nothing written")
+        import uproot
+        tree = uproot.open(str(path))["tree"].arrays(library="np")
+        n_seg = len(tree["ch"])
+        bad, total, labels = calib_anomaly.phc_bad_counts(not_used, n_seg)
+        reason = calib_anomaly.decide_ratio(
+            f"phc/{det}", bad, total, calib_anomaly.PHC_BAD_RATIO, labels,
+        )
+        if reason:
+            calib_anomaly.remember_check_reason(a.run, reason)
+            calib_anomaly.dump_candidates(
+                a.run,
+                calib_anomaly.candidates_payload(
+                    "hodo", "hdphc", det, labels, reason,
+                ),
+            )
+            return {}, [conv.SETTLED]
         data.update(d)
         how = f"hand range {rng}" if rng is not None else "automatic"
         ok(f"{det:<6}", len(d), f" ({how}; mean of used segments for {not_used})")
@@ -258,6 +316,12 @@ def collect_residual(a, pf):
             )
     if state in (conv.CONVERGED, conv.SETTLED):
         conv.record(hist, a.blc, max_corr, state, conv.details_with_apply(apply_key))
+        if state == conv.SETTLED:
+            calib_anomaly.remember_check_reason(
+                a.run,
+                f"residual SETTLED {a.blc}: max_corr={max_corr:.4f} mm "
+                f"(not shrinking over {conv.SETTLE_PASSES} passes)",
+            )
         return {}, [state], []
     if state != conv.WRITTEN:
         return {}, [state], []
@@ -385,6 +449,11 @@ def collect_resolution(a, pf):
         if not pull_width_ok(p, fit_ok):
             states.append(conv.SETTLED)
             report_resolution(group, p, chi2, conv.SETTLED, None, None, invalid=True)
+            calib_anomaly.remember_check_reason(
+                a.run,
+                f"resolution CHECK {group}: invalid pull σ "
+                f"(p={p}, fit_ok={fit_ok})",
+            )
             continue
         hist = conv.history_path(a.run, group, "reso", a.suffix)
         state = conv.decide_at(hist, group, p, abs(p - 1.0) < RES_CONV,
@@ -418,6 +487,12 @@ def collect_resolution(a, pf):
                             "apply_key": apply_key})
         elif state in (conv.CONVERGED, conv.SETTLED):
             conv.record(hist, group, p, state, conv.details_with_apply(apply_key))
+            if state == conv.SETTLED:
+                calib_anomaly.remember_check_reason(
+                    a.run,
+                    f"resolution SETTLED {group}: p={p:.4f} "
+                    f"(not changing over {conv.SETTLE_PASSES} passes)",
+                )
         states.append(state)
     return data, states, pending
 

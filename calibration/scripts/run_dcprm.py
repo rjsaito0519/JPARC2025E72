@@ -124,6 +124,17 @@ def do_drift(run, suffix, args):
     runner.sh(f"{exe} {root} {suffix}" + (" --debug" if args.debug else ""))
     if args.debug:
         return after_qa_slack(run, "drift", args, runner.EXIT_SKIP, session=session)
+    from common.lib import calib_anomaly
+    drift_path = (
+        config.PARAM_DIR / "DCDRFT" / config.SUB_DIR
+        / f"DCDriftParam_run{run:05d}_{suffix}.root"
+    )
+    drift_reason = calib_anomaly.drift_graph_anomaly(drift_path)
+    if drift_reason:
+        calib_anomaly.remember_check_reason(run, drift_reason)
+        return after_qa_slack(
+            run, "drift", args, runner.EXIT_CHECK, session=session,
+        )
     return after_qa_slack(run, "drift", args, runner.EXIT_OK, session=session)
 
 
