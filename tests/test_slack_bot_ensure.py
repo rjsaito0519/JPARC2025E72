@@ -110,11 +110,30 @@ class SlackBotEnsureTests(unittest.TestCase):
             "load_slack_bot_config",
             return_value=(None, "bot_disabled"),
         ), mock.patch.object(
+            self.sbe, "bot_config_gap_message",
+            return_value="need bot_enabled: true",
+        ), mock.patch.object(
             self.sbe, "_spawn_bot_tmux",
         ) as spawn_tmux:
             ok, msg = self.sbe.ensure_slack_bot()
         self.assertTrue(ok)
         self.assertIn("bot_disabled", msg)
+        spawn_tmux.assert_not_called()
+
+    def test_bot_disabled_required_fails(self):
+        with mock.patch.object(
+            self.sbe.local_notify_config,
+            "load_slack_bot_config",
+            return_value=(None, "bot_disabled"),
+        ), mock.patch.object(
+            self.sbe, "bot_config_gap_message",
+            return_value="need bot_enabled: true",
+        ), mock.patch.object(
+            self.sbe, "_spawn_bot_tmux",
+        ) as spawn_tmux:
+            ok, msg = self.sbe.ensure_slack_bot(required=True)
+        self.assertFalse(ok)
+        self.assertIn("bot_enabled", msg)
         spawn_tmux.assert_not_called()
 
     def test_local_dead_pid_is_stale(self):

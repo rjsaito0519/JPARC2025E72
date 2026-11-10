@@ -603,16 +603,15 @@ def wait_step_gate_decision(run, hold_id, *, poll_s=None):
             poll_s = GATE_WAIT_POLL_S
     from common.lib import slack_bot_ensure
 
-    ok_bot, bot_msg = slack_bot_ensure.ensure_slack_bot()
+    ok_bot, bot_msg = slack_bot_ensure.ensure_slack_bot(required=True)
     if not ok_bot:
-        runner.warn(f"slack bot ensure failed: {bot_msg}")
-    else:
-        runner.info(bot_msg)
+        runner.fail(f"slack bot required for step_gate: {bot_msg}")
+    runner.info(bot_msg)
     runner.info(
         f"waiting for Slack Proceed / Refit / Stop "
         f"(hold_id={hold_id}; pid={os.getpid()}; "
         f"cluster bot tmux {slack_bot_ensure.TMUX_SESSION} "
-        f"via shared heartbeat, ensured on this host if missing)"
+        f"via shared heartbeat)"
     )
     mark_gate_waiter(run, waiting=True)
     try:
@@ -1307,6 +1306,8 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
         # Human next-step gate: wait in-process for Slack/CLI decide.
         # --auto / session auto: true skips gates (coarse or fine steps).
         if not dry_run and i + 1 < n_steps and not cfg.get("auto"):
+            # Refuse the gate if Socket Mode bot cannot be ensured.
+            _ensure_slack_bot_for_gates(cfg, dry_run)
             hold = make_hold(
                 "step_gate",
                 f"step {name} OK; next-step gate",
@@ -1382,11 +1383,10 @@ def _ensure_slack_bot_for_gates(cfg, dry_run):
         return
     from common.lib import slack_bot_ensure
 
-    ok_bot, bot_msg = slack_bot_ensure.ensure_slack_bot()
+    ok_bot, bot_msg = slack_bot_ensure.ensure_slack_bot(required=True)
     if not ok_bot:
-        runner.warn(f"slack bot ensure failed: {bot_msg}")
-    else:
-        runner.info(bot_msg)
+        runner.fail(f"slack bot required for interactive gates: {bot_msg}")
+    runner.info(bot_msg)
 
 
 #_____________________________________________________________________________

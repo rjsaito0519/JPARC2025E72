@@ -299,20 +299,58 @@ def _wait_for_local_heartbeat(*, timeout_s: float = ENSURE_WAIT_S) -> bool:
 
 
 #_____________________________________________________________________________
-def ensure_slack_bot() -> tuple[bool, str]:
+def bot_config_gap_message(status: str) -> str:
+    """Human-readable gap list for slack_local.yml Socket Mode setup."""
+    data, yaml_status = local_notify_config.load_yaml_config(
+        local_notify_config.SLACK_LOCAL,
+    )
+    gaps: list[str] = []
+    if yaml_status != "ok" or data is None:
+        return (
+            f"slack bot config not ready ({status or yaml_status}); "
+            f"fix calibration/config/slack_local.yml "
+            f"(enabled:true, bot_enabled:true, token, app_token, "
+            f"allowed_user_ids). See wiki Calibration-Automation "
+            f"Socket Mode section."
+        )
+    if data.get("bot_enabled") is not True:
+        gaps.append("bot_enabled: true")
+    if not str(data.get("token") or "").strip():
+        gaps.append("token (xoxb-…)")
+    if not str(data.get("app_token") or "").strip():
+        gaps.append("app_token (xapp-…, Socket Mode connections:write)")
+    if not local_notify_config._id_list(data.get("allowed_user_ids")):
+        gaps.append("allowed_user_ids: [U…]")
+    if not str(data.get("channel_id") or "").strip() and not local_notify_config._id_list(
+        data.get("allowed_channel_ids"),
+    ):
+        gaps.append("channel_id or allowed_channel_ids")
+    if gaps:
+        return (
+            f"slack bot config incomplete ({status}): need "
+            + ", ".join(gaps)
+            + " in calibration/config/slack_local.yml"
+        )
+    return (
+        f"slack bot config not ready ({status}); "
+        f"check calibration/config/slack_local.yml"
+    )
+
+
+#_____________________________________________________________________________
+def ensure_slack_bot(*, required: bool = False) -> tuple[bool, str]:
     """Ensure exactly one cluster Slack bot; start on this host if needed.
 
-    Returns (ok, message). bot_disabled / missing config → ok=True skip.
+    Returns (ok, message).
+    When required=False, missing bot config → ok=True skip (PDF notify only).
+    When required=True, missing config or spawn failure → ok=False.
     """
     _cfg, status = local_notify_config.load_slack_bot_config()
     if status != "ok":
-        # Not a hard failure: PDF notify can work without Socket Mode.
-        # Buttons (/calib Block Kit) will not respond until bot is configured.
-        return True, (
-            f"slack bot ensure skipped ({status}); "
-            f"Slack buttons need bot_enabled:true, app_token, "
-            f"allowed_user_ids in slack_local.yml"
-        )
+        msg = bot_config_gap_message(status)
+        if required:
+            return False, msg
+        return True, f"slack bot ensure skipped ({status}); {msg}"
     if not BOT_SCRIPT.is_file():
         return False, f"missing bot script: {BOT_SCRIPT}"
 

@@ -222,11 +222,10 @@ def _maybe_ensure_slack_bot(a, cfg):
     """Ensure cluster Slack bot unless dry-run / --auto (no interactive gates)."""
     if a.dry_run or a.auto or cfg.get("auto"):
         return
-    ok_bot, bot_msg = slack_bot_ensure.ensure_slack_bot()
+    ok_bot, bot_msg = slack_bot_ensure.ensure_slack_bot(required=True)
     if not ok_bot:
-        runner.warn(f"slack bot ensure failed: {bot_msg}")
-    else:
-        runner.info(bot_msg)
+        runner.fail(f"slack bot required for interactive gates: {bot_msg}")
+    runner.info(bot_msg)
 
 
 #_____________________________________________________________________________
