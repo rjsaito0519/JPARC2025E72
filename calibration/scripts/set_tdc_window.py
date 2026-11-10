@@ -47,7 +47,17 @@ user_param_dir.mkdir(parents=True, exist_ok=True)
 target_file = user_param_dir / f"UserParam_run{run_num:05d}"
 
 if not target_file.exists():
-    shutil.copy(config.PARAM_DIR / "USER/UserParam_e72_example", target_file)
+    template_candidates = [
+        config.PARAM_DIR / "USER" / "example" / "UserParam_e72_example",
+        config.PARAM_DIR / "USER" / "UserParam_e72_example",
+    ]
+    template = next((p for p in template_candidates if p.is_file()), None)
+    if template is None:
+        tried = ", ".join(str(p) for p in template_candidates)
+        print(colored(f"Error: UserParam template not found (tried {tried})", "red"))
+        sys.exit(1)
+    shutil.copy(template, target_file)
+    print(f"Copied {template} -> {target_file}")
 
 # Apply plot settings from config
 for k, v in config.PLOT_SETTINGS.items():

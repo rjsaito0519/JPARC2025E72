@@ -144,6 +144,10 @@ function show(d) {
   const traces = Object.entries(h.lines).map(([k, y]) => ({
     x, y: y.map(v => v > 0 ? v : null), mode: "lines", line: {shape: "hvh", color: colors[k], width: 1.5},
     name: k, connectgaps: false}));
+  // Invisible points at every bin so clicks work in zero-count regions (log y drops zeros).
+  traces.push({
+    x, y: x.map(() => 1), mode: "markers", marker: {size: 12, opacity: 0},
+    hoverinfo: "skip", showlegend: false, name: "_click"});
   Plotly.newPlot(plot, traces, {
     title: `run ${D.run}  ${d} TDC`, hovermode: "x", dragmode: "zoom",
     xaxis: {title: "TDC [ch]", range: initialRange(h.edges), showspikes: true, spikemode: "across", spikethickness: 1},

@@ -35,7 +35,6 @@ BACKUP_BASE = Path("/group/had/sks/Users/sryuta/backup")
 TRIAL_DIR = Path("/group/had/sks/Users/sryuta/tmp/tdc_window_web")
 PLOTLY_JS = Path(np.__file__).parents[1] / "plotly" / "package_data" / "plotly.min.js"
 USER_DIR = config.PARAM_DIR / "USER" / config.SUB_DIR
-TEMPLATE = config.PARAM_DIR / "USER" / "UserParam_e72_example"
 UD_DETS = ["BHT", "T0", "T1", "BH2", "HTOF", "CVC", "SAC3", "SFV"]
 SUM_DETS = ["BAC", "KVC"]
 TAB_ORDER = ["BHT", "T0", "BH2", "BAC", "HTOF", "KVC", "T1", "CVC", "SAC3", "SFV"]  # upstream first
@@ -89,6 +88,19 @@ def load_run(run):
 
 
 # -- UserParam ------------------------------------------------------------------
+def user_param_template():
+    """Prefer USER/example/… then USER/… (same order as create_runlist)."""
+    candidates = [
+        config.PARAM_DIR / "USER" / "example" / "UserParam_e72_example",
+        config.PARAM_DIR / "USER" / "UserParam_e72_example",
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    tried = ", ".join(str(p) for p in candidates)
+    raise FileNotFoundError(f"UserParam template not found (tried {tried})")
+
+
 def real_param(run):
     return USER_DIR / f"UserParam_run{run:05d}"
 
@@ -97,28 +109,29 @@ def target_param(run, real):
     return real_param(run) if real else TRIAL_DIR / real_param(run).name
 
 
-def shown_param(run, real):
-    """File whose windows are shown: the target, else the real one, else the template."""
-    for p in (target_param(run, real), real_param(run), TEMPLATE):
-        if p.exists():
-            return p
-    return None
-
-
 def current_windows(path):
-    if path is None:
-        return {}
     data = ParamFile(path).get_data_dict()
     return {k: [float(v[0]), float(v[1])] for k, v in data.items() if k.endswith(("_TDC", "_TDC_Pi")) and len(v) >= 2}
 
 
-def prepare_target(run, real, backups):
-    """Make the target file if missing; back up the real file once per run and session."""
+def ensure_target(run, real):
+    """Like set_tdc_window: if the target is missing, copy the template (or real, in trial)."""
     target = target_param(run, real)
-    if not target.exists():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(real_param(run) if real_param(run).exists() and not real else TEMPLATE, target)
-    elif real and run not in backups:
+    if target.exists():
+        return target
+    src = real_param(run) if (not real and real_param(run).exists()) else user_param_template()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, target)
+    print(f"[userparam] copied {src} -> {target}")
+    return target
+
+
+def prepare_target(run, real, backups):
+    """Ensure the target exists; back up the real file once per run and session before write."""
+    target = target_param(run, real)
+    existed = target.exists()
+    ensure_target(run, real)
+    if existed and real and run not in backups:
         backup = BACKUP_BASE / f"userparam_tdcwin_{datetime.datetime.now():%Y%m%d_%H%M%S}"
         backup.mkdir(parents=True, exist_ok=True)
         shutil.copy2(target, backup / target.name)
@@ -161,9 +174,9 @@ class App:
             if run not in self.cache:
                 print(f"[load] run {run}: {hodo_root(run).resolve().name}")
                 self.cache[run] = load_run(run)
-        shown = shown_param(run, self.real)
-        return {"run": run, "decode": str(hodo_root(run).resolve()), "target": str(target_param(run, self.real)),
-                "shown": str(shown), "dets": self.cache[run], "current": current_windows(shown)}
+            target = ensure_target(run, self.real)
+        return {"run": run, "decode": str(hodo_root(run).resolve()), "target": str(target),
+                "shown": str(target), "dets": self.cache[run], "current": current_windows(target)}
 
     def write(self, req):
         with self.lock:
