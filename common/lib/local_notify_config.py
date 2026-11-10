@@ -14,6 +14,24 @@ CONFIG_DIR = PROJECT_ROOT / "calibration" / "config"
 
 SLACK_LOCAL = CONFIG_DIR / "slack_local.yml"
 DISCORD_LOCAL = CONFIG_DIR / "discord_local.yml"
+OWNER_ONLY_MODE = 0o600
+
+
+#_____________________________________________________________________________
+def ensure_owner_only(path: Path) -> None:
+    """Restrict a secret config file to owner read/write (chmod 0600).
+
+    Group/other bits are cleared when present. Best-effort: permission errors are ignored.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return
+    try:
+        mode = path.stat().st_mode & 0o777
+        if mode & 0o077:
+            path.chmod(OWNER_ONLY_MODE)
+    except OSError:
+        return
 
 
 #_____________________________________________________________________________
@@ -21,10 +39,12 @@ def load_yaml_config(path: Path) -> tuple[Optional[dict[str, Any]], str]:
     """Return (data, status). status is 'ok', 'missing', 'disabled', or an error reason.
 
     On non-ok, data is None. Does not echo secret-looking values in the reason.
+    Tightens file mode to 0600 before reading when group/other bits are set.
     """
     path = Path(path)
     if not path.is_file():
         return None, "missing"
+    ensure_owner_only(path)
     try:
         raw = path.read_text(encoding="utf-8")
         data = yaml.safe_load(raw)

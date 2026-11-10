@@ -71,6 +71,26 @@ class LocalNotifyConfigTests(unittest.TestCase):
         self.assertEqual(lines[0], "ok xoxb-test C123")
         self.assertEqual(lines[1], "ok https://example.invalid/hook")
 
+    def test_ensure_owner_only_clears_group_bits(self):
+        path = self.cfg_dir / "secret.yml"
+        path.write_text("enabled: true\ntoken: t\nchannel_id: C1\n", encoding="utf-8")
+        path.chmod(0o644)
+        result = self.py(
+            "from pathlib import Path\n"
+            "from common.lib import local_notify_config as m\n"
+            f"p = Path({str(path)!r})\n"
+            "m.ensure_owner_only(p)\n"
+            "print(oct(p.stat().st_mode & 0o777))\n"
+            "_, st = m.load_slack_config(p)\n"
+            "print(st)\n"
+            "print(oct(p.stat().st_mode & 0o777))\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.strip().splitlines()
+        self.assertEqual(lines[0], "0o600")
+        self.assertEqual(lines[1], "ok")
+        self.assertEqual(lines[2], "0o600")
+
 
 class SlackNotifyUnitTests(unittest.TestCase):
     """In-process tests with stubbed HTTP (no real Slack)."""
