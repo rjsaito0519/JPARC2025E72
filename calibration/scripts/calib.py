@@ -6,6 +6,11 @@ Usage:
              [--local] [--dry] [--force]
   ./calib.py <run> --init [--local] [--dry]
 
+If a prior dispatch state exists:
+  - TTY: ask 続きから / 初めから
+  - non-interactive: 続きから
+  - --force: 初めから (not while running)
+
 --init: prepare Hodo.root for TDC window setting (create_runlist hodo 0 +
 decode if missing). Does not start a calib session.
 
@@ -28,6 +33,9 @@ from common.lib import (  # noqa: E402
     runner,
 )
 
+CHOICE_CONTINUE = "continue"
+CHOICE_RESTART = "restart"
+
 
 #_____________________________________________________________________________
 def parse_args():
@@ -46,7 +54,7 @@ def parse_args():
     p.add_argument("--dry", "--dry-run", dest="dry_run", action="store_true",
                    help="print iterate commands only")
     p.add_argument("--force", action="store_true",
-                   help="rewrite session YAML (not while running)")
+                   help="restart from the beginning (rewrite session; not while running)")
     p.add_argument("--momentum", type=float, default=None,
                    help="beam momentum [GeV/c] when table/UserParam missing")
     return p.parse_args()
@@ -104,6 +112,152 @@ def do_init(run, *, local=False, dry_run=False):
 
 
 #_____________________________________________________________________________
+def format_state_summary(run, st):
+    """One-block summary for the continue/restart prompt."""
+    status = calib_approval.effective_status(st) or st.get("status")
+    hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+    lines = [
+        f"run{run:05d}: prior calib state found",
+        f"  status={status} step={st.get('step')} index={st.get('index')} "
+        f"rc={st.get('rc')}",
+    ]
+    if hold:
+        lines.append(
+            f"  hold.source={hold.get('source')} "
+            f"decision={hold.get('decision')!r} "
+            f"reason={hold.get('reason')!r}"
+        )
+    hist = st.get("steps") if isinstance(st.get("steps"), list) else []
+    if hist:
+        brief = ", ".join(
+            f"{e.get('step')}(rc={e.get('rc')})"
+            for e in hist[-6:] if isinstance(e, dict)
+        )
+        lines.append(f"  steps_hist: {brief}")
+    tail = cd.read_progress_tail(run, n=5)
+    if tail:
+        lines.append("  progress.jsonl (tail):")
+        for row in tail:
+            lines.append(
+                f"    {row.get('at')} {row.get('event')} "
+                f"step={row.get('step')} status={row.get('status')}"
+            )
+    return "\n".join(lines)
+
+
+#_____________________________________________________________________________
+def prompt_continue_or_restart(run, st):
+    """TTY: ask continue vs restart. Returns CHOICE_*."""
+    print(format_state_summary(run, st), file=sys.stderr)
+    print(
+        "Continue from this history, or restart from the beginning?\n"
+        "  [1] 続きから (continue)\n"
+        "  [2] 初めから (restart)\n"
+        f"(non-interactive default is continue; --force forces restart)",
+        file=sys.stderr,
+    )
+    while True:
+        try:
+            raw = input(f"run{run:05d} choose [1/2]: ").strip().lower()
+        except EOFError:
+            runner.warn("EOF on prompt; defaulting to continue")
+            return CHOICE_CONTINUE
+        if raw in ("1", "c", "continue", "続き", "続きから"):
+            return CHOICE_CONTINUE
+        if raw in ("2", "r", "restart", "初め", "初めから"):
+            return CHOICE_RESTART
+        print("enter 1 (continue) or 2 (restart)", file=sys.stderr)
+
+
+#_____________________________________________________________________________
+def choose_action(run, st, *, force, interactive):
+    """Decide continue vs restart given existing state."""
+    status = calib_approval.effective_status(st) or st.get("status")
+    if st.get("status") == "running" or status == "running":
+        runner.fail(
+            f"run{run:05d}: already running; "
+            f"./ops.py stop {run} first"
+        )
+    if force:
+        return CHOICE_RESTART
+    if calib_approval.is_process_complete(st):
+        if interactive and sys.stdin.isatty():
+            print(format_state_summary(run, st), file=sys.stderr)
+            print(
+                "Process already complete "
+                f"({status}). Restart from the beginning?\n"
+                "  [2] 初めから (restart)\n"
+                "  anything else: abort",
+                file=sys.stderr,
+            )
+            try:
+                raw = input(f"run{run:05d} choose [2 to restart]: ").strip().lower()
+            except EOFError:
+                raw = ""
+            if raw in ("2", "r", "restart", "初め", "初めから"):
+                return CHOICE_RESTART
+            runner.fail(
+                f"run{run:05d}: process complete ({status}); "
+                f"approve/revoke via Slack/ops, or --force to restart"
+            )
+        runner.fail(
+            f"run{run:05d}: process complete ({status}); "
+            f"approve/revoke via Slack/ops, or --force to restart"
+        )
+    if interactive and sys.stdin.isatty():
+        return prompt_continue_or_restart(run, st)
+    return CHOICE_CONTINUE
+
+
+#_____________________________________________________________________________
+def continue_from_state(cfg, st, dry_run):
+    """Resume from stopped, or decide-continue then resume from held."""
+    status = st.get("status")
+    if status == "stopped":
+        runner.info(f"run{cfg['run']:05d}: continuing (resume from stopped)")
+        cd.do_resume(cfg, dry_run)
+    if status == "held":
+        hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+        runner.info(
+            f"run{cfg['run']:05d}: continuing from held "
+            f"(source={hold.get('source')}); decide continue → resume"
+        )
+        cd.apply_decide(cfg["run"], "continue", note="calib.py continue")
+        cd.do_resume(cfg, dry_run)
+    runner.fail(
+        f"run{cfg['run']:05d}: cannot continue from status={status!r}; "
+        f"use ./ops.py status {cfg['run']}"
+    )
+
+
+#_____________________________________________________________________________
+def restart_from_beginning(a, calib_particle, steps, target):
+    """Clear dispatch state + progress, rewrite session, start at step 0."""
+    run = a.run
+    runner.info(f"run{run:05d}: restarting from the beginning")
+    if not a.dry_run:
+        cd.clear_dispatch_state(run)
+        cd.reset_progress(run)
+        cd.append_progress(run, "restart", status="cleared")
+    path, _doc = cs.ensure_session(
+        run,
+        calib_particle=calib_particle,
+        steps=steps,
+        target=target,
+        momentum=a.momentum,
+        local=a.local,
+        overwrite=True,
+        prompt_if_missing=True,
+    )
+    if a.local:
+        cs.set_session_local(path, True)
+    _, cfg2 = cd.load_config(path)
+    for i, raw in enumerate(cfg2["steps"]):
+        cd.normalize_step(raw, i)
+    cd.do_start(cfg2, a.dry_run)
+
+
+#_____________________________________________________________________________
 def main():
     a = parse_args()
     if a.run < 1:
@@ -119,14 +273,38 @@ def main():
     announce_chain(a.run, calib_particle, steps)
 
     st = cd.read_state(a.run)
-    if st is not None and a.force:
-        status = calib_approval.effective_status(st)
-        if st.get("status") == "running" or status == "running":
-            runner.fail(
-                f"run{a.run:05d}: cannot --force rewrite session while running; "
-                f"./ops.py stop {a.run} first"
-            )
+    interactive = (not a.dry_run)  # dry-run: no TTY ask; treat as continue/start
 
+    if st is not None:
+        choice = choose_action(
+            a.run, st, force=a.force, interactive=interactive and sys.stdin.isatty(),
+        )
+        if choice == CHOICE_RESTART:
+            restart_from_beginning(a, calib_particle, steps, target)
+            return
+
+        # continue: keep existing session unless missing
+        path, _doc = cs.ensure_session(
+            a.run,
+            calib_particle=calib_particle,
+            steps=steps,
+            target=target,
+            momentum=a.momentum,
+            local=a.local,
+            overwrite=False,
+            prompt_if_missing=True,
+        )
+        if a.local:
+            cs.set_session_local(path, True)
+        _, cfg = cd.load_config(path)
+        for i, raw in enumerate(cfg["steps"]):
+            cd.normalize_step(raw, i)
+        # Re-read in case ensure_session side effects (none expected)
+        st = cd.read_state(a.run) or st
+        continue_from_state(cfg, st, a.dry_run)
+        return
+
+    # No prior state → fresh start
     path, _doc = cs.ensure_session(
         a.run,
         calib_particle=calib_particle,
@@ -139,37 +317,13 @@ def main():
     )
     if a.local:
         cs.set_session_local(path, True)
-
     _, cfg = cd.load_config(path)
     for i, raw in enumerate(cfg["steps"]):
         cd.normalize_step(raw, i)
-
-    if st is None:
-        cd.do_start(cfg, a.dry_run)
-
-    status = calib_approval.effective_status(st)
-    if st.get("status") == "stopped" or status == "stopped":
-        cd.do_resume(cfg, a.dry_run)
-
-    if st.get("status") == "running" or status == "running":
-        runner.fail(
-            f"run{a.run:05d}: already running; "
-            f"use ./ops.py status|stop {a.run} or Slack /calib"
-        )
-    if st.get("status") == "held" or status == "held":
-        runner.fail(
-            f"run{a.run:05d}: held; decide via Slack /calib decide "
-            f"or ./ops.py decide {a.run} refit|continue"
-        )
-    if calib_approval.is_process_complete(st):
-        runner.fail(
-            f"run{a.run:05d}: process complete ({status}); "
-            f"approve/revoke via Slack or ./ops.py"
-        )
-    runner.fail(
-        f"run{a.run:05d}: status={st.get('status')!r} ({status}); "
-        f"use ./ops.py status {a.run}"
-    )
+    if not a.dry_run:
+        cd.reset_progress(a.run)
+        cd.append_progress(a.run, "start", status="running")
+    cd.do_start(cfg, a.dry_run)
 
 
 if __name__ == "__main__":

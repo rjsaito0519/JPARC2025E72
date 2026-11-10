@@ -255,6 +255,10 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(state['step'], 'hodo')
         self.assertIsNone(state['hold']['decision'])
         self.assertFalse((self.root / 'next').exists())
+        prog = self.root / "out/calib/run00001/progress.jsonl"
+        self.assertTrue(prog.is_file())
+        rows = [json.loads(line) for line in prog.read_text().splitlines() if line.strip()]
+        self.assertTrue(any(r.get("event") == "step_gate" for r in rows))
         # Stop button path: stay held
         blocked = self.dispatch("resume")
         self.assertEqual(blocked.returncode, 1)

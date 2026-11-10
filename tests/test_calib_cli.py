@@ -1,4 +1,5 @@
 """Run with python3 -m unittest discover -s tests -v."""
+import json
 import os
 from pathlib import Path
 import shutil
@@ -179,6 +180,67 @@ class CalibCliHelpersTests(unittest.TestCase):
         self.assertFalse(
             (self.root / "out/calib/run00105/calib_session.yml").is_file()
         )
+
+    def test_force_restarts_clears_state(self):
+        # Seed a stopped state + session; --force must clear and start dry.
+        out_dir = self.root / "out/calib/run00105"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "calib_dispatch_state.json").write_text(
+            json.dumps({
+                "run": 105, "status": "stopped", "step": "hodo",
+                "index": 0, "rc": 1, "finished": False, "steps": [],
+            }) + "\n"
+        )
+        (out_dir / "progress.jsonl").write_text(
+            '{"event":"step_stop","step":"hodo"}\n'
+        )
+        (self.scripts / "iterate_hodo_chain.py").write_text("raise SystemExit(0)\n")
+        result = subprocess.run(
+            [
+                sys.executable, str(self.scripts / "calib.py"), "105",
+                "--hodo", "--force", "--dry",
+            ],
+            capture_output=True, text=True, env=self.env, timeout=20,
+            cwd=str(self.root),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        out = result.stdout + result.stderr
+        self.assertIn("restarting", out)
+        # dry-run restart still clears only when not dry — plan: dry skips clear.
+        # Non-dry clear is covered by dispatch helpers; here ensure start path runs.
+        self.assertIn("iterate_hodo_chain.py", out)
+
+    def test_noninteractive_continue_from_stopped(self):
+        out_dir = self.root / "out/calib/run00105"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "calib_session.yml").write_text(
+            "run: 105\ncalib_particle: pion\nkaon: false\ntarget: hodo\n"
+            "force: false\nlocal: false\nmax_iter: 10\nsteps:\n- hodo\n"
+        )
+        (out_dir / "calib_dispatch_state.json").write_text(
+            json.dumps({
+                "run": 105, "status": "stopped", "step": "hodo",
+                "index": 0, "rc": 1, "finished": False,
+                "opts": {},
+                "steps": [{"index": 0, "step": "hodo", "opts": {}, "rc": 1}],
+                "plan": {
+                    "calib_particle": "pion", "force": False, "kaon": False,
+                    "local": False, "max_iter": 10,
+                    "steps": [{"name": "hodo", "opts": {}}],
+                },
+            }) + "\n"
+        )
+        (self.scripts / "iterate_hodo_chain.py").write_text("raise SystemExit(0)\n")
+        result = subprocess.run(
+            [sys.executable, str(self.scripts / "calib.py"), "105", "--hodo"],
+            capture_output=True, text=True, env=self.env, timeout=20,
+            cwd=str(self.root),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        out = result.stdout + result.stderr
+        self.assertIn("continuing", out)
+        state = json.loads((out_dir / "calib_dispatch_state.json").read_text())
+        self.assertEqual(state["status"], "awaiting_final_approval")
 
 
 if __name__ == "__main__":

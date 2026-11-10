@@ -83,6 +83,11 @@ def hold_journal_path(run):
 
 
 #_____________________________________________________________________________
+def progress_path(run):
+    return config.OUTPUT_DIR / "calib" / f"run{run:05d}" / "progress.jsonl"
+
+
+#_____________________________________________________________________________
 def utc_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -367,6 +372,120 @@ def append_hold_journal(run, event):
     row["at"] = row.get("at") or utc_now()
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+#_____________________________________________________________________________
+def append_progress(run, event, *, step=None, index=None, rc=None,
+                    status=None, hold_source=None):
+    """Append one human-readable progress line under results/calib/runXXXXX/."""
+    path = progress_path(run)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        "at": utc_now(),
+        "event": event,
+        "step": step,
+        "index": index,
+        "rc": rc,
+        "status": status,
+        "hold_source": hold_source,
+    }
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+#_____________________________________________________________________________
+def read_progress_tail(run, n=8):
+    """Return the last n progress rows (dicts). Missing file → []."""
+    path = progress_path(run)
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines[-max(1, int(n)):]:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            out.append(row)
+    return out
+
+
+#_____________________________________________________________________________
+def reset_progress(run):
+    """Truncate progress.jsonl for a fresh start (backup previous if present)."""
+    path = progress_path(run)
+    if path.is_file():
+        bak = path.with_suffix(path.suffix + f".bak.{utc_now().replace(':', '')}")
+        try:
+            path.replace(bak)
+        except OSError:
+            path.write_text("", encoding="utf-8")
+            return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    return path
+
+
+#_____________________________________________________________________________
+def clear_dispatch_state(run):
+    """Remove calib_dispatch_state.json so the next start is fresh."""
+    path = state_path(run)
+    if path.is_file():
+        path.unlink()
+    return path
+
+
+#_____________________________________________________________________________
+def apply_decide(run, action, note=""):
+    """Apply decide without exiting. Returns updated state dict."""
+    if action not in DECIDE_ACTIONS:
+        runner.fail(f"decide action must be one of {DECIDE_ACTIONS}, got {action!r}")
+    st = read_state(run)
+    if st is None:
+        runner.fail(f"run{run:05d}: not started; cannot decide")
+    if st.get("status") != "held":
+        runner.fail(
+            f"run{run:05d}: status={st.get('status')!r} "
+            f"(decide requires status=held)"
+        )
+    hold = st.get("hold")
+    if not isinstance(hold, dict):
+        runner.fail(f"run{run:05d}: held state missing hold object")
+    hold = dict(hold)
+    hold["decision"] = action
+    hold["decided_at"] = utc_now()
+    if note:
+        hold["note"] = note
+    st["hold"] = hold
+    st["status"] = "stopped"
+    st["hold_requested"] = False
+    st["stop_requested"] = False
+    st["updated_at"] = utc_now()
+    write_state(run, st)
+    append_hold_journal(run, {
+        "event": "decide",
+        "action": action,
+        "note": note,
+        "source": hold.get("source"),
+        "reason": hold.get("reason"),
+        "step": hold.get("step"),
+        "index": hold.get("index"),
+        "rc": hold.get("rc"),
+        "at": hold["decided_at"],
+    })
+    append_progress(
+        run, "decide",
+        step=hold.get("step"), index=hold.get("index"),
+        rc=hold.get("rc"), status="stopped", hold_source=hold.get("source"),
+    )
+    return st
 
 
 #_____________________________________________________________________________
@@ -679,41 +798,8 @@ def do_hold(cfg, reason):
 
 #_____________________________________________________________________________
 def do_decide(cfg, action, note):
-    if action not in DECIDE_ACTIONS:
-        runner.fail(f"--action must be one of {DECIDE_ACTIONS}, got {action!r}")
-    st = read_state(cfg["run"])
-    if st is None:
-        runner.fail(f"run{cfg['run']:05d}: not started; cannot decide")
-    if st.get("status") != "held":
-        runner.fail(
-            f"run{cfg['run']:05d}: status={st.get('status')!r} "
-            f"(decide requires status=held)"
-        )
-    hold = st.get("hold")
-    if not isinstance(hold, dict):
-        runner.fail(f"run{cfg['run']:05d}: held state missing hold object")
-    hold = dict(hold)
-    hold["decision"] = action
-    hold["decided_at"] = utc_now()
-    if note:
-        hold["note"] = note
-    st["hold"] = hold
-    st["status"] = "stopped"
-    st["hold_requested"] = False
-    st["stop_requested"] = False
-    st["updated_at"] = utc_now()
-    write_state(cfg["run"], st)
-    append_hold_journal(cfg["run"], {
-        "event": "decide",
-        "action": action,
-        "note": note,
-        "source": hold.get("source"),
-        "reason": hold.get("reason"),
-        "step": hold.get("step"),
-        "index": hold.get("index"),
-        "rc": hold.get("rc"),
-        "at": hold["decided_at"],
-    })
+    st = apply_decide(cfg["run"], action, note=note or "")
+    hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
     runner.info(
         f"run{cfg['run']:05d}: decided {action} "
         f"(step={hold.get('step')} index={hold.get('index')}); resume allowed"
@@ -1004,12 +1090,21 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                     enter_held(
                         cfg["run"], base, hold, "hold", cfg_steps=cfg["steps"],
                     )
+                    append_progress(
+                        cfg["run"], "exit_check",
+                        step=name, index=i, rc=rc, status="held",
+                        hold_source="exit_check",
+                    )
                     runner.warn(
                         f"held after step {name} (rc={rc}); "
                         f"decide --action refit|continue before resume"
                     )
                 else:
                     write_state(cfg["run"], base)
+                    append_progress(
+                        cfg["run"], "step_stop",
+                        step=name, index=i, rc=rc, status="stopped",
+                    )
                     runner.warn(f"stopping after step {name} (rc={rc})")
             else:
                 runner.warn(f"stopping after step {name} (rc={rc})")
@@ -1026,6 +1121,11 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
             enter_held(
                 cfg["run"], base, hold, "hold", cfg_steps=cfg["steps"],
             )
+            append_progress(
+                cfg["run"], "hold_requested",
+                step=name, index=i, rc=rc, status="held",
+                hold_source="manual",
+            )
             runner.warn(f"hold requested after step {name}; chain held: {reason}")
             sys.exit(rc)
 
@@ -1037,6 +1137,10 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                     cfg["run"], i, name, opts, rc, False, steps_hist, "stopped",
                     session=session, plan=plan,
                 ),
+            )
+            append_progress(
+                cfg["run"], "stop_requested",
+                step=name, index=i, rc=rc, status="stopped",
             )
             runner.warn(f"stop requested after step {name}; chain paused")
             sys.exit(rc)
@@ -1054,6 +1158,11 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
             )
             # Do not mark_unverified: this step succeeded.
             enter_held(cfg["run"], base, hold, "hold", cfg_steps=None)
+            append_progress(
+                cfg["run"], "step_gate",
+                step=name, index=i, rc=rc, status="held",
+                hold_source="step_gate",
+            )
             ok_slack, slack_msg = calib_approval.notify_step_gate_slack(
                 cfg["run"], name, i,
             )
@@ -1077,6 +1186,11 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
         if prev and isinstance(prev.get("hold"), dict):
             base["hold"] = prev["hold"]
         mark_awaiting_final(cfg["run"], base)
+        append_progress(
+            cfg["run"], "awaiting_final",
+            step=last_name, index=last_index, rc=done_rc,
+            status=calib_approval.STATUS_AWAITING,
+        )
     runner.info("calib_dispatch process complete (awaiting final approval)")
     sys.exit(done_rc)
 
