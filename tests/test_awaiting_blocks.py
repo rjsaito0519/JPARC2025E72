@@ -20,7 +20,8 @@ class AwaitingBlocksTests(unittest.TestCase):
         actions = blocks[1]["elements"]
         ids = {e["action_id"] for e in actions}
         self.assertEqual(ids, {"calib_approve_run", "calib_revoke_run"})
-        self.assertEqual(actions[0]["value"], "42")
+        self.assertEqual(actions[0]["value"], "42:abcdefghijklmnop")
+        self.assertEqual(actions[1]["value"], "42")
 
 
 if __name__ == "__main__":

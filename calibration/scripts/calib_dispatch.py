@@ -756,7 +756,7 @@ def do_clear_channel(cfg, mode, det, channel, reason):
 
 
 #_____________________________________________________________________________
-def do_approve(cfg, note, via, user_id):
+def do_approve(cfg, note, via, user_id, expected_subject_sha=None):
     via = via or "cli"
     st = read_state(cfg["run"])
     if st is None:
@@ -800,6 +800,13 @@ def do_approve(cfg, note, via, user_id):
             f"missing {missing} (finish decode/QA before approve)"
         )
     sha = calib_approval.subject_sha(subject)
+    expected = (expected_subject_sha or "").strip() or None
+    if expected is not None and expected != sha:
+        runner.fail(
+            f"run{cfg['run']:05d}: subject changed "
+            f"(viewed={expected[:8]}… current={sha[:8]}…); "
+            f"reload QA and approve again"
+        )
     approval = {
         "subject_sha": sha,
         "subject": subject,
@@ -1093,6 +1100,8 @@ def parse_args():
                    help="approve: how the approval was issued")
     p.add_argument("--user-id", default=None,
                    help="approve: Slack user id when --via slack")
+    p.add_argument("--subject-sha", default=None,
+                   help="approve: require this viewed subject_sha (Web/Slack pin)")
     p.add_argument("--mode", default=None,
                    help="flag-channel/clear-channel: calib mode (e.g. hdprm)")
     p.add_argument("--det", default=None,
@@ -1132,7 +1141,7 @@ def main():
     if a.command == "approve":
         if a.dry_run:
             runner.warn("--dry-run ignored for approve")
-        do_approve(cfg, a.note, a.via, a.user_id)
+        do_approve(cfg, a.note, a.via, a.user_id, a.subject_sha)
     if a.command == "revoke":
         if a.dry_run:
             runner.warn("--dry-run ignored for revoke")

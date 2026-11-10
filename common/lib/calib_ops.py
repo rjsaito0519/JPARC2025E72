@@ -145,13 +145,28 @@ def parse_calib_text(
 
     if len(parts) != 2:
         return None, None, USAGE, {}
+    token = parts[1]
+    extras: dict[str, Any] = {}
+    if op == "approve" and ":" in token:
+        run_s, sha = token.split(":", 1)
+        try:
+            run = int(run_s)
+        except ValueError:
+            return None, None, f"run must be an integer, got {run_s!r}", {}
+        if run < 1:
+            return None, None, "run must be >= 1", {}
+        sha = sha.strip()
+        if not sha:
+            return None, None, "approve subject_sha after ':' must be non-empty", {}
+        extras["subject_sha"] = sha
+        return op, run, "", extras
     try:
-        run = int(parts[1])
+        run = int(token)
     except ValueError:
-        return None, None, f"run must be an integer, got {parts[1]!r}", {}
+        return None, None, f"run must be an integer, got {token!r}", {}
     if run < 1:
         return None, None, "run must be >= 1", {}
-    return op, run, "", {}
+    return op, run, "", extras
 
 
 #_____________________________________________________________________________
@@ -258,6 +273,7 @@ def run_dispatch(
     mode: Optional[str] = None,
     det: Optional[str] = None,
     channel: Optional[str] = None,
+    subject_sha: Optional[str] = None,
 ) -> tuple[bool, str]:
     """Run a defined calib op for the run's session YAML (or extra hdphc)."""
     if command not in OPS:
@@ -305,6 +321,8 @@ def run_dispatch(
         cmd += ["--via", "slack"]
         if user_id:
             cmd += ["--user-id", str(user_id)]
+        if subject_sha:
+            cmd += ["--subject-sha", str(subject_sha)]
     if command == "hold":
         if not reason or not str(reason).strip():
             return False, "hold requires a reason"

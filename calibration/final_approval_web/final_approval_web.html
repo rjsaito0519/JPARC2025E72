@@ -40,11 +40,14 @@ async function jpost(url, body) {
   return r.json();
 }
 function el(id) { return document.getElementById(id); }
+let viewedSubjectSha = "";
 function showState(st) {
+  viewedSubjectSha = st.subject_sha || "";
   el("meta").textContent =
     `status=${st.status}  subject_sha=${(st.subject_sha||"").slice(0,8)}…  ` +
     `unverified=${JSON.stringify(st.unverified||[])}  ` +
-    `open_flags=${(st.open_flags||[]).length}`;
+    `open_flags=${(st.open_flags||[]).length}` +
+    (st.missing && st.missing.length ? `  missing=${JSON.stringify(st.missing)}` : "");
   const ul = el("pdfs");
   ul.innerHTML = "";
   const pdfs = (st.pdf_index && st.pdf_index.pdfs) || [];
@@ -85,7 +88,11 @@ el("reload").onclick = reload;
 el("run").onchange = reload;
 el("approve").onclick = async () => {
   const run = Number(el("run").value);
-  const res = await jpost("/approve", {run});
+  if (!viewedSubjectSha) {
+    el("msg").textContent = "reload first (no viewed subject_sha)";
+    return;
+  }
+  const res = await jpost("/approve", {run, subject_sha: viewedSubjectSha});
   el("msg").textContent = res.message || JSON.stringify(res);
   if (res.state) showState(res.state);
 };

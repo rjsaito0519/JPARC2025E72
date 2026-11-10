@@ -32,6 +32,12 @@ class CalibOpsTests(unittest.TestCase):
         self.assertEqual((op, run, err, extras), ("status", 3774, "", {}))
         op, run, err, extras = self.ops.parse_calib_text("approve 12")
         self.assertEqual((op, run, err), ("approve", 12, ""))
+        self.assertEqual(extras, {})
+        op, run, err, extras = self.ops.parse_calib_text(
+            "approve 12:abcdefghijklmnop",
+        )
+        self.assertEqual((op, run, err), ("approve", 12, ""))
+        self.assertEqual(extras.get("subject_sha"), "abcdefghijklmnop")
         op, run, err, extras = self.ops.parse_calib_text("revoke 12")
         self.assertEqual((op, run, err), ("revoke", 12, ""))
         op, run, err, extras = self.ops.parse_calib_text("hold 12 human flag")

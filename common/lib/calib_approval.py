@@ -427,7 +427,8 @@ def awaiting_action_blocks(run: int, sha: str) -> list[dict[str, Any]]:
                     "action_id": "calib_approve_run",
                     "text": {"type": "plain_text", "text": "Approve"},
                     "style": "primary",
-                    "value": run_s,
+                    # Pin the viewed subject version: run:subject_sha
+                    "value": f"{run_s}:{sha}",
                 },
                 {
                     "type": "button",

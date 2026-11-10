@@ -437,6 +437,35 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertEqual(approved.returncode, 1, approved.stdout + approved.stderr)
         self.assertIn("subject incomplete", approved.stdout + approved.stderr)
 
+    def test_approve_rejects_stale_subject_sha(self):
+        done = self.run_chain('pass\n')
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.seed_subject_files(hodo=True, dc=True)
+        bad = self.dispatch_extra(
+            "approve", "--subject-sha", "deadbeefdeadbeef",
+        )
+        self.assertEqual(bad.returncode, 1, bad.stdout + bad.stderr)
+        self.assertIn("subject changed", bad.stdout + bad.stderr)
+        # Matching sha still works (compute with the same isolated tree).
+        # cwd must be the fixture root so `python -c` does not pick up the
+        # real repo's common/ via the process cwd on sys.path.
+        probe = subprocess.run(
+            [
+                sys.executable, "-c",
+                "import json; from common.lib import calib_approval; "
+                f"st=json.loads(open({str(self.state)!r}).read()); "
+                "print(calib_approval.subject_sha("
+                "calib_approval.build_subject(1, st)))",
+            ],
+            capture_output=True, text=True, env=self.env, timeout=15,
+            cwd=str(self.root),
+        )
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        sha = probe.stdout.strip()
+        ok = self.dispatch_extra("approve", "--subject-sha", sha)
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        self.assertEqual(json.loads(self.state.read_text())['status'], 'approved')
+
     def test_legacy_finished_status_treated_as_awaiting(self):
         done = self.run_chain('pass\n')
         self.assertEqual(done.returncode, 0)

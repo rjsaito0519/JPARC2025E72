@@ -76,12 +76,20 @@ def snapshot(run: int) -> dict:
 
 
 #_____________________________________________________________________________
-def run_approve_or_revoke(run: int, op: str, reason: str = "") -> tuple[bool, str]:
+def run_approve_or_revoke(
+    run: int,
+    op: str,
+    reason: str = "",
+    *,
+    subject_sha: str = "",
+) -> tuple[bool, str]:
     yml = SESSION(run)
     if not yml.is_file():
         return False, f"no session YAML: {yml}"
     import subprocess
     cmd = [sys.executable, str(DISPATCH), op, str(yml), "--via", "web"]
+    if op == "approve" and subject_sha:
+        cmd += ["--subject-sha", str(subject_sha)]
     if op == "revoke" and reason:
         cmd += ["--reason", reason]
     try:
@@ -173,7 +181,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "bad run"})
             return
         if u.path == "/approve":
-            ok, msg = run_approve_or_revoke(run, "approve")
+            subject_sha = str(body.get("subject_sha") or "").strip()
+            if not subject_sha:
+                self._json(400, {
+                    "ok": False,
+                    "error": "subject_sha required",
+                    "state": snapshot(run),
+                })
+                return
+            ok, msg = run_approve_or_revoke(
+                run, "approve", subject_sha=subject_sha,
+            )
             self._json(200 if ok else 400, {"ok": ok, "message": msg, "state": snapshot(run)})
             return
         if u.path == "/revoke":
