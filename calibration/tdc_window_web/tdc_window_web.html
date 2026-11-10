@@ -144,16 +144,25 @@ function show(d) {
   const traces = Object.entries(h.lines).map(([k, y]) => ({
     x, y: y.map(v => v > 0 ? v : null), mode: "lines", line: {shape: "hvh", color: colors[k], width: 1.5},
     name: k, connectgaps: false}));
-  // Invisible points at every bin so clicks work in zero-count regions (log y drops zeros).
-  traces.push({
-    x, y: x.map(() => 1), mode: "markers", marker: {size: 12, opacity: 0},
-    hoverinfo: "skip", showlegend: false, name: "_click"});
   Plotly.newPlot(plot, traces, {
     title: `run ${D.run}  ${d} TDC`, hovermode: "x", dragmode: "zoom",
     xaxis: {title: "TDC [ch]", range: initialRange(h.edges), showspikes: true, spikemode: "across", spikethickness: 1},
     yaxis: {type: "log", title: "counts"}, ...overlay(), margin: {t: 50}
   }, {displaylogo: false, responsive: true});
-  plot.on("plotly_click", ev => { if (ev.points.length) addClick(ev.points[0].x); });
+  // Map plot-area clicks to x (works in zero-count gaps; skip drag-zoom).
+  const drag = plot.querySelector(".nsewdrag");
+  let press = null;
+  if (drag) {
+    drag.onmousedown = e => { press = {x: e.clientX, y: e.clientY}; };
+    drag.onmouseup = e => {
+      if (!press) return;
+      const moved = Math.hypot(e.clientX - press.x, e.clientY - press.y);
+      press = null;
+      if (moved > 4) return;
+      const xval = plot._fullLayout.xaxis.p2d(e.clientX - drag.getBoundingClientRect().left);
+      if (Number.isFinite(xval)) addClick(xval);
+    };
+  }
   status();
 }
 
