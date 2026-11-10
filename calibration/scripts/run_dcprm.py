@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, runner  # noqa: E402
+from common.lib import config, dc_qa_slack, runner  # noqa: E402
 
 
 def chamber(args):
@@ -28,21 +28,39 @@ def chamber_flag(args):
     return "--bcin" if args.bcin else "--bcout"
 
 
-def fit_and_update(run, suffix, args, exe_name, ptype):
+#_____________________________________________________________________________
+def after_qa_slack(run, mode, args, rc):
+    """Post chamber QA PDF(s) to Slack; never changes calibration rc."""
+    posted, post_msg = dc_qa_slack.try_post_after_dcprm(
+        run,
+        mode,
+        kaon=args.kaon,
+        bcin=args.bcin,
+        all_chambers=bool(getattr(args, "all", False)),
+    )
+    if not posted:
+        runner.warn(f"Slack QA post failed: {post_msg}")
+    elif not post_msg.startswith("slack skip:"):
+        runner.info(post_msg)
+    return rc
+
+
+def fit_and_update(run, suffix, args, exe_name, ptype, mode):
     """One chamber: run exe_name on its decode, then update_param.py ptype for that chamber."""
     (exe,) = runner.require_bins(exe_name)
     root = runner.input_root(run, chamber(args), suffix, args.force)
     runner.step(f"run{run:05d}: {exe_name} ({chamber(args)})")
     runner.sh(f"{exe} {root} {suffix}")
-    return runner.update_param(run, suffix, ptype, chamber_flag(args), debug=args.debug)
+    rc = runner.update_param(run, suffix, ptype, chamber_flag(args), debug=args.debug)
+    return after_qa_slack(run, mode, args, rc)
 
 
 def do_t0(run, suffix, args):
-    return fit_and_update(run, suffix, args, "BLC_TDC", "dctdc")
+    return fit_and_update(run, suffix, args, "BLC_TDC", "dctdc", "t0")
 
 
 def do_resi(run, suffix, args):
-    return fit_and_update(run, suffix, args, "BLC_residual", "residual")
+    return fit_and_update(run, suffix, args, "BLC_residual", "residual", "resi")
 
 
 def do_drift(run, suffix, args):
@@ -54,8 +72,8 @@ def do_drift(run, suffix, args):
     runner.step(f"run{run:05d}: BLC_DRFT ({chamber(args)})")
     runner.sh(f"{exe} {root} {suffix}" + (" --debug" if args.debug else ""))
     if args.debug:
-        return runner.EXIT_SKIP
-    return runner.EXIT_OK
+        return after_qa_slack(run, "drift", args, runner.EXIT_SKIP)
+    return after_qa_slack(run, "drift", args, runner.EXIT_OK)
 
 
 def do_reso(run, suffix, args):
@@ -66,7 +84,8 @@ def do_reso(run, suffix, args):
         runner.step(f"run{run:05d}: BLC_pull ({d})")
         runner.sh(f"{exe} {root} {suffix}")
     opts = ["--all" if args.all else chamber_flag(args)] + (["--separate"] if args.separate else [])
-    return runner.update_param(run, suffix, "resolution", *opts, debug=args.debug)
+    rc = runner.update_param(run, suffix, "resolution", *opts, debug=args.debug)
+    return after_qa_slack(run, "reso", args, rc)
 
 
 MODES = {"t0": do_t0, "drift": do_drift, "resi": do_resi, "reso": do_reso}
