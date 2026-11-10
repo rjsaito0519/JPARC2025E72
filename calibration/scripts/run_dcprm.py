@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, dc_qa_slack, runner, slack_notify  # noqa: E402
+from common.lib import config, dc_qa_slack, qa_session, runner, slack_notify  # noqa: E402
 
 
 def chamber(args):
@@ -29,7 +29,30 @@ def chamber_flag(args):
 
 
 #_____________________________________________________________________________
-def after_qa_slack(run, mode, args, rc):
+def _dc_session(run, suffix, args, mode, input_path):
+    return qa_session.begin(
+        run,
+        f"dc_{mode}",
+        dc_qa_slack.source_paths(
+            run,
+            mode,
+            kaon=args.kaon,
+            bcin=args.bcin,
+            all_chambers=bool(getattr(args, "all", False)),
+        ),
+        input_path=input_path,
+        meta={
+            "family": "dc",
+            "mode": mode,
+            "particle": "kaon" if args.kaon else "pion",
+            "bcin": bool(args.bcin),
+            "all": bool(getattr(args, "all", False)),
+        },
+    )
+
+
+#_____________________________________________________________________________
+def after_qa_slack(run, mode, args, rc, session=None):
     """Post chamber QA PDF(s) to Slack; never changes calibration rc."""
     posted, post_msg = dc_qa_slack.try_post_after_dcprm(
         run,
@@ -37,6 +60,7 @@ def after_qa_slack(run, mode, args, rc):
         kaon=args.kaon,
         bcin=args.bcin,
         all_chambers=bool(getattr(args, "all", False)),
+        session=session,
     )
     if not posted:
         runner.warn(f"Slack QA post failed: {post_msg}")
@@ -61,10 +85,11 @@ def fit_and_update(run, suffix, args, exe_name, ptype, mode):
     """One chamber: run exe_name on its decode, then update_param.py ptype for that chamber."""
     (exe,) = runner.require_bins(exe_name)
     root = runner.input_root(run, chamber(args), suffix, args.force)
+    session = _dc_session(run, suffix, args, mode, root)
     runner.step(f"run{run:05d}: {exe_name} ({chamber(args)})")
     runner.sh(f"{exe} {root} {suffix}")
     rc = runner.update_param(run, suffix, ptype, chamber_flag(args), debug=args.debug)
-    return after_qa_slack(run, mode, args, rc)
+    return after_qa_slack(run, mode, args, rc, session=session)
 
 
 def do_t0(run, suffix, args):
@@ -79,25 +104,27 @@ def do_drift(run, suffix, args):
     """BLC_DRFT writes the DCDRFT ROOT param itself; back it up first."""
     (exe,) = runner.require_bins("BLC_DRFT")
     root = runner.input_root(run, chamber(args), suffix, args.force)
+    session = _dc_session(run, suffix, args, "drift", root)
     if not args.debug:
         runner.backup_file(config.PARAM_DIR / "DCDRFT" / config.SUB_DIR / f"DCDriftParam_run{run:05d}_{suffix}.root")
     runner.step(f"run{run:05d}: BLC_DRFT ({chamber(args)})")
     runner.sh(f"{exe} {root} {suffix}" + (" --debug" if args.debug else ""))
     if args.debug:
-        return after_qa_slack(run, "drift", args, runner.EXIT_SKIP)
-    return after_qa_slack(run, "drift", args, runner.EXIT_OK)
+        return after_qa_slack(run, "drift", args, runner.EXIT_SKIP, session=session)
+    return after_qa_slack(run, "drift", args, runner.EXIT_OK, session=session)
 
 
 def do_reso(run, suffix, args):
     (exe,) = runner.require_bins("BLC_pull")
     dets = ["BcIn", "BcOut"] if args.all else [chamber(args)]
     roots = [runner.input_root(run, d, suffix, args.force) for d in dets]
+    session = _dc_session(run, suffix, args, "reso", roots[0])
     for d, root in zip(dets, roots):
         runner.step(f"run{run:05d}: BLC_pull ({d})")
         runner.sh(f"{exe} {root} {suffix}")
     opts = ["--all" if args.all else chamber_flag(args)] + (["--separate"] if args.separate else [])
     rc = runner.update_param(run, suffix, "resolution", *opts, debug=args.debug)
-    return after_qa_slack(run, "reso", args, rc)
+    return after_qa_slack(run, "reso", args, rc, session=session)
 
 
 MODES = {"t0": do_t0, "drift": do_drift, "resi": do_resi, "reso": do_reso}

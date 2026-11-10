@@ -7,11 +7,11 @@ BcIn -> BLC1, BcOut -> BLC2. reso --all posts both.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from . import config
 from .local_notify_config import load_slack_config
-from . import slack_notify
+from . import qa_session, slack_notify
 
 MODES = ("t0", "drift", "resi", "reso")
 _TAG = {
@@ -71,11 +71,13 @@ def post_dc_qa(
     all_chambers: bool = False,
     config_path: Path | None = None,
     dry_run: bool = False,
+    manifest: dict[str, Any] | None = None,
+    pdf_paths: list[Path] | None = None,
 ) -> tuple[bool, str]:
     """Post chamber QA PDF(s) for (run, mode). Missing PDF -> failure message."""
     if mode not in MODES:
         return False, f"unsupported mode {mode!r}"
-    paths = source_paths(
+    paths = list(pdf_paths) if pdf_paths is not None else source_paths(
         run, mode, kaon=kaon, bcin=bcin, all_chambers=all_chambers,
     )
     missing = [p.name for p in paths if not p.is_file()]
@@ -96,6 +98,7 @@ def post_dc_qa(
             particle_suffix=suffix,
             config_path=config_path,
             dry_run=dry_run,
+            manifest=manifest,
         )
         if not ok:
             return False, msg
@@ -111,11 +114,23 @@ def try_post_after_dcprm(
     kaon: bool = False,
     bcin: bool = False,
     all_chambers: bool = False,
+    session: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """Best-effort post from run_dcprm. Skip if Slack config missing/disabled."""
     _, status = load_slack_config()
     if status in ("missing", "disabled"):
         return True, f"slack skip: {status}"
+    manifest = None
+    if session is not None:
+        ok, msg, hashes = qa_session.verify_sources(session)
+        if not ok:
+            return False, msg
+        paths = [Path(p) for p in session["expected"]]
+        manifest_path = qa_session.write_manifest(
+            session, source_hashes=hashes, output_pdfs=paths,
+        )
+        manifest = qa_session.load_manifest(manifest_path)
     return post_dc_qa(
         run, mode, kaon=kaon, bcin=bcin, all_chambers=all_chambers, dry_run=False,
+        manifest=manifest,
     )

@@ -69,8 +69,12 @@ def pdf_page_count(path):
 
 
 #_____________________________________________________________________________
-def merge(run, mode, kaon=False, ftof=False, dry_run=False):
-    """Merge stage PDFs. Returns (ok: bool, message: str, out_path: Path|None)."""
+def merge(run, mode, kaon=False, ftof=False, dry_run=False, session=None):
+    """Merge stage PDFs. Returns (ok: bool, message: str, out_path: Path|None).
+
+    When session is set (auto path from run_hodo), require sources to differ from
+    the begin() snapshot before uniting. Manual CLI leaves session=None.
+    """
     if mode not in MERGE_MODES:
         return False, f"unsupported mode {mode!r}", None
     if ftof and mode == "t0":
@@ -79,10 +83,16 @@ def merge(run, mode, kaon=False, ftof=False, dry_run=False):
     sources = source_paths(run, mode, kaon, ftof)
     out = img_dir(run) / output_name(run, mode, kaon, ftof)
 
-    missing = [p for p in sources if not p.is_file()]
-    if missing:
-        names = ", ".join(p.name for p in missing)
-        return False, f"missing PDF(s): {names}", out
+    if session is not None:
+        from . import qa_session
+        ok, message, _hashes = qa_session.verify_sources(session)
+        if not ok:
+            return False, message, out
+    else:
+        missing = [p for p in sources if not p.is_file()]
+        if missing:
+            names = ", ".join(p.name for p in missing)
+            return False, f"missing PDF(s): {names}", out
 
     page_counts = []
     for path in sources:

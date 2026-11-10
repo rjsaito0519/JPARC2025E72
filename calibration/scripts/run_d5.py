@@ -35,7 +35,7 @@ from pathlib import Path
 from termcolor import colored
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, d5_qa_slack, runner, slack_notify  # noqa: E402
+from common.lib import config, d5_qa_slack, qa_session, runner, slack_notify  # noqa: E402
 import calib_convergence as conv  # noqa: E402
 
 DCGEO_DIR = config.PARAM_DIR / "DCGEO" / config.SUB_DIR
@@ -312,10 +312,10 @@ def make_check_pdf(run, s):
 
 
 #_____________________________________________________________________________
-def after_qa_slack(run, kind, s):
+def after_qa_slack(run, kind, s, session=None):
     """Post a D5 QA PDF to Slack; never changes calibration exit codes."""
     posted, post_msg = d5_qa_slack.try_post_after_d5(
-        run, kind, kaon=(s == "K"),
+        run, kind, kaon=(s == "K"), session=session,
     )
     if not posted:
         runner.warn(f"Slack QA post failed: {post_msg}")
@@ -334,13 +334,22 @@ def check_pos_inputs(run, s, force):
 
 
 def do_pos(args, s):
+    kaon = (s == "K")
+    pos_sessions = {}
     for run in args.runs:
         check_pos_inputs(run, s, args.force)
+        pos_sessions[run] = qa_session.begin(
+            run,
+            "d5_pos_review",
+            [d5_qa_slack.source_path(run, "pos_review", kaon=kaon)],
+            input_path=d5_root(run, s),
+            meta={"family": "d5", "mode": "pos_review", "particle": "kaon" if kaon else "pion"},
+        )
     rows = {run: measure(run, s) for run in args.runs}
     failed = [run for run, r in rows.items() if r is None]
     for run, r in rows.items():
         if r is not None:
-            after_qa_slack(run, "pos_review", s)
+            after_qa_slack(run, "pos_review", s, session=pos_sessions.get(run))
     if not (failed or args.debug):
         for run, r in rows.items():
             r["state"] = judge_pos(run, r, s, args.tol)
@@ -389,6 +398,17 @@ def do_pos(args, s):
             runner.info(f"{run_tag(run)} skipped: same D5 inputs already applied")
         elif r["state"] == conv.CONVERGED:
             runner.info(f"{run_tag(run)} converged: check PDF")
+            check_session = qa_session.begin(
+                run,
+                "d5_plane_resi_qa",
+                [d5_qa_slack.source_path(run, "plane_resi_qa", kaon=kaon)],
+                input_path=d5_root(run, s),
+                meta={
+                    "family": "d5",
+                    "mode": "plane_resi_qa",
+                    "particle": "kaon" if kaon else "pion",
+                },
+            )
             pdf_rc = make_check_pdf(run, s)
             if pdf_rc != 0:
                 runner.warn(f"{run_tag(run)}: check PDF failed (exit {pdf_rc}); treating as EXIT_CHECK")
@@ -403,7 +423,7 @@ def do_pos(args, s):
                 elif nmsg.startswith("notified"):
                     runner.info(nmsg)
             else:
-                after_qa_slack(run, "plane_resi_qa", s)
+                after_qa_slack(run, "plane_resi_qa", s, session=check_session)
     sys.exit(code)
 
 

@@ -7,10 +7,11 @@ Filenames match d5_pos_review / d5_plane_resi_qa:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from . import config
 from .local_notify_config import load_slack_config
-from . import slack_notify
+from . import qa_session, slack_notify
 
 KINDS = ("pos_review", "plane_resi_qa")
 _PREFIX = {
@@ -47,11 +48,13 @@ def post_d5_qa(
     kaon: bool = False,
     config_path: Path | None = None,
     dry_run: bool = False,
+    manifest: dict[str, Any] | None = None,
+    pdf_path: Path | None = None,
 ) -> tuple[bool, str]:
     """Post one D5 QA PDF for (run, kind). Missing PDF -> failure (unless dry-run)."""
     if kind not in KINDS:
         return False, f"unsupported kind {kind!r}"
-    path = source_path(run, kind, kaon=kaon)
+    path = Path(pdf_path) if pdf_path is not None else source_path(run, kind, kaon=kaon)
     if not dry_run and not path.is_file():
         return False, f"missing PDF: {path.name}"
 
@@ -66,6 +69,7 @@ def post_d5_qa(
         particle_suffix=suffix,
         config_path=config_path,
         dry_run=dry_run,
+        manifest=manifest,
     )
 
 
@@ -75,9 +79,20 @@ def try_post_after_d5(
     kind: str,
     *,
     kaon: bool = False,
+    session: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """Best-effort post from run_d5. Skip if Slack config missing/disabled."""
     _, status = load_slack_config()
     if status in ("missing", "disabled"):
         return True, f"slack skip: {status}"
-    return post_d5_qa(run, kind, kaon=kaon, dry_run=False)
+    manifest = None
+    if session is not None:
+        ok, msg, hashes = qa_session.verify_sources(session)
+        if not ok:
+            return False, msg
+        paths = [Path(p) for p in session["expected"]]
+        manifest_path = qa_session.write_manifest(
+            session, source_hashes=hashes, output_pdfs=paths,
+        )
+        manifest = qa_session.load_manifest(manifest_path)
+    return post_d5_qa(run, kind, kaon=kaon, dry_run=False, manifest=manifest)

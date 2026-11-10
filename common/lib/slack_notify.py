@@ -281,11 +281,14 @@ def post_pdf(
     particle_suffix: str = "Pi",
     config_path: Path | None = None,
     dry_run: bool = False,
+    manifest: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """Upload a PDF into the run's Slack thread. Records the post in state."""
     pdf_path = Path(pdf_path)
     key = post_key(mode, particle_suffix, pdf_path.name)
     parent_text = f"calib QA run{run:05d}"
+    if manifest and manifest.get("exec_id"):
+        caption = f"{caption} exec_id={manifest['exec_id']}"
 
     if dry_run:
         return True, f"dry-run: post {pdf_path.name} key={key}"
@@ -312,7 +315,11 @@ def post_pdf(
         if not isinstance(posts, dict):
             posts = {}
             state["posts"] = posts
-        posts[key] = {"pdf": pdf_path.name, "mode": mode, "particle": particle_suffix}
+        entry = {"pdf": pdf_path.name, "mode": mode, "particle": particle_suffix}
+        if manifest:
+            from . import qa_session
+            entry.update(qa_session.manifest_post_fields(manifest, pdf_path))
+        posts[key] = entry
         state["thread_ts"] = thread_ts
         state["channel_id"] = cfg["channel_id"]
         if not save_state(run, state):
@@ -332,6 +339,7 @@ def post_hodo_qa(
     pdf_path: Path | None = None,
     config_path: Path | None = None,
     dry_run: bool = False,
+    manifest: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """Post the merged Hodo stage PDF for (run, mode)."""
     if mode not in hodo_qa_pdf.MERGE_MODES:
@@ -351,6 +359,7 @@ def post_hodo_qa(
         particle_suffix=suffix,
         config_path=config_path,
         dry_run=dry_run,
+        manifest=manifest,
     )
 
 
@@ -362,6 +371,7 @@ def try_post_hodo_after_merge(
     kaon: bool = False,
     ftof: bool = False,
     pdf_path: Path | None = None,
+    manifest: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """Best-effort post used from run_hodo. Skip quietly if config missing/disabled."""
     try:
@@ -370,6 +380,7 @@ def try_post_hodo_after_merge(
             return True, f"slack skip: {status}"
         return post_hodo_qa(
             run, mode, kaon=kaon, ftof=ftof, pdf_path=pdf_path, dry_run=False,
+            manifest=manifest,
         )
     except _NOTIFY_TRANSPORT_ERRORS as exc:
         return False, _exc_message("try_post_hodo_after_merge", exc)

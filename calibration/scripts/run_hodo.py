@@ -15,21 +15,30 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, hodo_qa_pdf, runner, slack_notify  # noqa: E402
+from common.lib import config, hodo_qa_pdf, qa_session, runner, slack_notify  # noqa: E402
 
 
 #_____________________________________________________________________________
-def after_qa_merge(run, mode, args, rc):
+def after_qa_merge(run, mode, args, rc, session=None):
     """Merge detector QA PDFs; incomplete book raises the run to EXIT_CHECK."""
     if mode not in hodo_qa_pdf.MERGE_MODES:
         return rc
     ok, message, out = hodo_qa_pdf.merge(
-        run, mode, kaon=args.kaon, ftof=args.ftof, dry_run=False,
+        run, mode, kaon=args.kaon, ftof=args.ftof, dry_run=False, session=session,
     )
     if ok:
         runner.info(message)
+        manifest = None
+        if session is not None and out is not None:
+            _ok, _msg, hashes = qa_session.verify_sources(session)
+            manifest_path = qa_session.write_manifest(
+                session, source_hashes=hashes, output_pdfs=[out],
+            )
+            manifest = qa_session.load_manifest(manifest_path)
+            runner.info(f"QA manifest: {manifest_path}")
         posted, post_msg = slack_notify.try_post_hodo_after_merge(
             run, mode, kaon=args.kaon, ftof=args.ftof, pdf_path=out,
+            manifest=manifest,
         )
         if not posted:
             runner.warn(f"Slack QA post failed: {post_msg}")
@@ -58,13 +67,25 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
     dets = config.hodo_detectors(mode, args.ftof)
     bins = runner.require_bins(*[f"{d}_{bin_suffix}" for d in dets])
     root = runner.input_root(run, "Hodo", suffix, args.force)
+    session = qa_session.begin(
+        run,
+        f"hodo_{mode}",
+        hodo_qa_pdf.source_paths(run, mode, args.kaon, args.ftof),
+        input_path=root,
+        meta={
+            "family": "hodo",
+            "mode": mode,
+            "particle": "kaon" if args.kaon else "pion",
+            "ftof": bool(args.ftof),
+        },
+    )
     runner.step(f"run{run:05d}: {bin_suffix} fit for {dets}")
     for b in bins:
         runner.sh(f"{b} {root} {suffix}")
     rc = runner.update_param(
         run, suffix, mode, *(["--ftof"] if args.ftof else []), debug=args.debug
     )
-    return after_qa_merge(run, mode, args, rc)
+    return after_qa_merge(run, mode, args, rc, session=session)
 
 
 #_____________________________________________________________________________
@@ -81,10 +102,22 @@ def do_hdphc(run, suffix, args):
 def do_t0(run, suffix, args):
     (exe,) = runner.require_bins("T0_Offset")
     root = runner.input_root(run, "Hodo", suffix, args.force)
+    session = qa_session.begin(
+        run,
+        "hodo_t0",
+        hodo_qa_pdf.source_paths(run, "t0", args.kaon, False),
+        input_path=root,
+        meta={
+            "family": "hodo",
+            "mode": "t0",
+            "particle": "kaon" if args.kaon else "pion",
+            "ftof": False,
+        },
+    )
     runner.step(f"run{run:05d}: T0_Offset")
     runner.sh(f"{exe} {root} {suffix}")
     rc = runner.update_param(run, suffix, "t0", debug=args.debug)
-    return after_qa_merge(run, "t0", args, rc)
+    return after_qa_merge(run, "t0", args, rc, session=session)
 
 
 #_____________________________________________________________________________

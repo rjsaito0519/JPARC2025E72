@@ -25,7 +25,7 @@ class D5QaPathTests(unittest.TestCase):
             f"OUTPUT_DIR = Path({str(self.out)!r})\n"
         )
         for name in ("d5_qa_slack.py", "local_notify_config.py", "slack_notify.py",
-                     "hodo_qa_pdf.py"):
+                     "hodo_qa_pdf.py", "qa_session.py"):
             shutil.copy(REPO / "common/lib" / name, lib)
         self.env = {**os.environ, "PYTHONPATH": str(self.root)}
 
