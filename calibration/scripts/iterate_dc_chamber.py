@@ -88,6 +88,8 @@ def parse_args():
 #_____________________________________________________________________________
 def run_oneshot(run, mode, bcin, kaon, force, dry_run):
     """Run t0 or drift only (decode already done by prepare_stage)."""
+    from common.lib import calib_progress
+
     cmd = oneshot_cmd(run, mode, bcin, kaon, force)
     runner.step(f"iterate_dc_chamber {mode}")
     if dry_run:
@@ -95,6 +97,10 @@ def run_oneshot(run, mode, bcin, kaon, force, dry_run):
         return runner.EXIT_OK
     rc, _ = runner.sh(cmd, ok=OK_DRIVER)
     runner.info(f"run_dcprm {mode} exit={rc}")
+    status = "done" if rc == runner.EXIT_OK else "stopped"
+    calib_progress.note_substage(
+        run, "dc_chamber", mode, rc=rc, status=status,
+    )
     return rc
 
 
@@ -146,7 +152,7 @@ def main():
         rc = dc_fit.run_fit_loop(
             a.run, "resi", a.bcin, a.kaon, a.force, a.max_iter, runlist, a.dry_run,
             separate=False, do_preflight=False, label="iterate_dc_chamber/resi",
-            local=a.local,
+            local=a.local, dispatch_step="dc_chamber",
         )
         if rc != runner.EXIT_OK:
             sys.exit(rc)
@@ -155,7 +161,7 @@ def main():
         rc = dc_fit.run_fit_loop(
             a.run, "reso", a.bcin, a.kaon, a.force, a.max_iter, runlist, a.dry_run,
             separate=a.separate, do_preflight=False, label="iterate_dc_chamber/reso",
-            local=a.local,
+            local=a.local, dispatch_step="dc_chamber",
         )
         if rc != runner.EXIT_OK:
             sys.exit(rc)

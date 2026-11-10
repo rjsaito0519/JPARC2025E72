@@ -56,12 +56,22 @@ def hodo_cmd(
 
 
 #_____________________________________________________________________________
-def run_hodo_ok(cmd, label):
+def note_hodo_substage(run, stage, *, rc=None, status="done"):
+    from common.lib import calib_progress
+    calib_progress.note_substage(
+        run, "hodo", stage, rc=rc, status=status,
+    )
+
+
+#_____________________________________________________________________________
+def run_hodo_ok(run, cmd, label):
     rc, _ = runner.sh(cmd, ok=OK_DRIVER)
     runner.info(f"run_hodo {label} exit={rc}")
     if rc != runner.EXIT_OK:
+        note_hodo_substage(run, label, rc=rc, status="stopped")
         runner.warn(f"stopping after {label} (rc={rc})")
         sys.exit(rc)
+    note_hodo_substage(run, label, rc=rc, status="done")
 
 
 #_____________________________________________________________________________
@@ -198,14 +208,18 @@ def main():
     runlist = stage_prepare_and_decode(
         a.run, a.kaon, "hdprm", local=a.local, dry_run=False,
     )
-    run_hodo_ok(hodo_cmd(a.run, "hdprm", a.kaon, a.ftof, a.force), "hdprm")
+    run_hodo_ok(
+        a.run, hodo_cmd(a.run, "hdprm", a.kaon, a.ftof, a.force), "hdprm",
+    )
 
     # --- T0 ---
     if not a.skip_t0:
         runlist = stage_prepare_and_decode(
             a.run, a.kaon, "t0", local=a.local, dry_run=False,
         )
-        run_hodo_ok(hodo_cmd(a.run, "t0", a.kaon, a.ftof, a.force), "t0")
+        run_hodo_ok(
+            a.run, hodo_cmd(a.run, "t0", a.kaon, a.ftof, a.force), "t0",
+        )
 
     if a.skip_hdphc:
         runner.info("done: skipped hdphc")
@@ -220,6 +234,7 @@ def main():
     for i in range(1, n_hdphc + 1):
         runner.step(f"iterate_hodo_chain hdphc {i}/{n_hdphc}")
         run_hodo_ok(
+            a.run,
             hodo_cmd(a.run, "hdphc", a.kaon, a.ftof, a.force, skip_qa=True),
             f"hdphc[{i}]",
         )
@@ -257,6 +272,7 @@ def main():
     hodo_hdphc_rounds.write_summary(a.run, adopted=chosen)
 
     run_hodo_ok(
+        a.run,
         hodo_cmd(
             a.run, "hdphc", a.kaon, a.ftof, a.force,
             qa_only=True, adopted_round=chosen,

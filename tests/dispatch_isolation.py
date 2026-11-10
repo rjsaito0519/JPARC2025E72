@@ -87,7 +87,10 @@ def populate_dispatch_lib(
     )
 
     shutil.copy(repo / "calibration" / "scripts" / "calib_dispatch.py", scripts)
-    for name in ("runner.py", "calib_approval.py", "qa_session.py", "calib_anomaly.py"):
+    for name in (
+        "runner.py", "calib_approval.py", "qa_session.py",
+        "calib_anomaly.py", "calib_progress.py",
+    ):
         shutil.copy(repo / "common" / "lib" / name, lib)
 
     return {

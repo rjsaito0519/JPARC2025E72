@@ -236,6 +236,8 @@ def main():
         print(f"[dry-run] … repeat until pos exit 0/1/3/4 or max-iter={a.max_iter}")
         sys.exit(runner.EXIT_OK)
 
+    from common.lib import calib_progress
+
     ok_driver = (runner.EXIT_OK, runner.EXIT_FAIL, runner.EXIT_NOT_CONVERGED,
                  runner.EXIT_CHECK, runner.EXIT_SKIP)
     last_rc = runner.EXIT_CHECK
@@ -245,6 +247,9 @@ def main():
 
         rc, _ = runner.sh(ref_cmd(a.run, a.kaon), ok=(runner.EXIT_OK,))
         runner.info(f"run_d5 ref exit={rc}")
+        calib_progress.note_substage(
+            a.run, "d5_align", f"ref[pass={i}]", rc=rc, status="done",
+        )
         p_norm, p_tag = require_scratch_runlists(a.run, s, dry_run=False)
         decode_run.run_decode(p_norm, local=a.local)
         decode_run.run_decode(p_tag, local=a.local)
@@ -253,11 +258,22 @@ def main():
         last_rc = rc
         action = next_action(rc)
         runner.info(f"run_d5 pos exit={rc} → {action}")
-
-        if action != DO_NEXT:
+        if action == DO_NEXT:
+            calib_progress.note_substage(
+                a.run, "d5_align", f"pos[pass={i}]", rc=rc, status="running",
+            )
+        else:
+            status = "done" if action == STOP_OK else "stopped"
+            calib_progress.note_substage(
+                a.run, "d5_align", f"pos[pass={i}]", rc=rc, status=status,
+            )
             stop_with(action)
 
         if i >= a.max_iter:
+            calib_progress.note_substage(
+                a.run, "d5_align", f"pos[pass={i}]",
+                rc=runner.EXIT_CHECK, status="stopped",
+            )
             runner.warn(f"max-iter {a.max_iter} reached after NOT_CONVERGED; stop as CHECK")
             sys.exit(runner.EXIT_CHECK)
 
@@ -266,7 +282,16 @@ def main():
         action_resi = next_action(rc_resi)
         runner.info(f"run_dcprm resi --bcin exit={rc_resi} → {action_resi}")
         if action_resi in (STOP_FAIL, STOP_CHECK, STOP_SKIP):
+            calib_progress.note_substage(
+                a.run, "d5_align", f"bcin_resi[pass={i}]",
+                rc=rc_resi, status="stopped",
+            )
             stop_with(action_resi)
+        status_resi = "running" if action_resi == DO_NEXT else "done"
+        calib_progress.note_substage(
+            a.run, "d5_align", f"bcin_resi[pass={i}]",
+            rc=rc_resi, status=status_resi,
+        )
         if action_resi == DO_NEXT:
             decode_run.run_decode(bcin_runlist, local=a.local)
         # EXIT_OK or after re-decode: continue outer loop with ref

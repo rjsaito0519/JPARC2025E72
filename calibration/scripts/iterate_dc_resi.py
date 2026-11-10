@@ -126,8 +126,11 @@ def resi_cmd(run, bcin, kaon, force):
 def run_fit_loop(
     run, mode, bcin, kaon, force, max_iter, runlist, dry_run,
     separate=False, do_preflight=True, label=None, local=False,
+    dispatch_step="dc_resi",
 ):
     """Run resi/reso until terminal exit. Returns the exit code (does not sys.exit)."""
+    from common.lib import calib_progress
+
     if mode not in FIT_MODES:
         runner.fail(f"unknown fit mode: {mode!r}")
     if max_iter < 1:
@@ -168,6 +171,7 @@ def run_fit_loop(
     ok_rc = (runner.EXIT_OK, runner.EXIT_FAIL, runner.EXIT_NOT_CONVERGED,
              runner.EXIT_CHECK, runner.EXIT_SKIP)
     last_rc = runner.EXIT_CHECK
+    step_name = str(dispatch_step or "dc_resi")
 
     for i in range(1, max_iter + 1):
         runner.step(f"{tag} pass {i}/{max_iter}")
@@ -177,20 +181,39 @@ def run_fit_loop(
         last_rc = rc
         action = next_action(rc)
         runner.info(f"run_dcprm {mode} exit={rc} → {action}")
+        stage = f"{mode}[pass={i}]"
 
         if action == STOP_OK:
+            calib_progress.note_substage(
+                run, step_name, stage, rc=rc, status="done",
+            )
             runner.info(f"{mode} converged; done")
             return runner.EXIT_OK
         if action == STOP_FAIL:
+            calib_progress.note_substage(
+                run, step_name, stage, rc=rc, status="stopped",
+            )
             return runner.EXIT_FAIL
         if action == STOP_CHECK:
+            calib_progress.note_substage(
+                run, step_name, stage, rc=rc, status="stopped",
+            )
             runner.warn("check / settled; stop")
             return runner.EXIT_CHECK
         if action == STOP_SKIP:
+            calib_progress.note_substage(
+                run, step_name, stage, rc=rc, status="stopped",
+            )
             runner.warn("skip; stop")
             return runner.EXIT_SKIP
-        # DO_DECODE
+        # DO_DECODE — still record the non-terminal pass
+        calib_progress.note_substage(
+            run, step_name, stage, rc=rc, status="running",
+        )
         if i >= max_iter:
+            calib_progress.note_substage(
+                run, step_name, stage, rc=runner.EXIT_CHECK, status="stopped",
+            )
             runner.warn(f"max-iter {max_iter} reached after NOT_CONVERGED; stop as CHECK")
             return runner.EXIT_CHECK
 

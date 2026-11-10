@@ -84,7 +84,8 @@ def hold_journal_path(run):
 
 #_____________________________________________________________________________
 def progress_path(run):
-    return config.OUTPUT_DIR / "calib" / f"run{run:05d}" / "progress.jsonl"
+    from common.lib import calib_progress
+    return calib_progress.progress_path(run)
 
 
 #_____________________________________________________________________________
@@ -376,45 +377,29 @@ def append_hold_journal(run, event):
 
 #_____________________________________________________________________________
 def append_progress(run, event, *, step=None, index=None, rc=None,
-                    status=None, hold_source=None):
+                    status=None, hold_source=None, stage=None):
     """Append one human-readable progress line under results/calib/runXXXXX/."""
-    path = progress_path(run)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    row = {
-        "at": utc_now(),
-        "event": event,
-        "step": step,
-        "index": index,
-        "rc": rc,
-        "status": status,
-        "hold_source": hold_source,
-    }
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(row, sort_keys=True) + "\n")
+    from common.lib import calib_progress
+    calib_progress.append_progress(
+        run, event,
+        step=step, index=index, rc=rc, status=status,
+        hold_source=hold_source, stage=stage,
+    )
+
+
+#_____________________________________________________________________________
+def note_substage(run, step, stage, *, rc=None, status="done"):
+    from common.lib import calib_progress
+    calib_progress.note_substage(
+        run, step, stage, rc=rc, status=status,
+    )
 
 
 #_____________________________________________________________________________
 def read_progress_tail(run, n=8):
     """Return the last n progress rows (dicts). Missing file → []."""
-    path = progress_path(run)
-    if not path.is_file():
-        return []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
-    out = []
-    for line in lines[-max(1, int(n)):]:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(row, dict):
-            out.append(row)
-    return out
+    from common.lib import calib_progress
+    return calib_progress.read_progress_tail(run, n=n)
 
 
 #_____________________________________________________________________________
@@ -707,8 +692,10 @@ def mark_awaiting_final(run, payload):
         runner.warn(f"awaiting Slack note failed: {msg}")
     elif not msg.startswith("slack skip:"):
         runner.info(msg)
+    detail = calib_approval.awaiting_stage_summary(run, st)
     runner.info(
-        f"run{run:05d}: awaiting final QA approval (subject_sha={sha[:8]}…)"
+        f"run{run:05d}: awaiting final QA approval — {detail} "
+        f"(subject_sha={sha[:8]}…)"
     )
     return sha
 

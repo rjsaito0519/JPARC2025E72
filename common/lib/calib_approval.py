@@ -677,18 +677,55 @@ def invalidate_approval(run: int, reason: str) -> bool:
 
 
 #_____________________________________________________________________________
-def awaiting_action_blocks(run: int, sha: str) -> list[dict[str, Any]]:
+def awaiting_stage_summary(
+    run: int,
+    st: dict[str, Any] | None = None,
+    *,
+    reason_max: int = 80,
+) -> str:
+    """Human summary: plan, last step/rc, latest substage, check reason."""
+    from . import calib_anomaly, calib_progress
+
+    st = st if isinstance(st, dict) else {}
+    plan = st.get("plan") if isinstance(st.get("plan"), dict) else {}
+    names = []
+    for entry in plan.get("steps") or []:
+        if isinstance(entry, dict) and entry.get("name"):
+            names.append(str(entry["name"]))
+    plan_s = "[" + ", ".join(names) + "]" if names else "[?]"
+    last_step = st.get("step") or "?"
+    last_rc = st.get("rc")
+    rc_s = str(last_rc) if last_rc is not None else "?"
+    bits = [f"plan={plan_s}", f"last={last_step}", f"rc={rc_s}"]
+    sub = calib_progress.latest_substage(int(run))
+    if isinstance(sub, dict) and sub.get("stage"):
+        bits.append(f"stage={sub.get('stage')}")
+        if sub.get("rc") is not None and sub.get("rc") != last_rc:
+            bits.append(f"stage_rc={sub.get('rc')}")
+    reason = calib_anomaly.read_check_reason(int(run))
+    if reason:
+        clipped = reason if len(reason) <= reason_max else reason[: reason_max - 1] + "…"
+        bits.append(f"({clipped})")
+    return " ".join(bits)
+
+
+#_____________________________________________________________________________
+def awaiting_action_blocks(
+    run: int, sha: str, st: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Block Kit Approve/Revoke buttons for the awaiting note."""
     short = (sha or "")[:8]
     run_s = str(int(run))
+    detail = awaiting_stage_summary(int(run), st)
     return [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"*run{int(run):05d}* awaiting final QA approval "
-                    f"(subject_sha=`{short}…`)"
+                    f"*run{int(run):05d}* awaiting final QA approval\n"
+                    f"{detail}\n"
+                    f"subject_sha=`{short}…`"
                 ),
             },
         },
@@ -850,9 +887,10 @@ def notify_awaiting_slack(
         n_pdf = final_qa_index.index_from_subject(int(run), subject).get("n_pdf", 0)
     else:
         n_pdf = final_qa_index.index_summary(int(run)).get("n_pdf", 0)
+    detail = awaiting_stage_summary(int(run), st)
     text = (
-        f"run{int(run):05d}: awaiting final QA approval "
-        f"(subject_sha={short}…, QA PDFs={n_pdf}). "
+        f"run{int(run):05d}: awaiting final QA approval — {detail} "
+        f"subject_sha={short}… QA PDFs={n_pdf}. "
         f"/calib approve {int(run)}  "
         f"(Web: final_approval_web port 8766)"
     )
@@ -860,7 +898,7 @@ def notify_awaiting_slack(
         int(run),
         f"awaiting_final_approval:{short}",
         text,
-        blocks=awaiting_action_blocks(int(run), sha),
+        blocks=awaiting_action_blocks(int(run), sha, st),
     )
 
 
