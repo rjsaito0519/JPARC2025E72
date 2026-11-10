@@ -15,6 +15,8 @@ Slash command (register /calib in the Slack app):
   /calib hold <run> <reason...>
   /calib decide <run> refit|continue
   /calib hdphc-again <run>
+  /calib phc-accept <run>
+  /calib phc-range <run> <det> <first> <last>
   /calib flag <run> <mode> <det> <channel> <reason...>
   /calib clear <run> <mode> <det> <channel>
 
@@ -22,9 +24,11 @@ Block Kit:
   - Approve / Revoke on awaiting-final (calib_approve_run / calib_revoke_run)
   - Proceed / Refit / Stop on step gate
     (calib_step_proceed / calib_step_refit / calib_step_stop)
+  - Accept PHC range proposal (calib_phc_accept)
 
-Does not run start or arbitrary shell. resume, proceed, retry, and
-hdphc-again start resume work in the background.
+Does not run start or arbitrary shell. resume, proceed, retry,
+phc-accept (after conf write), and hdphc-again start resume work in
+the background.
 """
 from __future__ import annotations
 
@@ -63,6 +67,8 @@ def handle_calib_request(bot_cfg, user_id, channel_id, text):
         det=extras.get("det"),
         channel=extras.get("channel"),
         subject_sha=extras.get("subject_sha"),
+        first=extras.get("first"),
+        last=extras.get("last"),
     )
     calib_ops.record_op(run, op, user_id)
     prefix = f"run{run:05d} {op}: "
@@ -124,6 +130,7 @@ def build_app(bot_cfg):
     app.action("calib_step_proceed")(_button_action("proceed"))
     app.action("calib_step_refit")(_button_action("retry"))
     app.action("calib_step_stop")(_button_action("gate-stop"))
+    app.action("calib_phc_accept")(_button_action("phc-accept"))
 
     return app
 

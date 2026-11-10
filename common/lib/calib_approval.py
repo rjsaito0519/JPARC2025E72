@@ -761,6 +761,60 @@ def step_gate_action_blocks(run: int, step: str, index: int) -> list[dict[str, A
 
 
 #_____________________________________________________________________________
+def notify_held_slack(
+    run: int, hold: dict[str, Any] | None,
+) -> tuple[bool, str]:
+    """Thread note when dispatch enters held (EXIT_CHECK or manual hold).
+
+    Skips step_gate (has its own buttons) and phc_range_proposal (dedicated
+    Accept/Custom message already posted).
+    """
+    from . import slack_notify
+
+    hold = hold if isinstance(hold, dict) else {}
+    source = str(hold.get("source") or "hold")
+    if source == "step_gate":
+        return True, "slack skip: step_gate uses notify_step_gate_slack"
+    reason = str(hold.get("reason") or "")
+    if reason.startswith("phc_range_proposal") or "phc_range_proposal:" in reason:
+        return True, "slack skip: phc_range_proposal already notified"
+    step_s = str(hold.get("step") or "?")
+    index = hold.get("index")
+    index_s = str(int(index)) if isinstance(index, int) else "?"
+    text = (
+        f"run{int(run):05d}: held after step {step_s} "
+        f"(source={source}, index={index_s}): {reason or '(no reason)'}. "
+        f"/calib decide {int(run)} refit|continue then /calib resume {int(run)}"
+    )
+    return slack_notify.try_notify_failure(
+        int(run),
+        f"held:{source}:{index_s}:{step_s}",
+        text,
+    )
+
+
+#_____________________________________________________________________________
+def notify_stopped_slack(
+    run: int, step: str, index: int, rc: int, *, detail: str = "",
+) -> tuple[bool, str]:
+    """Thread note when a dispatch step stops the chain (non-CHECK failure)."""
+    from . import slack_notify
+
+    step_s = str(step or "?")
+    extra = f": {detail}" if detail else ""
+    text = (
+        f"run{int(run):05d}: stopped after step {step_s} "
+        f"(index={int(index)}, rc={int(rc)}){extra}. "
+        f"/calib resume {int(run)} after fix, or /calib status {int(run)}"
+    )
+    return slack_notify.try_notify_failure(
+        int(run),
+        f"stopped:{int(index)}:{step_s}:rc{int(rc)}",
+        text,
+    )
+
+
+#_____________________________________________________________________________
 def notify_step_gate_slack(
     run: int, step: str, index: int,
 ) -> tuple[bool, str]:

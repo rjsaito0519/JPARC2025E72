@@ -792,6 +792,9 @@ def do_hold(cfg, reason):
         "manual", reason, st.get("step"), st.get("index"), st.get("rc"),
     )
     enter_held(cfg["run"], st, hold, "hold", cfg_steps=cfg["steps"])
+    ok_slack, slack_msg = calib_approval.notify_held_slack(cfg["run"], hold)
+    if not ok_slack:
+        runner.warn(f"held Slack note failed: {slack_msg}")
     runner.info(f"run{cfg['run']:05d}: held (manual): {reason}")
     sys.exit(runner.EXIT_OK)
 
@@ -1095,6 +1098,11 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                         step=name, index=i, rc=rc, status="held",
                         hold_source="exit_check",
                     )
+                    ok_slack, slack_msg = calib_approval.notify_held_slack(
+                        cfg["run"], hold,
+                    )
+                    if not ok_slack:
+                        runner.warn(f"held Slack note failed: {slack_msg}")
                     runner.warn(
                         f"held after step {name} (rc={rc}); "
                         f"decide --action refit|continue before resume"
@@ -1105,6 +1113,11 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                         cfg["run"], "step_stop",
                         step=name, index=i, rc=rc, status="stopped",
                     )
+                    ok_slack, slack_msg = calib_approval.notify_stopped_slack(
+                        cfg["run"], name, i, rc,
+                    )
+                    if not ok_slack:
+                        runner.warn(f"stopped Slack note failed: {slack_msg}")
                     runner.warn(f"stopping after step {name} (rc={rc})")
             else:
                 runner.warn(f"stopping after step {name} (rc={rc})")
@@ -1126,6 +1139,11 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 step=name, index=i, rc=rc, status="held",
                 hold_source="manual",
             )
+            ok_slack, slack_msg = calib_approval.notify_held_slack(
+                cfg["run"], hold,
+            )
+            if not ok_slack:
+                runner.warn(f"held Slack note failed: {slack_msg}")
             runner.warn(f"hold requested after step {name}; chain held: {reason}")
             sys.exit(rc)
 
@@ -1142,6 +1160,11 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 cfg["run"], "stop_requested",
                 step=name, index=i, rc=rc, status="stopped",
             )
+            ok_slack, slack_msg = calib_approval.notify_stopped_slack(
+                cfg["run"], name, i, rc, detail="stop_requested",
+            )
+            if not ok_slack:
+                runner.warn(f"stopped Slack note failed: {slack_msg}")
             runner.warn(f"stop requested after step {name}; chain paused")
             sys.exit(rc)
 

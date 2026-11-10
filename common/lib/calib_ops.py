@@ -24,6 +24,7 @@ OPS = (
     "status", "stop", "resume", "approve", "revoke",
     "hold", "decide", "hdphc-again", "flag", "clear",
     "proceed", "retry", "gate-stop",
+    "phc-accept", "phc-range",
 )
 DECIDE_ACTIONS = ("refit", "continue")
 DEDUP_SECONDS = 5
@@ -31,6 +32,7 @@ USAGE = (
     "usage: /calib status|stop|resume|approve|revoke|hdphc-again <run> | "
     "hold <run> <reason...> | decide <run> refit|continue | "
     "proceed|retry|gate-stop <run> | "
+    "phc-accept <run> | phc-range <run> <det> <first> <last> | "
     "flag <run> <mode> <det> <channel> <reason...> | "
     "clear <run> <mode> <det> <channel>"
 )
@@ -143,6 +145,41 @@ def parse_calib_text(
             "mode": parts[2],
             "det": parts[3],
             "channel": parts[4],
+        }
+
+    if op == "phc-accept":
+        if len(parts) != 2:
+            return None, None, "usage: /calib phc-accept <run>", {}
+        try:
+            run = int(parts[1])
+        except ValueError:
+            return None, None, f"run must be an integer, got {parts[1]!r}", {}
+        if run < 1:
+            return None, None, "run must be >= 1", {}
+        return op, run, "", {}
+
+    if op == "phc-range":
+        if len(parts) != 5:
+            return None, None, (
+                "usage: /calib phc-range <run> <det> <first> <last>"
+            ), {}
+        try:
+            run = int(parts[1])
+        except ValueError:
+            return None, None, f"run must be an integer, got {parts[1]!r}", {}
+        if run < 1:
+            return None, None, "run must be >= 1", {}
+        try:
+            first = int(parts[3])
+            last = int(parts[4])
+        except ValueError:
+            return None, None, "first/last must be integers", {}
+        if first > last:
+            return None, None, f"first ({first}) > last ({last})", {}
+        return op, run, "", {
+            "det": parts[2],
+            "first": first,
+            "last": last,
         }
 
     if len(parts) != 2:
@@ -263,6 +300,121 @@ def _spawn_background(cmd: list[str], log_path: Path, label: str, run: int) -> t
 
 
 #_____________________________________________________________________________
+def _phc_refit_after_conf(
+    run: int,
+    *,
+    background_resume: bool,
+    timeout_s: float,
+    user_id: Optional[str],
+) -> tuple[bool, str]:
+    """decide refit + resume after phc_conf was updated."""
+    ok_d, msg_d = run_dispatch(
+        "decide", run,
+        background_resume=False,
+        timeout_s=timeout_s,
+        user_id=user_id,
+        action="refit",
+    )
+    if not ok_d:
+        return False, f"phc conf written; decide refit failed: {msg_d}"
+    ok_r, msg_r = run_dispatch(
+        "resume", run,
+        background_resume=background_resume,
+        timeout_s=timeout_s,
+        user_id=user_id,
+    )
+    if not ok_r:
+        return False, f"phc conf written; decide refit ok; resume failed: {msg_r}"
+    return True, f"phc conf written; decide refit; {msg_r}"
+
+
+#_____________________________________________________________________________
+def apply_phc_accept(
+    run: int,
+    *,
+    background_resume: bool = True,
+    timeout_s: float = 30.0,
+    user_id: Optional[str] = None,
+) -> tuple[bool, str]:
+    from . import phc_range_gate
+
+    proposal = phc_range_gate.read_proposal(run)
+    if not proposal:
+        return False, f"no {phc_range_gate.PROPOSAL_NAME} for run{int(run):05d}"
+    suffix = str(proposal.get("suffix") or "")
+    if suffix not in ("Pi", "K"):
+        return False, f"proposal suffix must be Pi|K, got {suffix!r}"
+    rows = proposal.get("proposals") or []
+    if not isinstance(rows, list) or not rows:
+        return False, "proposal has no detectors"
+    keys = []
+    for row in rows:
+        if not isinstance(row, dict):
+            return False, "proposal row must be an object"
+        det = str(row.get("det") or "")
+        try:
+            first = int(row["first"])
+            last = int(row["last"])
+        except (KeyError, TypeError, ValueError):
+            return False, f"bad first/last for det {det!r}"
+        if not det:
+            return False, "proposal row missing det"
+        keys.append(phc_range_gate.upsert_phc_conf(run, suffix, det, first, last))
+    ok, msg = _phc_refit_after_conf(
+        run,
+        background_resume=background_resume,
+        timeout_s=timeout_s,
+        user_id=user_id,
+    )
+    prefix = f"accepted {', '.join(keys)}; "
+    return ok, prefix + msg
+
+
+#_____________________________________________________________________________
+def apply_phc_range(
+    run: int,
+    det: str,
+    first: int,
+    last: int,
+    *,
+    background_resume: bool = True,
+    timeout_s: float = 30.0,
+    user_id: Optional[str] = None,
+) -> tuple[bool, str]:
+    from . import phc_range_gate
+
+    proposal = phc_range_gate.read_proposal(run)
+    suffix = "Pi"
+    if proposal and str(proposal.get("suffix") or "") in ("Pi", "K"):
+        suffix = str(proposal["suffix"])
+    elif session_wants_kaon(run):
+        suffix = "K"
+    key = phc_range_gate.upsert_phc_conf(run, suffix, det, int(first), int(last))
+    rows = []
+    if proposal and isinstance(proposal.get("proposals"), list):
+        rows = [r for r in proposal["proposals"] if isinstance(r, dict)]
+    if not rows:
+        return True, (
+            f"wrote {key} (no open proposal; "
+            f"/calib decide {int(run)} refit && /calib resume {int(run)} if held)"
+        )
+    missing = phc_range_gate.missing_proposal_dets(run, suffix, rows)
+    if missing:
+        return True, (
+            f"wrote {key}; still need range for: {', '.join(missing)} "
+            f"(/calib phc-range {int(run)} <det> <first> <last> "
+            f"or /calib phc-accept {int(run)})"
+        )
+    ok, msg = _phc_refit_after_conf(
+        run,
+        background_resume=background_resume,
+        timeout_s=timeout_s,
+        user_id=user_id,
+    )
+    return ok, f"wrote {key}; all proposal dets set; {msg}"
+
+
+#_____________________________________________________________________________
 def run_dispatch(
     command: str,
     run: int,
@@ -276,6 +428,8 @@ def run_dispatch(
     det: Optional[str] = None,
     channel: Optional[str] = None,
     subject_sha: Optional[str] = None,
+    first: Optional[int] = None,
+    last: Optional[int] = None,
 ) -> tuple[bool, str]:
     """Run a defined calib op for the run's session YAML (or extra hdphc)."""
     if command not in OPS:
@@ -285,6 +439,24 @@ def run_dispatch(
         return False, (
             f"no session YAML for run{run:05d}: {yml.name} "
             f"(run calib_session.py init first)"
+        )
+
+    if command == "phc-accept":
+        return apply_phc_accept(
+            run,
+            background_resume=background_resume,
+            timeout_s=timeout_s,
+            user_id=user_id,
+        )
+
+    if command == "phc-range":
+        if not det or first is None or last is None:
+            return False, "phc-range requires det first last"
+        return apply_phc_range(
+            run, str(det), int(first), int(last),
+            background_resume=background_resume,
+            timeout_s=timeout_s,
+            user_id=user_id,
         )
 
     if command == "hdphc-again":

@@ -219,14 +219,30 @@ def htof_phc_report(path):
 
 
 def collect_phc(a, dets, inputs):
+    from common.lib import phc_range_gate
+
     found = fresh_outputs(a.run, [(d, d, "PHC", a.suffix) for d in dets], inputs)
     data = {}
+    proposals = []
     for det, path in found.items():
+        hand_rng = phc_conf.limits_dict.get(
+            f"{a.run:05d}_{a.suffix}_{det.lower()}"
+        )
         rng = phc_range(a, det)
         try:
             d, not_used = update_phc.make_dictdata(str(path), det, good_ch_range=rng)
         except RuntimeError as e:
             runner.fail(f"{det}: {e}; nothing written")
+        # Hand range: outside segs are intentional; do not treat as PHC anomaly.
+        if hand_rng is not None:
+            data.update(d)
+            ok(
+                f"{det:<6}", len(d),
+                f" (hand range {hand_rng}; mean of used segments for {not_used})",
+            )
+            if det == "HTOF":
+                htof_phc_report(str(path))
+            continue
         import uproot
         tree = uproot.open(str(path))["tree"].arrays(library="np")
         n_seg = len(tree["ch"])
@@ -235,19 +251,61 @@ def collect_phc(a, dets, inputs):
             f"phc/{det}", bad, total, calib_anomaly.PHC_BAD_RATIO, labels,
         )
         if reason:
-            calib_anomaly.remember_check_reason(a.run, reason)
+            ch_list = [int(c) for c in tree["ch"]]
+            proposed = phc_range_gate.propose_from_good(ch_list, not_used)
+            if proposed is None:
+                calib_anomaly.remember_check_reason(a.run, reason)
+                calib_anomaly.dump_candidates(
+                    a.run,
+                    calib_anomaly.candidates_payload(
+                        "hodo", "hdphc", det, labels, reason,
+                    ),
+                )
+                return {}, [conv.SETTLED]
+            first, last = proposed
+            proposals.append({
+                "det": det,
+                "first": first,
+                "last": last,
+                "bad": bad,
+                "total": total,
+                "labels": labels[:32],
+            })
+            continue
+        data.update(d)
+        ok(f"{det:<6}", len(d), f" (automatic; mean of used segments for {not_used})")
+        if det == "HTOF":
+            htof_phc_report(str(path))
+    if proposals:
+        payload = {
+            "run": int(a.run),
+            "suffix": str(a.suffix),
+            "proposals": proposals,
+        }
+        phc_range_gate.write_proposal(a.run, payload)
+        ok_slack, slack_msg = phc_range_gate.notify_phc_range_slack(
+            a.run, proposals,
+        )
+        if not ok_slack:
+            runner.warn(f"PHC range Slack note failed: {slack_msg}")
+        dets_s = ",".join(str(p["det"]) for p in proposals)
+        ranges_s = "; ".join(
+            f"{p['det']}[{p['first']},{p['last']}]" for p in proposals
+        )
+        calib_anomaly.remember_check_reason(
+            a.run,
+            f"phc_range_proposal: {dets_s} -> {ranges_s}",
+        )
+        for p in proposals:
             calib_anomaly.dump_candidates(
                 a.run,
                 calib_anomaly.candidates_payload(
-                    "hodo", "hdphc", det, labels, reason,
+                    "hodo", "hdphc", p["det"], p.get("labels") or [],
+                    f"phc_range_proposal:{p['det']}[{p['first']},{p['last']}]",
                 ),
             )
-            return {}, [conv.SETTLED]
-        data.update(d)
-        how = f"hand range {rng}" if rng is not None else "automatic"
-        ok(f"{det:<6}", len(d), f" ({how}; mean of used segments for {not_used})")
-        if det == "HTOF":
-            htof_phc_report(str(path))
+        # Nothing written until Accept / Custom fills phc_conf and refits.
+        return {}, [conv.SETTLED]
     return data, []
 
 

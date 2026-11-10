@@ -56,6 +56,15 @@ class CalibOpsTests(unittest.TestCase):
         self.assertEqual((op, run, err), ("gate-stop", 7, ""))
         op, run, err, extras = self.ops.parse_calib_text("hdphc-again 3")
         self.assertEqual((op, run, err, extras), ("hdphc-again", 3, "", {}))
+        op, run, err, extras = self.ops.parse_calib_text("phc-accept 2977")
+        self.assertEqual((op, run, err, extras), ("phc-accept", 2977, "", {}))
+        op, run, err, extras = self.ops.parse_calib_text(
+            "phc-range 2977 BHT 15 49",
+        )
+        self.assertEqual((op, run, err), ("phc-range", 2977, ""))
+        self.assertEqual(extras.get("det"), "BHT")
+        self.assertEqual(extras.get("first"), 15)
+        self.assertEqual(extras.get("last"), 49)
         op, run, err, extras = self.ops.parse_calib_text(
             "flag 12 hdprm BH2 seg1 looks bad",
         )
