@@ -1041,6 +1041,31 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
             runner.warn(f"stop requested after step {name}; chain paused")
             sys.exit(rc)
 
+        # Human next-step gate: pause after OK when more steps remain.
+        if not dry_run and i + 1 < n_steps:
+            hold = make_hold(
+                "step_gate",
+                f"step {name} OK; next-step gate",
+                name, i, rc,
+            )
+            base = make_payload(
+                cfg["run"], i, name, opts, rc, False, steps_hist, "held",
+                session=session, plan=plan, unverified=unverified,
+            )
+            # Do not mark_unverified: this step succeeded.
+            enter_held(cfg["run"], base, hold, "hold", cfg_steps=None)
+            ok_slack, slack_msg = calib_approval.notify_step_gate_slack(
+                cfg["run"], name, i,
+            )
+            if not ok_slack:
+                runner.warn(f"step-gate Slack note failed: {slack_msg}")
+            runner.info(
+                f"held after step {name} (step_gate); "
+                f"Slack Proceed / Refit / Stop, or "
+                f"./ops.py decide {cfg['run']} continue|refit then resume"
+            )
+            sys.exit(rc)
+
     done_rc = overall_rc(steps_hist, fallback=last_rc)
     if not dry_run:
         base = make_payload(

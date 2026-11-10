@@ -23,12 +23,14 @@ EXTRA_HDPHC_SCRIPT = PROJECT_ROOT / "calibration" / "scripts" / "extra_hdphc_ite
 OPS = (
     "status", "stop", "resume", "approve", "revoke",
     "hold", "decide", "hdphc-again", "flag", "clear",
+    "proceed", "retry", "gate-stop",
 )
 DECIDE_ACTIONS = ("refit", "continue")
 DEDUP_SECONDS = 5
 USAGE = (
     "usage: /calib status|stop|resume|approve|revoke|hdphc-again <run> | "
     "hold <run> <reason...> | decide <run> refit|continue | "
+    "proceed|retry|gate-stop <run> | "
     "flag <run> <mode> <det> <channel> <reason...> | "
     "clear <run> <mode> <det> <channel>"
 )
@@ -342,6 +344,43 @@ def run_dispatch(
         elif reason:
             cmd += ["--reason", str(reason).strip()]
 
+    if command in ("proceed", "retry"):
+        action = "continue" if command == "proceed" else "refit"
+        ok_d, msg_d = run_dispatch(
+            "decide", run,
+            background_resume=False,
+            timeout_s=timeout_s,
+            user_id=user_id,
+            action=action,
+        )
+        if not ok_d:
+            return False, f"{command}: decide {action} failed: {msg_d}"
+        ok_r, msg_r = run_dispatch(
+            "resume", run,
+            background_resume=background_resume,
+            timeout_s=timeout_s,
+            user_id=user_id,
+        )
+        if not ok_r:
+            return False, f"{command}: decide {action} ok; resume failed: {msg_r}"
+        return True, f"{command}: decide {action}; {msg_r}"
+
+    if command == "gate-stop":
+        st = _read_dispatch_state(run)
+        if not isinstance(st, dict):
+            return False, f"no dispatch state for run{run:05d}"
+        if st.get("status") != "held":
+            return False, (
+                f"gate-stop requires status=held, got {st.get('status')!r}"
+            )
+        hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+        return True, (
+            f"stopped at step_gate "
+            f"(step={hold.get('step')} index={hold.get('index')}). "
+            f"Hand-fix then /calib retry {run} or "
+            f"/calib decide {run} refit|continue && /calib resume {run}"
+        )
+
     if command == "resume" and background_resume:
         return _spawn_background(cmd, resume_log_path(run), "resume", run)
 
@@ -363,6 +402,21 @@ def run_dispatch(
     if not text:
         text = f"{command} exit={result.returncode}"
     return result.returncode == 0, text
+
+
+#_____________________________________________________________________________
+def _read_dispatch_state(run: int) -> Optional[dict[str, Any]]:
+    path = (
+        Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}"
+        / "calib_dispatch_state.json"
+    )
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 #_____________________________________________________________________________

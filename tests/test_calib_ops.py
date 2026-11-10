@@ -48,6 +48,12 @@ class CalibOpsTests(unittest.TestCase):
         op, run, err, extras = self.ops.parse_calib_text("decide 9 continue")
         self.assertEqual((op, run, err), ("decide", 9, ""))
         self.assertEqual(extras.get("action"), "continue")
+        op, run, err, extras = self.ops.parse_calib_text("proceed 7")
+        self.assertEqual((op, run, err), ("proceed", 7, ""))
+        op, run, err, extras = self.ops.parse_calib_text("retry 7")
+        self.assertEqual((op, run, err), ("retry", 7, ""))
+        op, run, err, extras = self.ops.parse_calib_text("gate-stop 7")
+        self.assertEqual((op, run, err), ("gate-stop", 7, ""))
         op, run, err, extras = self.ops.parse_calib_text("hdphc-again 3")
         self.assertEqual((op, run, err, extras), ("hdphc-again", 3, "", {}))
         op, run, err, extras = self.ops.parse_calib_text(

@@ -716,6 +716,72 @@ def awaiting_action_blocks(run: int, sha: str) -> list[dict[str, Any]]:
 
 
 #_____________________________________________________________________________
+def step_gate_action_blocks(run: int, step: str, index: int) -> list[dict[str, Any]]:
+    """Block Kit Proceed / Refit / Stop after a successful dispatch step."""
+    run_s = str(int(run))
+    step_s = str(step or "?")
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*run{int(run):05d}* step `{step_s}` (index {int(index)}) OK. "
+                    "Next step gate — QA PDFs are above in this thread."
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "block_id": f"calib_step_gate_{run_s}_{int(index)}",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "calib_step_proceed",
+                    "text": {"type": "plain_text", "text": "次へ進む"},
+                    "style": "primary",
+                    "value": run_s,
+                },
+                {
+                    "type": "button",
+                    "action_id": "calib_step_refit",
+                    "text": {"type": "plain_text", "text": "手直ししてやり直し"},
+                    "value": run_s,
+                },
+                {
+                    "type": "button",
+                    "action_id": "calib_step_stop",
+                    "text": {"type": "plain_text", "text": "止める"},
+                    "style": "danger",
+                    "value": run_s,
+                },
+            ],
+        },
+    ]
+
+
+#_____________________________________________________________________________
+def notify_step_gate_slack(
+    run: int, step: str, index: int,
+) -> tuple[bool, str]:
+    """Thread note with next-step Proceed/Refit/Stop buttons."""
+    from . import slack_notify
+
+    step_s = str(step or "?")
+    text = (
+        f"run{int(run):05d}: step {step_s} OK. "
+        f"Proceed to the next step, refit this step, or stop? "
+        f"(QA PDFs above). /calib decide {int(run)} continue|refit"
+    )
+    return slack_notify.try_notify_failure(
+        int(run),
+        f"step_gate:{int(index)}:{step_s}",
+        text,
+        blocks=step_gate_action_blocks(int(run), step_s, int(index)),
+    )
+
+
+#_____________________________________________________________________________
 def notify_awaiting_slack(
     run: int,
     sha: str,

@@ -168,6 +168,24 @@ class DispatchTests(unittest.TestCase):
         self.write_cfg(steps)
         return self.dispatch("start", dry=dry)
 
+    def continue_through_gates(self, max_gates=5):
+        """Decide continue + resume while status is held at step_gate."""
+        for _ in range(max_gates):
+            if not self.state.is_file():
+                return
+            state = json.loads(self.state.read_text())
+            hold = state.get("hold") if isinstance(state.get("hold"), dict) else {}
+            if state.get("status") != "held" or hold.get("source") != "step_gate":
+                return
+            decided = self.dispatch_extra("decide", "--action", "continue")
+            self.assertEqual(decided.returncode, 0, decided.stderr + decided.stdout)
+            resumed = self.dispatch("resume")
+            # resume may exit with overall worst rc from history
+            self.assertIn(
+                resumed.returncode, (0, 2, 3, 4),
+                resumed.stderr + resumed.stdout,
+            )
+
     def test_nonzero_exit_records_stop(self):
         for rc in (1, 2, 4, 127, 137):
             with self.subTest(rc=rc):
@@ -211,11 +229,44 @@ class DispatchTests(unittest.TestCase):
                 result = self.run_chain(f'raise SystemExit({rc})\n',
                                         '  - hodo: {allow_skip: true}\n  - dc_resi\n')
                 self.assertEqual(result.returncode, rc, result.stderr)
+                if rc == 0:
+                    state = json.loads(self.state.read_text())
+                    self.assertEqual(state['status'], 'held')
+                    self.assertEqual(state['hold']['source'], 'step_gate')
+                    self.assertFalse((self.root / 'next').exists())
+                    self.continue_through_gates()
+                else:
+                    # allow_skip EXIT_SKIP still continues; then step_gate
+                    state = json.loads(self.state.read_text())
+                    if state.get('status') == 'held':
+                        self.continue_through_gates()
                 self.assertTrue((self.root / 'next').exists())
                 self.assertEqual(
                     json.loads(self.state.read_text())['status'],
                     'awaiting_final_approval',
                 )
+
+    def test_step_gate_holds_after_ok_before_next(self):
+        result = self.run_chain('pass\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['status'], 'held')
+        self.assertEqual(state['hold']['source'], 'step_gate')
+        self.assertEqual(state['step'], 'hodo')
+        self.assertIsNone(state['hold']['decision'])
+        self.assertFalse((self.root / 'next').exists())
+        # Stop button path: stay held
+        blocked = self.dispatch("resume")
+        self.assertEqual(blocked.returncode, 1)
+        self.assertIn('status=held', blocked.stdout)
+        # Proceed: continue + resume → dc → awaiting
+        decided = self.dispatch_extra("decide", "--action", "continue")
+        self.assertEqual(decided.returncode, 0, decided.stderr)
+        resumed = self.dispatch("resume")
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state['status'], 'awaiting_final_approval')
+        self.assertTrue((self.root / 'next').exists())
 
     def test_dry_run_has_no_state(self):
         result = self.run_chain('raise SystemExit(1)\n', dry=True)
@@ -251,6 +302,7 @@ p.write_text(json.dumps(st) + '\\n')
             f"from pathlib import Path\nPath({str(self.root / 'next')!r}).touch()\n")
         resumed = self.dispatch("resume")
         self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.continue_through_gates()
         state = json.loads(self.state.read_text())
         self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertTrue((self.root / 'next').exists())
@@ -282,6 +334,7 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertEqual(missing.returncode, 1, missing.stderr)
         ok = self.run_chain('pass\n')
         self.assertEqual(ok.returncode, 0, ok.stderr)
+        self.continue_through_gates()
         self.assertEqual(
             json.loads(self.state.read_text())['status'],
             'awaiting_final_approval',
@@ -299,6 +352,7 @@ p.write_text(json.dumps(st) + '\\n')
         (self.scripts / "iterate_dc_resi.py").write_text('pass\n')
         done = self.dispatch("start")
         self.assertEqual(done.returncode, 0, done.stderr)
+        self.continue_through_gates()
         ignored = self.dispatch("stop")
         self.assertEqual(ignored.returncode, 0, ignored.stderr)
         self.assertEqual(
@@ -374,6 +428,7 @@ p.write_text(json.dumps(st) + '\\n')
             f"from pathlib import Path\nPath({str(self.root / 'next')!r}).touch()\n")
         resumed = self.dispatch("resume")
         self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.continue_through_gates()
         state = json.loads(self.state.read_text())
         self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertEqual([e['index'] for e in state['steps']], [0, 0, 1])
@@ -431,6 +486,7 @@ p.write_text(json.dumps(st) + '\\n')
     def test_approve_and_revoke(self):
         done = self.run_chain('pass\n')
         self.assertEqual(done.returncode, 0, done.stderr)
+        self.continue_through_gates()
         state = json.loads(self.state.read_text())
         self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertTrue(state['finished'])
@@ -451,6 +507,7 @@ p.write_text(json.dumps(st) + '\\n')
     def test_approve_rejects_missing_subject(self):
         done = self.run_chain('pass\n')
         self.assertEqual(done.returncode, 0, done.stderr)
+        self.continue_through_gates()
         approved = self.dispatch("approve")
         self.assertEqual(approved.returncode, 1, approved.stdout + approved.stderr)
         self.assertIn("subject incomplete", approved.stdout + approved.stderr)
@@ -458,6 +515,7 @@ p.write_text(json.dumps(st) + '\\n')
     def test_approve_rejects_stale_subject_sha(self):
         done = self.run_chain('pass\n')
         self.assertEqual(done.returncode, 0, done.stderr)
+        self.continue_through_gates()
         self.seed_subject_files(hodo=True, dc=True)
         bad = self.dispatch_extra(
             "approve", "--subject-sha", "deadbeefdeadbeef",
@@ -487,6 +545,7 @@ p.write_text(json.dumps(st) + '\\n')
     def test_legacy_finished_status_treated_as_awaiting(self):
         done = self.run_chain('pass\n')
         self.assertEqual(done.returncode, 0)
+        self.continue_through_gates()
         state = json.loads(self.state.read_text())
         state['status'] = 'finished'
         self.state.write_text(json.dumps(state) + '\n')

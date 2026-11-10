@@ -18,10 +18,13 @@ Slash command (register /calib in the Slack app):
   /calib flag <run> <mode> <det> <channel> <reason...>
   /calib clear <run> <mode> <det> <channel>
 
-Block Kit: Approve / Revoke buttons on the awaiting-final note
-(action_id calib_approve_run / calib_revoke_run).
+Block Kit:
+  - Approve / Revoke on awaiting-final (calib_approve_run / calib_revoke_run)
+  - Proceed / Refit / Stop on step gate
+    (calib_step_proceed / calib_step_refit / calib_step_stop)
 
-Does not run start or arbitrary shell. resume and hdphc-again start in the background.
+Does not run start or arbitrary shell. resume, proceed, retry, and
+hdphc-again start resume work in the background.
 """
 from __future__ import annotations
 
@@ -118,6 +121,9 @@ def build_app(bot_cfg):
 
     app.action("calib_approve_run")(_button_action("approve"))
     app.action("calib_revoke_run")(_button_action("revoke"))
+    app.action("calib_step_proceed")(_button_action("proceed"))
+    app.action("calib_step_refit")(_button_action("retry"))
+    app.action("calib_step_stop")(_button_action("gate-stop"))
 
     return app
 
