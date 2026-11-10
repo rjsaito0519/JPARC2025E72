@@ -100,39 +100,61 @@ class BuildSubjectTests(unittest.TestCase):
         return path
 
     def _seed_hodo_complete(self):
-        hdprm = self._write_param("HDPRM", "HodoParam")
-        hdphc = self._write_param("HDPHC", "HodoPHCParam")
+        """Time-ordered hodo: hdprm → decode → t0 → decode → hdphc (final)."""
+        hdprm = self._write_param("HDPRM", "HodoParam", content=b"hdprm-v1")
+        hdphc = self._write_param("HDPHC", "HodoPHCParam", content=b"hdphc-v1")
         hodo = self.data / "run00001_Hodo.root"
-        hodo.write_bytes(b"hodo")
         (self.out / "calib/run00001/hdphc_rounds").mkdir(parents=True)
         (self.out / "calib/run00001/hdphc_rounds/summary.txt").write_text("ok\n")
-        for mode, exec_id, params in (
-            ("t0", "h_t0", [hdprm]),
-            ("hdprm", "h_hdprm", [hdprm]),
-            ("hdphc", "h_hdphc", [hdphc]),
-        ):
-            self._sealed_manifest(
-                exec_id, "hodo", mode, decode_path=hodo, param_paths=params,
-            )
+        hodo.write_bytes(b"hodo-after-hdprm")
+        self._sealed_manifest(
+            "h_hdprm", "hodo", "hdprm",
+            decode_path=hodo, param_paths=[hdprm],
+            finished_at="2026-01-01T00:00:00Z",
+        )
+        hdprm.write_bytes(b"hdprm-after-t0")
+        hodo.write_bytes(b"hodo-after-t0")
+        self._sealed_manifest(
+            "h_t0", "hodo", "t0",
+            decode_path=hodo, param_paths=[hdprm],
+            finished_at="2026-01-01T00:01:00Z",
+        )
+        hdphc.write_bytes(b"hdphc-final")
+        hodo.write_bytes(b"hodo-final")
+        self._sealed_manifest(
+            "h_hdphc", "hodo", "hdphc",
+            decode_path=hodo, param_paths=[hdphc],
+            finished_at="2026-01-01T00:02:00Z",
+        )
         return hdprm, hdphc, hodo
 
     def _seed_dc_chamber(self, *, bcin=False, modes=None):
-        dctdc = self._write_param("DCTDC", "DCTdcParam", content=b"tdc")
+        """Time-ordered dc chamber: rewrite decode between modes; final=reso."""
+        dctdc = self._write_param("DCTDC", "DCTdcParam", content=b"tdc0")
         dcdrft = self._write_param(
-            "DCDRFT", "DCDriftParam", ext=".root", content=b"drft",
+            "DCDRFT", "DCDriftParam", ext=".root", content=b"drft0",
         )
-        geo = self._write_param("DCGEO", "DCGeomParam", content=b"geo")
+        geo = self._write_param("DCGEO", "DCGeomParam", content=b"geo0")
         chamber = "BcIn" if bcin else "BcOut"
         root = self.data / f"run00001_{chamber}.root"
-        root.write_bytes(b"bc-" + chamber.encode())
+        tag = "in" if bcin else "out"
         mode_params = {
             "t0": [dctdc],
             "drift": [dcdrft],
             "resi": [geo],
             "reso": [geo],
         }
-        for mode in modes or ("t0", "drift", "resi", "reso"):
-            tag = "in" if bcin else "out"
+        contents = {
+            "t0": (b"tdc-final", b"root-t0"),
+            "drift": (b"drft-final", b"root-drift"),
+            "resi": (b"geo-resi", b"root-resi"),
+            "reso": (b"geo-final", b"root-final"),
+        }
+        for i, mode in enumerate(modes or ("t0", "drift", "resi", "reso")):
+            param_bytes, root_bytes = contents[mode]
+            for path in mode_params[mode]:
+                path.write_bytes(param_bytes)
+            root.write_bytes(root_bytes)
             self._sealed_manifest(
                 f"dc_{tag}_{mode}",
                 "dc",
@@ -140,6 +162,7 @@ class BuildSubjectTests(unittest.TestCase):
                 bcin=bcin,
                 decode_path=root,
                 param_paths=mode_params[mode],
+                finished_at=f"2026-01-01T00:{i:02d}:00Z",
             )
         return dctdc, dcdrft, geo, root
 
@@ -214,18 +237,77 @@ class BuildSubjectTests(unittest.TestCase):
         subject = calib_approval.build_subject(1, st)
         self.assertIn("qa_sealed:hodo:hdprm", subject["missing"])
 
-    def test_stale_input_token_blocks(self):
+    def test_stale_final_input_token_blocks(self):
         self._seed_hodo_complete()
         st = {
             "plan": {
                 "calib_particle": "pion",
-                "steps": [{"name": "hodo", "opts": {"skip_t0": True}}],
+                "steps": [{"name": "hodo", "opts": {}}],
             },
             "steps": [],
         }
         (self.data / "run00001_Hodo.root").write_bytes(b"hodo-rewritten")
         subject = calib_approval.build_subject(1, st)
-        self.assertTrue(any(m.startswith("qa_input:hodo:") for m in subject["missing"]))
+        self.assertIn("qa_input:hodo:hdphc", subject["missing"])
+        self.assertNotIn("qa_input:hodo:hdprm", subject["missing"])
+        self.assertNotIn("qa_input:hodo:t0", subject["missing"])
+
+    def test_time_ordered_hodo_approvable(self):
+        self._seed_hodo_complete()
+        st = {
+            "plan": {
+                "calib_particle": "pion",
+                "steps": [{"name": "hodo", "opts": {}}],
+            },
+            "steps": [],
+        }
+        subject = calib_approval.build_subject(1, st)
+        self.assertEqual(subject["missing"], [])
+        finals = {(r["family"], r["mode"], r["chamber"]) for r in subject["qa_final"]}
+        self.assertEqual(finals, {("hodo", "hdphc", "")})
+        by_mode = {m["mode"]: m for m in subject["qa_manifests"]}
+        self.assertTrue(by_mode["hdprm"]["checks_ok"])
+        self.assertFalse(by_mode["hdprm"]["final"])
+        self.assertTrue(by_mode["hdphc"]["final"])
+        from common.lib import final_qa_index
+        idx = final_qa_index.index_from_subject(1, subject)
+        names = {p["name"] for p in idx["pdfs"]}
+        self.assertIn("h_hdprm.pdf", names)
+        self.assertIn("h_hdphc.pdf", names)
+
+    def test_final_hdphc_param_change_blocks(self):
+        _hdprm, hdphc, _hodo = self._seed_hodo_complete()
+        st = {
+            "plan": {
+                "calib_particle": "pion",
+                "steps": [{"name": "hodo", "opts": {}}],
+            },
+            "steps": [],
+        }
+        self.assertEqual(calib_approval.build_subject(1, st)["missing"], [])
+        hdphc.write_bytes(b"hdphc-tampered")
+        subject = calib_approval.build_subject(1, st)
+        self.assertTrue(any(
+            m.startswith("qa_param:hodo:hdphc:") for m in subject["missing"]
+        ))
+
+    def test_time_ordered_dc_approvable(self):
+        self._seed_dc_chamber(bcin=False)
+        st = {
+            "plan": {
+                "calib_particle": "pion",
+                "steps": [{"name": "dc_chamber", "opts": {}}],
+            },
+            "steps": [],
+        }
+        subject = calib_approval.build_subject(1, st)
+        self.assertEqual(subject["missing"], [])
+        finals = {(r["family"], r["mode"], r["chamber"]) for r in subject["qa_final"]}
+        self.assertEqual(finals, {("dc", "reso", "bcout")})
+        by_mode = {m["mode"]: m for m in subject["qa_manifests"] if m["chamber"] == "bcout"}
+        self.assertTrue(by_mode["t0"]["checks_ok"])
+        self.assertFalse(by_mode["t0"]["final"])
+        self.assertTrue(by_mode["reso"]["final"])
 
     def test_particle_filters_manifest(self):
         self._sealed_manifest("k1", "hodo", "hdprm", particle="kaon")

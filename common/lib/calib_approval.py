@@ -190,6 +190,11 @@ def _qa_key_label(family: str, mode: str, chamber: str = "") -> str:
     return f"{family}:{mode}"
 
 
+_HODO_MODE_ORDER = ("t0", "hdprm", "hdphc")
+_DC_MODE_ORDER = ("t0", "drift", "resi", "reso")
+_D5_MODE_ORDER = ("pos_review",)
+
+
 #_____________________________________________________________________________
 def required_qa_keys(st: dict[str, Any]) -> set[tuple[str, str, str]]:
     """Required (family, mode, chamber) from plan steps and skip_* opts."""
@@ -222,6 +227,33 @@ def required_qa_keys(st: dict[str, Any]) -> set[tuple[str, str, str]]:
         elif name == "d5_align":
             keys.add(("d5", "pos_review", ""))
     return keys
+
+
+#_____________________________________________________________________________
+def final_qa_keys(
+    required_keys: set[tuple[str, str, str]],
+) -> set[tuple[str, str, str]]:
+    """Chain-final (family, mode, chamber) among required keys."""
+    by_group: dict[tuple[str, str], set[str]] = {}
+    for family, mode, chamber in required_keys:
+        by_group.setdefault((family, chamber), set()).add(mode)
+    finals: set[tuple[str, str, str]] = set()
+    for (family, chamber), modes in by_group.items():
+        if family == "hodo":
+            order = _HODO_MODE_ORDER
+        elif family == "dc":
+            order = _DC_MODE_ORDER
+        elif family == "d5":
+            order = _D5_MODE_ORDER
+        else:
+            order = tuple(sorted(modes))
+        last = None
+        for mode in order:
+            if mode in modes:
+                last = mode
+        if last is not None:
+            finals.add((family, last, chamber))
+    return finals
 
 
 #_____________________________________________________________________________
@@ -336,19 +368,25 @@ def _qa_correspondence_missing(
     rows: list[dict[str, Any]],
     params: list[dict[str, Any]],
     decodes: list[dict[str, Any]],
+    *,
+    final_keys: set[tuple[str, str, str]] | None = None,
 ) -> list[str]:
-    """Sealed PDF / input_token / param sha checks for required QA rows."""
+    """Sealed for all required rows; token/param vs current only for final rows."""
     missing: list[str] = []
+    finals = set(final_keys or ())
     decode_by_key = {str(d.get("key")): d for d in decodes}
     param_by_name = {str(p.get("name")): p for p in params if p.get("name")}
     for row in rows:
+        family = str(row.get("family") or "")
+        mode = str(row.get("mode") or "")
+        chamber = str(row.get("chamber") or "")
+        key = (family, mode, chamber)
+        is_final = key in finals
+        row["final"] = bool(is_final)
         if not row.get("required"):
             row["checks_ok"] = True
             row["sealed"] = []
             continue
-        family = str(row.get("family") or "")
-        mode = str(row.get("mode") or "")
-        chamber = str(row.get("chamber") or "")
         label = _qa_key_label(family, mode, chamber)
         man_name = row.get("manifest")
         man_path = qa_session.manifest_dir(int(run)) / str(man_name)
@@ -376,6 +414,10 @@ def _qa_correspondence_missing(
             }
             for p in sealed_paths
         ]
+        if not is_final:
+            # History QA: sealed integrity only (stage decode/param may differ).
+            row["checks_ok"] = True
+            continue
         tok = data.get("input_token")
         if tok:
             dec_key = _decode_key_for_qa(family, chamber)
@@ -468,6 +510,7 @@ def build_subject(run: int, st: dict[str, Any]) -> dict[str, Any]:
                 missing.append(f"decode:{key}")
 
     req_keys = required_qa_keys(st)
+    fin_keys = final_qa_keys(req_keys)
     summary = (
         Path(config.OUTPUT_DIR) / "calib" / run_tag / "hdphc_rounds" / "summary.txt"
     )
@@ -484,6 +527,7 @@ def build_subject(run: int, st: dict[str, Any]) -> dict[str, Any]:
     missing.extend(
         _qa_correspondence_missing(
             run_i, particle, qa_manifests, params, decodes,
+            final_keys=fin_keys,
         )
     )
 
@@ -511,6 +555,10 @@ def build_subject(run: int, st: dict[str, Any]) -> dict[str, Any]:
         "qa_required": [
             {"family": f, "mode": m, "chamber": c}
             for f, m, c in sorted(req_keys)
+        ],
+        "qa_final": [
+            {"family": f, "mode": m, "chamber": c}
+            for f, m, c in sorted(fin_keys)
         ],
         "missing": missing,
         "hdphc_summary_sha": hdphc_summary_sha,
