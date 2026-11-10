@@ -167,6 +167,52 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertEqual(ignored.returncode, 0, ignored.stderr)
         self.assertEqual(json.loads(self.state.read_text())['status'], 'finished')
 
+    def test_start_records_plan(self):
+        result = self.run_chain('raise SystemExit(1)\n')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        plan = json.loads(self.state.read_text())['plan']
+        self.assertEqual([e['name'] for e in plan['steps']], ['hodo', 'dc_resi'])
+        self.assertEqual(plan['calib_particle'], 'pion')
+        self.assertFalse(plan['kaon'])
+        self.assertFalse(plan['force'])
+        self.assertEqual(plan['max_iter'], 10)
+
+    def test_resume_rejects_steps_change(self):
+        first = self.run_chain('raise SystemExit(1)\n')
+        self.assertEqual(first.returncode, 1, first.stderr)
+        before = self.state.read_text()
+        (self.scripts / "iterate_dc_chamber.py").write_text('pass\n')
+        (self.scripts / "iterate_dc_resi.py").write_text(
+            f"from pathlib import Path\nPath({str(self.root / 'next')!r}).touch()\n")
+        self.write_cfg('  - dc_chamber\n  - dc_resi\n')
+        resumed = self.dispatch("resume")
+        self.assertEqual(resumed.returncode, 1, resumed.stdout + resumed.stderr)
+        self.assertIn('plan mismatch', resumed.stdout)
+        self.assertEqual(self.state.read_text(), before)
+        self.assertFalse((self.root / 'next').exists())
+
+    def test_resume_rejects_particle_change(self):
+        first = self.run_chain('raise SystemExit(1)\n')
+        self.assertEqual(first.returncode, 1, first.stderr)
+        before = self.state.read_text()
+        self.cfg.write_text('run: 1\nkaon: true\nsteps:\n  - hodo\n  - dc_resi\n')
+        resumed = self.dispatch("resume")
+        self.assertEqual(resumed.returncode, 1, resumed.stdout + resumed.stderr)
+        self.assertIn('plan mismatch', resumed.stdout)
+        self.assertEqual(self.state.read_text(), before)
+
+    def test_resume_rejects_missing_plan(self):
+        first = self.run_chain('raise SystemExit(1)\n')
+        self.assertEqual(first.returncode, 1, first.stderr)
+        state = json.loads(self.state.read_text())
+        del state['plan']
+        self.state.write_text(json.dumps(state) + '\n')
+        resumed = self.dispatch("resume")
+        self.assertEqual(resumed.returncode, 1, resumed.stdout + resumed.stderr)
+        self.assertIn('no plan fingerprint', resumed.stdout)
+        self.assertEqual(json.loads(self.state.read_text())['status'], 'stopped')
+        self.assertNotIn('plan', json.loads(self.state.read_text()))
+
 
 if __name__ == '__main__':
     unittest.main()

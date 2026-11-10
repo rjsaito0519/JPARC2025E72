@@ -253,8 +253,73 @@ def read_state(run):
 
 
 #_____________________________________________________________________________
+def plan_of(cfg):
+    """Normalized execution plan used to gate resume against the YAML."""
+    steps = []
+    for i, raw in enumerate(cfg["steps"]):
+        name, opts = normalize_step(raw, i)
+        steps.append({"name": name, "opts": {k: opts[k] for k in sorted(opts)}})
+    session = cfg.get("session") or {}
+    calib_particle = session.get("calib_particle")
+    if calib_particle is None:
+        calib_particle = "kaon" if cfg["kaon"] else "pion"
+    return {
+        "calib_particle": str(calib_particle),
+        "force": bool(cfg["force"]),
+        "kaon": bool(cfg["kaon"]),
+        "max_iter": int(cfg["max_iter"]),
+        "steps": steps,
+    }
+
+
+#_____________________________________________________________________________
+def plan_canonical(plan):
+    return json.dumps(plan, sort_keys=True, separators=(",", ":"))
+
+
+#_____________________________________________________________________________
+def plans_match(saved, current):
+    if not isinstance(saved, dict) or not isinstance(current, dict):
+        return False
+    return plan_canonical(saved) == plan_canonical(current)
+
+
+#_____________________________________________________________________________
+def require_resume_plan(cfg, st):
+    """Fail before any step if state plan is missing or disagrees with cfg."""
+    saved = st.get("plan")
+    current = plan_of(cfg)
+    if saved is None:
+        runner.fail(
+            f"run{cfg['run']:05d}: state has no plan fingerprint; "
+            f"use start (not resume)"
+        )
+    if plans_match(saved, current):
+        return
+    bits = []
+    if saved.get("calib_particle") != current.get("calib_particle") or (
+            saved.get("kaon") != current.get("kaon")):
+        bits.append(
+            f"particle {saved.get('calib_particle')!r}/{saved.get('kaon')!r} -> "
+            f"{current.get('calib_particle')!r}/{current.get('kaon')!r}"
+        )
+    if saved.get("force") != current.get("force"):
+        bits.append(f"force {saved.get('force')!r} -> {current.get('force')!r}")
+    if saved.get("max_iter") != current.get("max_iter"):
+        bits.append(f"max_iter {saved.get('max_iter')!r} -> {current.get('max_iter')!r}")
+    saved_steps = [e.get("name") for e in (saved.get("steps") or [])]
+    cur_steps = [e.get("name") for e in (current.get("steps") or [])]
+    if saved.get("steps") != current.get("steps"):
+        bits.append(f"steps {saved_steps} -> {cur_steps}")
+    detail = "; ".join(bits) if bits else "plan JSON differs"
+    runner.fail(
+        f"run{cfg['run']:05d}: plan mismatch on resume ({detail}); use start"
+    )
+
+
+#_____________________________________________________________________________
 def make_payload(run, index, name, opts, rc, finished, steps_hist, status,
-                 stop_requested=False, session=None):
+                 stop_requested=False, session=None, plan=None):
     payload = {
         "run": run,
         "index": index,
@@ -267,6 +332,8 @@ def make_payload(run, index, name, opts, rc, finished, steps_hist, status,
         "steps": steps_hist,
         "updated_at": utc_now(),
     }
+    if plan is not None:
+        payload["plan"] = plan
     if session:
         for key in SESSION_META_KEYS:
             if key in session and session[key] is not None:
@@ -345,6 +412,7 @@ def resume_start_index(st):
 def run_steps(cfg, dry_run, start_index, steps_hist, label):
     """Run cfg steps from start_index; exit via sys.exit."""
     session = cfg.get("session")
+    plan = plan_of(cfg)
     n_steps = len(cfg["steps"])
     if start_index > n_steps:
         runner.fail(f"{label}: start index {start_index} past end ({n_steps} steps)")
@@ -356,7 +424,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 cfg["run"],
                 make_payload(
                     cfg["run"], last["index"], last["step"], last.get("opts") or {},
-                    done_rc, True, steps_hist, "finished", session=session,
+                    done_rc, True, steps_hist, "finished", session=session, plan=plan,
                 ),
             )
         runner.info(f"calib_dispatch {label} finished (no remaining steps)")
@@ -381,7 +449,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 cfg["run"],
                 make_payload(
                     cfg["run"], i, name, opts, None, False, list(steps_hist), "running",
-                    session=session,
+                    session=session, plan=plan,
                 ),
             )
         if dry_run:
@@ -407,7 +475,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                     cfg["run"],
                     make_payload(
                         cfg["run"], i, name, opts, rc, False, steps_hist, "stopped",
-                        session=session,
+                        session=session, plan=plan,
                     ),
                 )
             runner.warn(f"stopping after step {name} (rc={rc})")
@@ -419,7 +487,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 cfg["run"],
                 make_payload(
                     cfg["run"], i, name, opts, rc, False, steps_hist, "stopped",
-                    session=session,
+                    session=session, plan=plan,
                 ),
             )
             runner.warn(f"stop requested after step {name}; chain paused")
@@ -431,7 +499,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
             cfg["run"],
             make_payload(
                 cfg["run"], last_index, last_name, last_opts, done_rc, True,
-                steps_hist, "finished", session=session,
+                steps_hist, "finished", session=session, plan=plan,
             ),
         )
     runner.info("calib_dispatch finished")
@@ -456,6 +524,7 @@ def do_resume(cfg, dry_run):
             f"run{cfg['run']:05d}: status={st.get('status')!r} "
             f"(resume requires status=stopped)"
         )
+    require_resume_plan(cfg, st)
     start_index = resume_start_index(st)
     hist = st.get("steps")
     if not isinstance(hist, list):
