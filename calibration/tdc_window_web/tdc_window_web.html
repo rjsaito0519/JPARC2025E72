@@ -153,19 +153,21 @@ function show(d) {
 }
 
 // .nsewdrag is recreated by relayout; re-attach after every plot update.
+// Use addEventListener (not onmousedown=) so Plotly's zoom handlers stay intact.
 function wireDragClick() {
   const drag = plot.querySelector(".nsewdrag");
-  if (!drag) return;
+  if (!drag || drag._tdcWired) return;
+  drag._tdcWired = true;
   let press = null;
-  drag.onmousedown = e => { press = {x: e.clientX, y: e.clientY}; };
-  drag.onmouseup = e => {
+  drag.addEventListener("mousedown", e => { press = {x: e.clientX, y: e.clientY}; });
+  drag.addEventListener("mouseup", e => {
     if (!press) return;
     const moved = Math.hypot(e.clientX - press.x, e.clientY - press.y);
     press = null;
     if (moved > 4) return;
     const xval = plot._fullLayout.xaxis.p2d(e.clientX - drag.getBoundingClientRect().left);
     if (Number.isFinite(xval)) addClick(xval);
-  };
+  });
 }
 
 function refreshOverlay() {
