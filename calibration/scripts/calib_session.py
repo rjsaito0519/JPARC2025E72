@@ -78,6 +78,77 @@ def steps_from_flags(*, hodo=False, bcout=False, bcin=False, d5=False):
 
 
 #_____________________________________________________________________________
+def expand_coarse_steps(
+    steps,
+    *,
+    auto=False,
+    hdphc_iter=3,
+    max_iter=10,
+):
+    """Expand hodo/dc_chamber/d5_align into fine steps unless auto=True."""
+    if auto:
+        return list(steps)
+    out = []
+    for raw in steps:
+        if isinstance(raw, str):
+            name, opts = raw, {}
+        elif isinstance(raw, dict) and len(raw) == 1:
+            name, opts = next(iter(raw.items()))
+            opts = dict(opts or {})
+        else:
+            out.append(raw)
+            continue
+
+        if name == "hodo":
+            ftof = bool(opts.get("ftof"))
+            hodo_opts = {"ftof": True} if ftof else {}
+            out.append({"hodo_hdprm": dict(hodo_opts)} if hodo_opts else "hodo_hdprm")
+            if not opts.get("skip_t0"):
+                out.append({"hodo_t0": dict(hodo_opts)} if hodo_opts else "hodo_t0")
+            if not opts.get("skip_hdphc"):
+                n = int(opts.get("hdphc_iter") or hdphc_iter)
+                if n < 1:
+                    n = 1
+                for i in range(1, n + 1):
+                    round_opts = {"hdphc_round": i}
+                    round_opts.update(hodo_opts)
+                    out.append({"hodo_hdphc": round_opts})
+                adopt = opts.get("adopt", "auto")
+                adopt_opts = {"adopt": adopt}
+                adopt_opts.update(hodo_opts)
+                out.append({"hodo_hdphc_adopt": adopt_opts})
+            continue
+
+        if name == "dc_chamber":
+            base = {}
+            if opts.get("bcin"):
+                base["bcin"] = True
+            if opts.get("separate"):
+                base["separate"] = True
+            stages = []
+            if not opts.get("skip_t0"):
+                stages.append("dc_t0")
+            if not opts.get("skip_drift"):
+                stages.append("dc_drift")
+            if not opts.get("skip_resi"):
+                stages.append("dc_ch_resi")
+            if not opts.get("skip_reso"):
+                stages.append("dc_reso")
+            for stage in stages:
+                out.append({stage: dict(base)} if base else stage)
+            continue
+
+        if name == "d5_align":
+            n = max(1, int(max_iter))
+            for i in range(1, n + 1):
+                out.append({"d5_pass": {"pass": i, "allow_skip": True}})
+            continue
+
+        out.append(raw)
+    return out
+
+
+#_____________________________________________________________________________
 def write_session(path, doc):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -155,7 +226,9 @@ def build_session_doc(
     max_iter=10,
     force=False,
     local=False,
+    auto=False,
     prompt_if_missing=True,
+    hdphc_iter=3,
 ):
     """Resolve beam fields and return a session mapping (does not write)."""
     if steps is None:
@@ -171,6 +244,9 @@ def build_session_doc(
             target = "both"
         else:
             target = "custom"
+    steps = expand_coarse_steps(
+        steps, auto=auto, hdphc_iter=hdphc_iter, max_iter=max_iter,
+    )
 
     resolved = brc.resolve(run)
     runner.info(
@@ -244,6 +320,7 @@ def build_session_doc(
         "charge_source": charge_source,
         "force": bool(force),
         "local": bool(local),
+        "auto": bool(auto),
         "max_iter": max_iter,
         "steps": steps,
         "created_at": utc_now(),
@@ -265,14 +342,17 @@ def ensure_session(
     max_iter=10,
     force=False,
     local=False,
+    auto=False,
     out=None,
     prompt_if_missing=True,
     overwrite=False,
+    hdphc_iter=3,
 ):
     """Create or reuse session YAML. Returns (path, doc).
 
     force: stored for iterate (--force on run_*).
     overwrite: rewrite the session file when it already exists.
+    auto: skip Slack step gates (coarse steps kept).
     """
     out_path = Path(out).expanduser() if out else session_path(run)
     if not out_path.is_absolute():
@@ -295,7 +375,9 @@ def ensure_session(
         max_iter=max_iter,
         force=force,
         local=local,
+        auto=auto,
         prompt_if_missing=prompt_if_missing,
+        hdphc_iter=hdphc_iter,
     )
     write_session(out_path, doc)
     runner.info(f"wrote session {out_path}")

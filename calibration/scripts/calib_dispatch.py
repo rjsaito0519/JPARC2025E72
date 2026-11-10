@@ -11,9 +11,11 @@ Usage:
   calib_dispatch.py revoke  <config.yml> [--reason TEXT]
   calib_dispatch.py resume <config.yml> [--dry-run]
 
-Steps: hodo | dc_resi [{bcin: true}] | dc_chamber [{bcin: true}] | d5_align
+Steps (coarse / --auto): hodo | dc_resi | dc_chamber | d5_align
+  Fine (default gates): hodo_hdprm|hodo_t0|hodo_hdphc|hodo_hdphc_adopt |
+    dc_t0|dc_drift|dc_ch_resi|dc_reso | d5_pass
   Optional per-step: allow_skip: true  (continue after EXIT_SKIP)
-  dc_chamber: t0→drift→resi→reso (see iterate_dc_chamber.py)
+  auto: true skips Slack step_gate between steps
 State: OUTPUT_DIR/calib/runXXXXX/calib_dispatch_state.json
   status=running at step start, stopped on chain halt or stop request,
   held on EXIT_CHECK or manual hold (needs decide before resume),
@@ -39,9 +41,14 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from common.lib import calib_approval, config, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-KNOWN_STEPS = ("hodo", "dc_resi", "dc_chamber", "d5_align")
+KNOWN_STEPS = (
+    "hodo", "hodo_hdprm", "hodo_t0", "hodo_hdphc", "hodo_hdphc_adopt",
+    "dc_resi", "dc_chamber", "dc_t0", "dc_drift", "dc_ch_resi", "dc_reso",
+    "d5_align", "d5_pass",
+)
 KNOWN_TOP_KEYS = frozenset({
     "run", "kaon", "calib_particle", "force", "max_iter", "steps", "local",
+    "auto",
     "target", "momentum_gev_c", "momentum_source",
     "beam_particle", "beam_particle_source", "charge", "charge_source",
     "created_at", "table_updated",
@@ -50,17 +57,32 @@ SESSION_META_KEYS = (
     "calib_particle", "target", "momentum_gev_c", "momentum_source",
     "beam_particle", "beam_particle_source", "charge", "charge_source",
 )
+HODO_FINE = frozenset({
+    "hodo_hdprm", "hodo_t0", "hodo_hdphc", "hodo_hdphc_adopt",
+})
+DC_CHAMBER_FINE = frozenset({
+    "dc_t0", "dc_drift", "dc_ch_resi", "dc_reso",
+})
 # Options that apply to a given step (allow_skip is common).
 STEP_OPTS = {
     "hodo": frozenset({
         "skip_t0", "skip_hdphc", "ftof", "allow_skip", "hdphc_iter", "adopt",
     }),
+    "hodo_hdprm": frozenset({"ftof", "allow_skip"}),
+    "hodo_t0": frozenset({"ftof", "allow_skip"}),
+    "hodo_hdphc": frozenset({"ftof", "allow_skip", "hdphc_round"}),
+    "hodo_hdphc_adopt": frozenset({"ftof", "allow_skip", "adopt"}),
     "dc_resi": frozenset({"bcin", "allow_skip"}),
     "dc_chamber": frozenset({
         "bcin", "allow_skip", "skip_t0", "skip_drift", "skip_resi", "skip_reso",
         "separate",
     }),
+    "dc_t0": frozenset({"bcin", "allow_skip", "separate"}),
+    "dc_drift": frozenset({"bcin", "allow_skip", "separate"}),
+    "dc_ch_resi": frozenset({"bcin", "allow_skip", "separate"}),
+    "dc_reso": frozenset({"bcin", "allow_skip", "separate"}),
     "d5_align": frozenset({"allow_skip"}),
+    "d5_pass": frozenset({"allow_skip", "pass"}),
 }
 BOOL_STEP_OPTS = frozenset({
     "bcin", "skip_t0", "skip_hdphc", "skip_drift", "skip_resi", "skip_reso",
@@ -70,6 +92,33 @@ MAX_ITER_MIN = 1
 MAX_ITER_MAX = 100
 RUN_MIN = 1
 DECIDE_ACTIONS = ("refit", "continue")
+STEP_SCRIPT = {
+    "hodo": "iterate_hodo_chain.py",
+    "hodo_hdprm": "iterate_hodo_chain.py",
+    "hodo_t0": "iterate_hodo_chain.py",
+    "hodo_hdphc": "iterate_hodo_chain.py",
+    "hodo_hdphc_adopt": "iterate_hodo_chain.py",
+    "dc_resi": "iterate_dc_resi.py",
+    "dc_chamber": "iterate_dc_chamber.py",
+    "dc_t0": "iterate_dc_chamber.py",
+    "dc_drift": "iterate_dc_chamber.py",
+    "dc_ch_resi": "iterate_dc_chamber.py",
+    "dc_reso": "iterate_dc_chamber.py",
+    "d5_align": "iterate_d5_align.py",
+    "d5_pass": "iterate_d5_align.py",
+}
+HODO_ONLY = {
+    "hodo_hdprm": "hdprm",
+    "hodo_t0": "t0",
+    "hodo_hdphc": "hdphc",
+    "hodo_hdphc_adopt": "hdphc-adopt",
+}
+DC_ONLY = {
+    "dc_t0": "t0",
+    "dc_drift": "drift",
+    "dc_ch_resi": "resi",
+    "dc_reso": "reso",
+}
 
 
 #_____________________________________________________________________________
@@ -152,6 +201,9 @@ def load_config(path):
     local = False
     if "local" in doc:
         local = require_bool(doc["local"], "config local")
+    auto = False
+    if "auto" in doc:
+        auto = require_bool(doc["auto"], "config auto")
     max_iter = 10
     if "max_iter" in doc:
         max_iter = require_int(doc["max_iter"], "config max_iter", MAX_ITER_MIN, MAX_ITER_MAX)
@@ -162,9 +214,11 @@ def load_config(path):
         "kaon": kaon,
         "force": force,
         "local": local,
+        "auto": auto,
         "max_iter": max_iter,
         "steps": steps,
         "session": meta,
+        "momentum_gev_c": doc.get("momentum_gev_c"),
     }
 
 
@@ -195,6 +249,8 @@ def normalize_step(raw, index):
             require_bool(value, f"steps[{index}].{key}")
         if key == "hdphc_iter":
             require_int(value, f"steps[{index}].hdphc_iter", MAX_ITER_MIN, MAX_ITER_MAX)
+        if key in ("hdphc_round", "pass"):
+            require_int(value, f"steps[{index}].{key}", MAX_ITER_MIN, MAX_ITER_MAX)
         if key == "adopt":
             if isinstance(value, bool) or not isinstance(value, (str, int)):
                 runner.fail(
@@ -210,6 +266,10 @@ def normalize_step(raw, index):
             if isinstance(value, int) and value < 1:
                 runner.fail(f"steps[{index}].adopt: round must be >= 1, got {value}")
             opts[key] = value
+    if name == "hodo_hdphc" and "hdphc_round" not in opts:
+        runner.fail(f"steps[{index}] (hodo_hdphc): hdphc_round is required")
+    if name == "d5_pass" and "pass" not in opts:
+        runner.fail(f"steps[{index}] (d5_pass): pass is required")
     return name, opts
 
 
@@ -225,6 +285,14 @@ CASCADE_DEPENDENTS = {
 
 #_____________________________________________________________________________
 def step_family(name):
+    if name in HODO_FINE or name == "hodo":
+        return "hodo"
+    if name in DC_CHAMBER_FINE or name == "dc_chamber":
+        return "dc_chamber"
+    if name == "dc_resi":
+        return "dc_resi"
+    if name in ("d5_align", "d5_pass"):
+        return "d5_align"
     if name in CASCADE_DEPENDENTS:
         return name
     return name
@@ -288,12 +356,7 @@ def should_continue(rc, opts):
 #_____________________________________________________________________________
 def step_cmd(name, opts, cfg, dry_run):
     run = cfg["run"]
-    parts = ["python3", str(SCRIPT_DIR / {
-        "hodo": "iterate_hodo_chain.py",
-        "dc_resi": "iterate_dc_resi.py",
-        "dc_chamber": "iterate_dc_chamber.py",
-        "d5_align": "iterate_d5_align.py",
-    }[name]), str(run)]
+    parts = ["python3", str(SCRIPT_DIR / STEP_SCRIPT[name]), str(run)]
 
     if name == "dc_resi":
         if opts.get("bcin"):
@@ -301,7 +364,7 @@ def step_cmd(name, opts, cfg, dry_run):
         else:
             parts.append("--bcout")
         parts += ["--max-iter", str(cfg["max_iter"])]
-    elif name == "dc_chamber":
+    elif name == "dc_chamber" or name in DC_CHAMBER_FINE:
         if opts.get("bcin"):
             parts.append("--bcin")
         else:
@@ -309,32 +372,47 @@ def step_cmd(name, opts, cfg, dry_run):
         parts += ["--max-iter", str(cfg["max_iter"])]
         if opts.get("separate"):
             parts.append("--separate")
-        if opts.get("skip_t0"):
-            parts.append("--skip-t0")
-        if opts.get("skip_drift"):
-            parts.append("--skip-drift")
-        if opts.get("skip_resi"):
-            parts.append("--skip-resi")
-        if opts.get("skip_reso"):
-            parts.append("--skip-reso")
-    elif name == "d5_align":
+        if name in DC_ONLY:
+            parts += ["--only", DC_ONLY[name]]
+        else:
+            if opts.get("skip_t0"):
+                parts.append("--skip-t0")
+            if opts.get("skip_drift"):
+                parts.append("--skip-drift")
+            if opts.get("skip_resi"):
+                parts.append("--skip-resi")
+            if opts.get("skip_reso"):
+                parts.append("--skip-reso")
+    elif name in ("d5_align", "d5_pass"):
         parts += ["--max-iter", str(cfg["max_iter"])]
         mom = cfg.get("momentum_gev_c")
+        if mom is None and isinstance(cfg.get("session"), dict):
+            mom = cfg["session"].get("momentum_gev_c")
         if mom is not None:
             parts += ["--mom", str(mom)]
-    elif name == "hodo":
-        if opts.get("skip_t0"):
-            parts.append("--skip-t0")
-        if opts.get("skip_hdphc"):
-            parts.append("--skip-hdphc")
+        if name == "d5_pass":
+            parts += ["--only-pass", str(opts["pass"])]
+    elif name == "hodo" or name in HODO_FINE:
+        if name in HODO_ONLY:
+            parts += ["--only", HODO_ONLY[name]]
+            if name == "hodo_hdphc":
+                parts += ["--hdphc-round", str(opts["hdphc_round"])]
+            if name == "hodo_hdphc_adopt" and "adopt" in opts:
+                parts += ["--adopt", str(opts["adopt"])]
+        else:
+            if opts.get("skip_t0"):
+                parts.append("--skip-t0")
+            if opts.get("skip_hdphc"):
+                parts.append("--skip-hdphc")
+            if "hdphc_iter" in opts:
+                parts += ["--hdphc-iter", str(opts["hdphc_iter"])]
+            if "adopt" in opts:
+                parts += ["--adopt", str(opts["adopt"])]
         if opts.get("ftof"):
             parts.append("--ftof")
-        if "hdphc_iter" in opts:
-            parts += ["--hdphc-iter", str(opts["hdphc_iter"])]
-        if "adopt" in opts:
-            parts += ["--adopt", str(opts["adopt"])]
 
-    if cfg["kaon"] and name in ("hodo", "dc_resi", "dc_chamber", "d5_align"):
+    kaon_steps = set(STEP_SCRIPT)
+    if cfg["kaon"] and name in kaon_steps:
         parts.append("--kaon")
     if cfg["force"]:
         parts.append("--force")
@@ -1156,7 +1234,8 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
             sys.exit(rc)
 
         # Human next-step gate: pause after OK when more steps remain.
-        if not dry_run and i + 1 < n_steps:
+        # --auto / session auto: true skips gates (coarse or fine steps).
+        if not dry_run and i + 1 < n_steps and not cfg.get("auto"):
             hold = make_hold(
                 "step_gate",
                 f"step {name} OK; next-step gate",

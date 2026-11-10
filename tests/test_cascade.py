@@ -35,6 +35,12 @@ class CascadeTests(unittest.TestCase):
         steps = ["hodo", "dc_chamber", {"dc_chamber": {"bcin": True}}, "d5_align"]
         self.assertEqual(self.disp.dependent_indices(steps, 2), [3])
 
+    def test_fine_hodo_invalidates_dc_and_d5(self):
+        steps = [
+            "hodo_hdprm", "hodo_t0", "dc_t0", {"d5_pass": {"pass": 1}},
+        ]
+        self.assertEqual(self.disp.dependent_indices(steps, 0), [2, 3])
+
 
 if __name__ == "__main__":
     unittest.main()

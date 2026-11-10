@@ -78,6 +78,11 @@ def parse_args():
     p.add_argument("--skip-reso", action="store_true", help="omit resolution iterate loop")
     p.add_argument("--local", action="store_true",
                    help="myrun --local (default: bsub)")
+    p.add_argument(
+        "--only", default=None,
+        choices=("t0", "drift", "resi", "reso"),
+        help="run a single stage (fine-grained dispatch)",
+    )
     a = p.parse_args()
     if a.max_iter < 1:
         runner.fail("--max-iter must be >= 1")
@@ -126,43 +131,62 @@ def main():
     )
     runner.info("chain includes create_runlist per stage")
 
-    runlist = None
-    if not a.skip_t0:
-        runlist = prepare_stage(
+    def do_t0():
+        prepare_stage(
             a.run, a.bcin, a.kaon, "tdc", local=a.local, dry_run=a.dry_run,
         )
-        rc = run_oneshot(a.run, "t0", a.bcin, a.kaon, a.force, a.dry_run)
-        if rc != runner.EXIT_OK:
-            sys.exit(rc)
+        return run_oneshot(a.run, "t0", a.bcin, a.kaon, a.force, a.dry_run)
 
-    if not a.skip_drift:
-        runlist = prepare_stage(
+    def do_drift():
+        prepare_stage(
             a.run, a.bcin, a.kaon, "drift", local=a.local, dry_run=a.dry_run,
         )
-        rc = run_oneshot(a.run, "drift", a.bcin, a.kaon, a.force, a.dry_run)
-        if rc != runner.EXIT_OK:
-            sys.exit(rc)
+        return run_oneshot(a.run, "drift", a.bcin, a.kaon, a.force, a.dry_run)
 
-    if not a.skip_resi or not a.skip_reso:
+    def do_resi():
         runlist = prepare_stage(
             a.run, a.bcin, a.kaon, "resi", local=a.local, dry_run=a.dry_run,
         )
-
-    if not a.skip_resi:
-        rc = dc_fit.run_fit_loop(
+        return dc_fit.run_fit_loop(
             a.run, "resi", a.bcin, a.kaon, a.force, a.max_iter, runlist, a.dry_run,
             separate=False, do_preflight=False, label="iterate_dc_chamber/resi",
             local=a.local, dispatch_step="dc_chamber",
         )
-        if rc != runner.EXIT_OK:
-            sys.exit(rc)
 
-    if not a.skip_reso:
-        rc = dc_fit.run_fit_loop(
+    def do_reso():
+        runlist = prepare_stage(
+            a.run, a.bcin, a.kaon, "resi", local=a.local, dry_run=a.dry_run,
+        )
+        return dc_fit.run_fit_loop(
             a.run, "reso", a.bcin, a.kaon, a.force, a.max_iter, runlist, a.dry_run,
             separate=a.separate, do_preflight=False, label="iterate_dc_chamber/reso",
             local=a.local, dispatch_step="dc_chamber",
         )
+
+    if a.only is not None:
+        runners = {
+            "t0": do_t0, "drift": do_drift, "resi": do_resi, "reso": do_reso,
+        }
+        rc = runners[a.only]()
+        sys.exit(rc)
+
+    if not a.skip_t0:
+        rc = do_t0()
+        if rc != runner.EXIT_OK:
+            sys.exit(rc)
+
+    if not a.skip_drift:
+        rc = do_drift()
+        if rc != runner.EXIT_OK:
+            sys.exit(rc)
+
+    if not a.skip_resi:
+        rc = do_resi()
+        if rc != runner.EXIT_OK:
+            sys.exit(rc)
+
+    if not a.skip_reso:
+        rc = do_reso()
         if rc != runner.EXIT_OK:
             sys.exit(rc)
 

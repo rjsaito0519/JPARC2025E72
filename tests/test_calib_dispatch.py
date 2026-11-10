@@ -272,6 +272,21 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertTrue((self.root / 'next').exists())
 
+    def test_auto_skips_step_gate(self):
+        (self.scripts / "iterate_hodo_chain.py").write_text("pass\n")
+        (self.scripts / "iterate_dc_resi.py").write_text(
+            f"from pathlib import Path\nPath({str(self.root / 'next')!r}).touch()\n"
+        )
+        self.cfg.write_text("run: 1\nauto: true\nsteps:\n  - hodo\n  - dc_resi\n")
+        result = self.dispatch("start")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state["status"], "awaiting_final_approval")
+        self.assertTrue((self.root / "next").exists())
+        prog = self.root / "out/calib/run00001/progress.jsonl"
+        rows = [json.loads(line) for line in prog.read_text().splitlines() if line.strip()]
+        self.assertFalse(any(r.get("event") == "step_gate" for r in rows))
+
     def test_dry_run_has_no_state(self):
         result = self.run_chain('raise SystemExit(1)\n', dry=True)
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -89,6 +89,31 @@ class CalibCliHelpersTests(unittest.TestCase):
         self.assertEqual(lines[1], "hodo ['hodo']")
         self.assertEqual(lines[2], "custom ['dc_chamber', 'd5_align']")
 
+    def test_expand_coarse_steps(self):
+        result = self.py(
+            "import sys\n"
+            f"sys.path.insert(0, {str(self.scripts)!r})\n"
+            "import calib_session as cs\n"
+            "fine=cs.expand_coarse_steps(['hodo'], hdphc_iter=2)\n"
+            "names=[next(iter(x)) if isinstance(x, dict) else x for x in fine]\n"
+            "print(names)\n"
+            "auto=cs.expand_coarse_steps(['hodo'], auto=True)\n"
+            "print(auto)\n"
+            "dc=cs.expand_coarse_steps([{'dc_chamber': {'bcin': True}}])\n"
+            "print([next(iter(x)) if isinstance(x, dict) else x for x in dc])\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        lines = result.stdout.strip().splitlines()
+        self.assertEqual(
+            lines[0],
+            "['hodo_hdprm', 'hodo_t0', 'hodo_hdphc', 'hodo_hdphc', "
+            "'hodo_hdphc_adopt']",
+        )
+        self.assertEqual(lines[1], "['hodo']")
+        self.assertEqual(
+            lines[2], "['dc_t0', 'dc_drift', 'dc_ch_resi', 'dc_reso']",
+        )
+
     def test_decode_cmd_local_flag(self):
         result = self.py(
             "from common.lib import decode_run\n"
@@ -111,9 +136,34 @@ class CalibCliHelpersTests(unittest.TestCase):
         self.assertTrue(path.is_file(), result.stdout)
         doc = yaml.safe_load(path.read_text())
         self.assertEqual(doc["calib_particle"], "pion")
-        self.assertEqual(doc["steps"], ["hodo"])
+        self.assertFalse(doc.get("auto", False))
+        step_names = [
+            next(iter(s)) if isinstance(s, dict) else s for s in doc["steps"]
+        ]
+        self.assertEqual(step_names[0], "hodo_hdprm")
+        self.assertIn("hodo_t0", step_names)
+        self.assertIn("hodo_hdphc", step_names)
+        self.assertIn("hodo_hdphc_adopt", step_names)
         self.assertFalse(doc.get("local", False))
         self.assertIn("iterate_hodo_chain.py", result.stdout)
+        self.assertIn("--only hdprm", result.stdout)
+
+    def test_calib_auto_keeps_coarse_steps(self):
+        result = subprocess.run(
+            [
+                sys.executable, str(self.scripts / "calib.py"), "105",
+                "--hodo", "--auto", "--dry",
+            ],
+            capture_output=True, text=True, env=self.env, timeout=20,
+            cwd=str(self.root),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        doc = yaml.safe_load(
+            (self.root / "out/calib/run00105/calib_session.yml").read_text()
+        )
+        self.assertTrue(doc["auto"])
+        self.assertEqual(doc["steps"], ["hodo"])
+        self.assertNotIn("--only", result.stdout)
 
     def test_calib_local_flag_on_session(self):
         result = subprocess.run(

@@ -170,12 +170,37 @@ def parse_args():
                    help="passed through to run_d5 pos and run_dcprm resi")
     p.add_argument("--local", action="store_true",
                    help="myrun --local (default: bsub)")
+    p.add_argument(
+        "--only-pass", type=int, default=None,
+        help="run a single outer pass (1-based; fine-grained dispatch)",
+    )
     a = p.parse_args()
     if a.max_iter < 1:
         runner.fail("--max-iter must be >= 1")
     if a.tol <= 0:
         runner.fail("--tol must be > 0")
+    if a.only_pass is not None and a.only_pass < 1:
+        runner.fail("--only-pass must be >= 1")
     return a
+
+
+#_____________________________________________________________________________
+def d5_converged_path(run):
+    return (
+        Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}" / "d5_converged.txt"
+    )
+
+
+#_____________________________________________________________________________
+def mark_d5_converged(run, pass_i):
+    path = d5_converged_path(run)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"pass={int(pass_i)}\n", encoding="utf-8")
+
+
+#_____________________________________________________________________________
+def d5_already_converged(run):
+    return d5_converged_path(run).is_file()
 
 
 #_____________________________________________________________________________
@@ -222,6 +247,16 @@ def main():
         a.run, a.bcin_runlist, require_exists=not a.dry_run,
     )
 
+    if a.only_pass is not None and not a.dry_run:
+        # Fresh gated chain: pass 1 drops a leftover marker from a prior run.
+        if a.only_pass == 1 and d5_converged_path(a.run).is_file():
+            d5_converged_path(a.run).unlink()
+        elif d5_already_converged(a.run):
+            runner.info(
+                f"d5 already converged; skip pass {a.only_pass} (EXIT_SKIP)"
+            )
+            sys.exit(runner.EXIT_SKIP)
+
     if a.dry_run:
         runner.step("iterate_d5_align dry-run")
         print(f"[dry-run] {ref_cmd(a.run, a.kaon)}")
@@ -242,8 +277,9 @@ def main():
                  runner.EXIT_CHECK, runner.EXIT_SKIP)
     last_rc = runner.EXIT_CHECK
 
-    for i in range(1, a.max_iter + 1):
-        runner.step(f"iterate_d5_align pass {i}/{a.max_iter}")
+    def one_pass(i, *, max_pass):
+        nonlocal last_rc
+        runner.step(f"iterate_d5_align pass {i}/{max_pass}")
 
         rc, _ = runner.sh(ref_cmd(a.run, a.kaon), ok=(runner.EXIT_OK,))
         runner.info(f"run_d5 ref exit={rc}")
@@ -258,23 +294,29 @@ def main():
         last_rc = rc
         action = next_action(rc)
         runner.info(f"run_d5 pos exit={rc} → {action}")
-        if action == DO_NEXT:
+        if action == STOP_OK:
             calib_progress.note_substage(
-                a.run, "d5_align", f"pos[pass={i}]", rc=rc, status="running",
+                a.run, "d5_align", f"pos[pass={i}]", rc=rc, status="done",
             )
-        else:
-            status = "done" if action == STOP_OK else "stopped"
+            mark_d5_converged(a.run, i)
+            stop_with(action)
+        if action != DO_NEXT:
             calib_progress.note_substage(
-                a.run, "d5_align", f"pos[pass={i}]", rc=rc, status=status,
+                a.run, "d5_align", f"pos[pass={i}]", rc=rc, status="stopped",
             )
             stop_with(action)
 
-        if i >= a.max_iter:
+        calib_progress.note_substage(
+            a.run, "d5_align", f"pos[pass={i}]", rc=rc, status="running",
+        )
+        if i >= max_pass:
             calib_progress.note_substage(
                 a.run, "d5_align", f"pos[pass={i}]",
                 rc=runner.EXIT_CHECK, status="stopped",
             )
-            runner.warn(f"max-iter {a.max_iter} reached after NOT_CONVERGED; stop as CHECK")
+            runner.warn(
+                f"max-iter {max_pass} reached after NOT_CONVERGED; stop as CHECK"
+            )
             sys.exit(runner.EXIT_CHECK)
 
         decode_run.run_decode(bcin_runlist, local=a.local)
@@ -294,7 +336,18 @@ def main():
         )
         if action_resi == DO_NEXT:
             decode_run.run_decode(bcin_runlist, local=a.local)
-        # EXIT_OK or after re-decode: continue outer loop with ref
+
+    if a.only_pass is not None:
+        one_pass(a.only_pass, max_pass=max(a.max_iter, a.only_pass))
+        # NOT_CONVERGED path falls through after bcin_resi → EXIT_OK so
+        # dispatch can gate and Proceed to the next pass.
+        sys.exit(runner.EXIT_OK)
+
+    if d5_converged_path(a.run).is_file():
+        d5_converged_path(a.run).unlink()
+
+    for i in range(1, a.max_iter + 1):
+        one_pass(i, max_pass=a.max_iter)
 
     runner.warn("loop ended without terminal state; stop as CHECK")
     sys.exit(last_rc if last_rc in (runner.EXIT_OK, runner.EXIT_FAIL,

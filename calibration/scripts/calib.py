@@ -3,7 +3,7 @@
 
 Usage:
   ./calib.py <run> [--pion|--kaon] [--hodo] [--bcout] [--bcin] [--d5]
-             [--local] [--dry] [--force]
+             [--local] [--dry] [--force] [--auto]
   ./calib.py <run> --init [--local] [--dry]
 
 If a prior dispatch state exists:
@@ -55,6 +55,10 @@ def parse_args():
                    help="print iterate commands only")
     p.add_argument("--force", action="store_true",
                    help="restart from the beginning (rewrite session; not while running)")
+    p.add_argument(
+        "--auto", action="store_true",
+        help="run without Slack step gates (coarse hodo/dc_chamber/d5_align)",
+    )
     p.add_argument("--momentum", type=float, default=None,
                    help="beam momentum [GeV/c] when table/UserParam missing")
     return p.parse_args()
@@ -78,7 +82,10 @@ def announce_chain(run, calib_particle, steps):
         "(UserParam / conf / runlist are created in-chain; "
         "do not hand-create runlists first)."
     )
-    if "hodo" in step_names or not step_names:
+    if (
+        any(n == "hodo" or n.startswith("hodo_") for n in step_names)
+        or not step_names
+    ):
         runner.info(
             "Hodo: prepare with ./calib.py <run> --init, set TDC windows, "
             "then start this chain. If windows still match the USER template, "
@@ -246,6 +253,7 @@ def restart_from_beginning(a, calib_particle, steps, target):
         target=target,
         momentum=a.momentum,
         local=a.local,
+        auto=a.auto,
         overwrite=True,
         prompt_if_missing=True,
     )
@@ -291,6 +299,7 @@ def main():
             target=target,
             momentum=a.momentum,
             local=a.local,
+            auto=a.auto,
             overwrite=False,
             prompt_if_missing=True,
         )
@@ -312,6 +321,7 @@ def main():
         target=target,
         momentum=a.momentum,
         local=a.local,
+        auto=a.auto,
         overwrite=a.force,
         prompt_if_missing=True,
     )

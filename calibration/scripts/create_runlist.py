@@ -41,7 +41,7 @@ MODES = {
         "root_prefix": "Hodo",
         "yml_prefix": "hodo",
         "bin": "./bin/Hodoscope",
-        "unit": 100000,
+        "unit": 50000,
         "option": "",
         "allowed_suffixes": HODO_SUFFIXES,
         "suffix_help": "0, Pi/K_hdprm, Pi/K_t0, Pi/K_hdphc",

@@ -81,6 +81,11 @@ class DispatchHodoOptsTests(unittest.TestCase):
         )
         self.assertIn("--hdphc-iter 3", cmd)
         self.assertIn("--adopt auto", cmd)
+        fine = cd.step_cmd(
+            "hodo_hdphc", {"hdphc_round": 2}, cfg, dry_run=False,
+        )
+        self.assertIn("--only hdphc", fine)
+        self.assertIn("--hdphc-round 2", fine)
 
     def test_normalize_adopt_int(self):
         import calib_dispatch as cd  # noqa: WPS433
