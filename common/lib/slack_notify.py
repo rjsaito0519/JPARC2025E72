@@ -394,11 +394,13 @@ def notify_failure(
     *,
     config_path: Path | None = None,
     dry_run: bool = False,
+    blocks: list | None = None,
 ) -> tuple[bool, str, bool]:
     """Post a short clear-failure note to the run thread.
 
     Returns (ok, message, posted). Same key+text already recorded → dedup (posted=False).
     No quality tracking beyond that. Does not change calibration exit codes.
+    Optional Block Kit `blocks` are attached to chat.postMessage.
     """
     if dry_run:
         return True, f"dry-run: failure {key}", True
@@ -427,14 +429,17 @@ def notify_failure(
         if isinstance(prev, dict) and prev.get("text") == text:
             return True, f"dedup: {key}", False
 
+        payload = {
+            "channel": cfg["channel_id"],
+            "thread_ts": thread_ts,
+            "text": text,
+        }
+        if blocks:
+            payload["blocks"] = blocks
         ok, body, msg = _api(
             "chat.postMessage",
             cfg["token"],
-            {
-                "channel": cfg["channel_id"],
-                "thread_ts": thread_ts,
-                "text": text,
-            },
+            payload,
         )
         if not ok:
             return False, msg, False
@@ -453,10 +458,14 @@ def notify_failure(
 
 
 #_____________________________________________________________________________
-def try_notify_failure(run: int, key: str, text: str) -> tuple[bool, str]:
+def try_notify_failure(
+    run: int, key: str, text: str, *, blocks: list | None = None,
+) -> tuple[bool, str]:
     """Best-effort failure note for run_*. Skip if Slack config missing/disabled."""
     try:
-        ok, msg, _posted = notify_failure(run, key, text, dry_run=False)
+        ok, msg, _posted = notify_failure(
+            run, key, text, dry_run=False, blocks=blocks,
+        )
         return ok, msg
     except _NOTIFY_TRANSPORT_ERRORS as exc:
         return False, _exc_message("try_notify_failure", exc)

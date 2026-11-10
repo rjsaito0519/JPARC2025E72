@@ -191,8 +191,46 @@ def invalidate_approval(run: int, reason: str) -> bool:
 
 
 #_____________________________________________________________________________
+def awaiting_action_blocks(run: int, sha: str) -> list[dict[str, Any]]:
+    """Block Kit Approve/Revoke buttons for the awaiting note."""
+    short = (sha or "")[:8]
+    run_s = str(int(run))
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*run{int(run):05d}* awaiting final QA approval "
+                    f"(subject_sha=`{short}…`)"
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "block_id": f"calib_awaiting_{run_s}",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "calib_approve_run",
+                    "text": {"type": "plain_text", "text": "Approve"},
+                    "style": "primary",
+                    "value": run_s,
+                },
+                {
+                    "type": "button",
+                    "action_id": "calib_revoke_run",
+                    "text": {"type": "plain_text", "text": "Revoke"},
+                    "value": run_s,
+                },
+            ],
+        },
+    ]
+
+
+#_____________________________________________________________________________
 def notify_awaiting_slack(run: int, sha: str) -> tuple[bool, str]:
-    """Short thread note that final approval is needed."""
+    """Short thread note that final approval is needed (with Block Kit buttons)."""
     from . import slack_notify
 
     short = (sha or "")[:8]
@@ -202,7 +240,10 @@ def notify_awaiting_slack(run: int, sha: str) -> tuple[bool, str]:
         f"/calib approve {int(run)}"
     )
     return slack_notify.try_notify_failure(
-        int(run), f"awaiting_final_approval:{short}", text,
+        int(run),
+        f"awaiting_final_approval:{short}",
+        text,
+        blocks=awaiting_action_blocks(int(run), sha),
     )
 
 

@@ -15,6 +15,11 @@ Slash command (register /calib in the Slack app):
   /calib hold <run> <reason...>
   /calib decide <run> refit|continue
   /calib hdphc-again <run>
+  /calib flag <run> <mode> <det> <channel> <reason...>
+  /calib clear <run> <mode> <det> <channel>
+
+Block Kit: Approve / Revoke buttons on the awaiting-final note
+(action_id calib_approve_run / calib_revoke_run).
 
 Does not run start or arbitrary shell. resume and hdphc-again start in the background.
 """
@@ -84,6 +89,34 @@ def build_app(bot_cfg):
         respond(text=message, response_type="ephemeral" if ephemeral else "in_channel")
         if not ok and not ephemeral:
             runner.warn(message)
+
+    def _button_action(op):
+        def _handler(ack, body, respond):
+            ack()
+            user_id = str(body.get("user") or {}).get("id") or ""
+            channel_id = str(
+                (body.get("channel") or {}).get("id")
+                or body.get("channel_id")
+                or ""
+            )
+            actions = body.get("actions") or []
+            value = ""
+            if actions and isinstance(actions[0], dict):
+                value = str(actions[0].get("value") or "")
+            text = f"{op} {value}".strip()
+            ok, message, ephemeral = handle_calib_request(
+                bot_cfg, user_id, channel_id, text,
+            )
+            respond(
+                text=message,
+                response_type="ephemeral" if ephemeral else "in_channel",
+            )
+            if not ok and not ephemeral:
+                runner.warn(message)
+        return _handler
+
+    app.action("calib_approve_run")(_button_action("approve"))
+    app.action("calib_revoke_run")(_button_action("revoke"))
 
     return app
 
