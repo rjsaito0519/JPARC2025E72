@@ -4,6 +4,10 @@
 Usage:
   ./calib.py <run> [--pion|--kaon] [--hodo] [--bcout] [--bcin] [--d5]
              [--local] [--dry] [--force]
+  ./calib.py <run> --init [--local] [--dry]
+
+--init: prepare Hodo.root for TDC window setting (create_runlist hodo 0 +
+decode if missing). Does not start a calib session.
 
 State ops: ./ops.py status|stop|… <run>  (or Slack /calib …).
 Prefer this over calib_session.py / calib_dispatch.py.
@@ -16,13 +20,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import calib_dispatch as cd  # noqa: E402
 import calib_session as cs  # noqa: E402
-from common.lib import calib_approval, runner  # noqa: E402
+from common.lib import (  # noqa: E402
+    calib_approval,
+    calib_runlist,
+    decode_run,
+    hodo_btof_monitor,
+    runner,
+)
 
 
 #_____________________________________________________________________________
 def parse_args():
     p = runner.Parser(__doc__)
     p.add_argument("run", type=int, help="run number")
+    p.add_argument("--init", action="store_true",
+                   help="prepare Hodo.root for TDC windows; no session/chain")
     p.add_argument("--pion", action="store_true", help="calib window pion (default)")
     p.add_argument("--kaon", action="store_true", help="calib window kaon")
     p.add_argument("--hodo", action="store_true", help="include hodo step")
@@ -60,11 +72,35 @@ def announce_chain(run, calib_particle, steps):
     )
     if "hodo" in step_names or not step_names:
         runner.info(
-            "Hodo: if TDC windows still match the USER template, the chain "
-            "stops (EXIT_CHECK). Set windows (tdcwin / set_tdc_window), then "
-            f"./ops.py decide {run} refit && ./ops.py resume {run} "
-            f"(or ./calib.py {run})."
+            "Hodo: prepare with ./calib.py <run> --init, set TDC windows, "
+            "then start this chain. If windows still match the USER template, "
+            "the chain stops (EXIT_CHECK); then "
+            f"./ops.py decide {run} refit && ./ops.py resume {run}."
         )
+
+
+#_____________________________________________________________________________
+def do_init(run, *, local=False, dry_run=False):
+    """Ensure Hodo.root exists for window setting; do not start calib."""
+    root = hodo_btof_monitor.hodo_root(run)
+    runner.info(f"calib --init run{run:05d} Hodo.root={root}")
+    if root.is_file():
+        runner.info(f"Hodo.root already present: {root}")
+    else:
+        runner.info(f"Hodo.root missing; create_runlist --hodo {run} 0 → decode")
+        calib_runlist.run_create_runlist("--hodo", run, "0", dry_run=dry_run)
+        runlist = calib_runlist.hodo_runlist_path(run)
+        if dry_run:
+            decode_run.run_decode(runlist, dry_run=True, local=local)
+        else:
+            if not runlist.is_file():
+                runner.fail(f"hodo runlist missing after create_runlist: {runlist}")
+            decode_run.run_decode(runlist, local=local)
+            if not root.is_file():
+                runner.fail(f"Hodo.root still missing after decode: {root}")
+            runner.info(f"Hodo.root ready: {root}")
+    calib_runlist.announce_tdc_window(run, after_init=True)
+    sys.exit(runner.EXIT_OK)
 
 
 #_____________________________________________________________________________
@@ -72,6 +108,10 @@ def main():
     a = parse_args()
     if a.run < 1:
         runner.fail("run must be >= 1")
+
+    if a.init:
+        do_init(a.run, local=a.local, dry_run=a.dry_run)
+
     calib_particle = cs.resolve_calib_particle(pion=a.pion, kaon=a.kaon)
     steps, target = cs.steps_from_flags(
         hodo=a.hodo, bcout=a.bcout, bcin=a.bcin, d5=a.d5,

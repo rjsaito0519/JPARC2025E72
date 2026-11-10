@@ -30,6 +30,15 @@ class CalibCliHelpersTests(unittest.TestCase):
             shutil.copy(REPO / "calibration/scripts" / name, self.scripts)
         shutil.copy(REPO / "common/lib/decode_run.py", lib)
         shutil.copy(REPO / "common/lib/beam_run_condition.py", lib)
+        shutil.copy(REPO / "common/lib/calib_runlist.py", lib)
+        (lib / "hodo_btof_monitor.py").write_text(
+            "from pathlib import Path\n"
+            "from . import config\n"
+            "def hodo_root(run):\n"
+            "    return Path(config.DATA_DIR) / f'run{int(run):05d}_Hodo.root'\n"
+        )
+        (self.scripts / "create_runlist.py").write_text("raise SystemExit(0)\n")
+        self.data = paths["data"]
         cfg = self.root / "calibration/config"
         cfg.mkdir(parents=True, exist_ok=True)
         self.table = cfg / "beam_run_condition.yml"
@@ -138,6 +147,37 @@ class CalibCliHelpersTests(unittest.TestCase):
         self.assertTrue(
             result.returncode in (0, 1),
             out,
+        )
+
+    def test_init_missing_root_dry_prints_create_0(self):
+        result = subprocess.run(
+            [sys.executable, str(self.scripts / "calib.py"), "105", "--init", "--dry"],
+            capture_output=True, text=True, env=self.env, timeout=20,
+            cwd=str(self.root),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        out = result.stdout + result.stderr
+        self.assertIn("create_runlist", out)
+        self.assertIn(" 0", out)
+        self.assertIn("--hodo", out)
+        self.assertIn("tdcwin", out.lower() + out)
+        session = self.root / "out/calib/run00105/calib_session.yml"
+        self.assertFalse(session.is_file(), " --init must not create session")
+
+    def test_init_existing_root_skips_create(self):
+        root = self.data / "run00105_Hodo.root"
+        root.write_bytes(b"root")
+        result = subprocess.run(
+            [sys.executable, str(self.scripts / "calib.py"), "105", "--init", "--dry"],
+            capture_output=True, text=True, env=self.env, timeout=20,
+            cwd=str(self.root),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        out = result.stdout + result.stderr
+        self.assertIn("already present", out)
+        self.assertNotIn("create_runlist.py --hodo 105 0", out)
+        self.assertFalse(
+            (self.root / "out/calib/run00105/calib_session.yml").is_file()
         )
 
 

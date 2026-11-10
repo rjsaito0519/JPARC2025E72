@@ -147,15 +147,46 @@ def tdc_windows_ready(run):
 
 
 #_____________________________________________________________________________
-def announce_tdc_window(run):
+def hodo_runlist_path(run):
+    return (
+        config.ANALYZER_DIR / "runmanager" / "runlist" / config.SUB_DIR
+        / f"hodo_run{int(run):05d}.yml"
+    )
+
+
+#_____________________________________________________________________________
+def announce_tdc_window(run, *, after_init=False):
+    """Guide for setting Hodo TDC windows.
+
+    after_init: called from ./calib.py --init (no session yet).
+    Otherwise: chain stopped with EXIT_CHECK (held → decide refit).
+    """
+    from . import hodo_btof_monitor as hbm
+
+    root = hbm.hodo_root(run)
+    if after_init:
+        runner.info(
+            f"run{run:05d}: set TDC windows on {root}, then start calib:\n"
+            f"  1) ~/tdcwin.sh {run}   # or set_tdc_window.py {root} BHT …\n"
+            f"  2) ./calib.py {run}"
+        )
+        return
+
     runner.warn(
         f"run{run:05d}: Hodo TDC window is not set yet (UserParam). "
-        f"Calibration starts from UserParam / create_runlist."
+        f"Prefer ./calib.py {run} --init first if Hodo.root is missing."
     )
+    if not root.is_file():
+        runner.info(
+            f"Hodo.root missing ({root}). Run:\n"
+            f"  ./calib.py {run} --init [--local]\n"
+            f"then set windows and ./calib.py {run}."
+        )
+        return
     runner.info(
-        "Set windows, then re-run the hodo step:\n"
+        "Set windows, then continue the hodo step:\n"
         f"  1) ~/tdcwin.sh {run}   # or calibration/scripts/set_tdc_window.py "
-        f"<DATA_DIR>/run{run:05d}_Hodo.root BHT …\n"
+        f"{root} BHT …\n"
         f"  2) ./ops.py decide {run} refit\n"
         f"  3) ./ops.py resume {run}   # or ./calib.py {run}"
     )
