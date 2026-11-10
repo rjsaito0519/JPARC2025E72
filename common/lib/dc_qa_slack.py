@@ -138,16 +138,13 @@ def try_post_after_dcprm(
     all_chambers: bool = False,
     session: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
-    """Best-effort post from run_dcprm. Skip if Slack config missing/disabled."""
-    _, status = load_slack_config()
-    if status in ("missing", "disabled"):
-        return True, f"slack skip: {status}"
+    """Seal QA manifest first (Slack-independent), then best-effort Slack post."""
     manifest = None
     sealed = None
     if session is not None:
         ok, msg, hashes = qa_session.verify_sources(session)
         if not ok:
-            return False, msg
+            return False, f"QA seal skipped (verify failed): {msg}"
         paths = [Path(p) for p in session["expected"]]
         sealed = qa_session.seal_outputs(session, paths)
         qa_session.attach_params(
@@ -157,6 +154,9 @@ def try_post_after_dcprm(
             session, source_hashes=hashes, output_pdfs=sealed,
         )
         manifest = qa_session.load_manifest(manifest_path)
+    _, status = load_slack_config()
+    if status in ("missing", "disabled"):
+        return True, f"slack skip: {status}"
     return post_dc_qa(
         run, mode, kaon=kaon, bcin=bcin, all_chambers=all_chambers, dry_run=False,
         manifest=manifest, pdf_paths=sealed,

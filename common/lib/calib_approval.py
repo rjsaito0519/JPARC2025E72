@@ -190,7 +190,8 @@ def _qa_key_label(family: str, mode: str, chamber: str = "") -> str:
     return f"{family}:{mode}"
 
 
-_HODO_MODE_ORDER = ("t0", "hdprm", "hdphc")
+# Matches iterate_hodo_chain: hdprm → t0 → hdphc.
+_HODO_MODE_ORDER = ("hdprm", "t0", "hdphc")
 _DC_MODE_ORDER = ("t0", "drift", "resi", "reso")
 _D5_MODE_ORDER = ("pos_review",)
 
@@ -419,13 +420,16 @@ def _qa_correspondence_missing(
             row["checks_ok"] = True
             continue
         tok = data.get("input_token")
-        if tok:
-            dec_key = _decode_key_for_qa(family, chamber)
-            dec = decode_by_key.get(dec_key) if dec_key else None
-            if dec is None or dec.get("token") != tok:
-                missing.append(f"qa_input:{label}")
-                row["checks_ok"] = False
-                continue
+        if not tok:
+            missing.append(f"qa_input:{label}")
+            row["checks_ok"] = False
+            continue
+        dec_key = _decode_key_for_qa(family, chamber)
+        dec = decode_by_key.get(dec_key) if dec_key else None
+        if dec is None or dec.get("token") != tok:
+            missing.append(f"qa_input:{label}")
+            row["checks_ok"] = False
+            continue
         snaps = _param_snapshots_from_manifest(data)
         if not snaps:
             missing.append(f"qa_param:{label}")
@@ -452,16 +456,22 @@ def build_subject(run: int, st: dict[str, Any]) -> dict[str, Any]:
     families = plan_families(st)
     run_i = int(run)
     run_tag = f"run{run_i:05d}"
+    req_keys = required_qa_keys(st)
+    fin_keys = final_qa_keys(req_keys)
+    req_modes = {mode for _fam, mode, _ch in req_keys}
 
     params: list[dict[str, Any]] = []
     decodes: list[dict[str, Any]] = []
     missing: list[str] = []
 
     if "hodo" in families:
-        for entry in (
-            _param_entry(run_i, "HDPRM", "HodoParam", suffix, key="HDPRM"),
-            _param_entry(run_i, "HDPHC", "HodoPHCParam", suffix, key="HDPHC"),
-        ):
+        if "t0" in req_modes or "hdprm" in req_modes:
+            entry = _param_entry(run_i, "HDPRM", "HodoParam", suffix, key="HDPRM")
+            params.append(entry)
+            if entry["missing"]:
+                missing.append(f"param:{entry['key']}")
+        if "hdphc" in req_modes:
+            entry = _param_entry(run_i, "HDPHC", "HodoPHCParam", suffix, key="HDPHC")
             params.append(entry)
             if entry["missing"]:
                 missing.append(f"param:{entry['key']}")
@@ -472,13 +482,20 @@ def build_subject(run: int, st: dict[str, Any]) -> dict[str, Any]:
             missing.append("decode:Hodo")
 
     if "dc" in families:
-        for entry in (
-            _param_entry(run_i, "DCTDC", "DCTdcParam", suffix, key="DCTDC"),
-            _param_entry(
+        if "t0" in req_modes:
+            entry = _param_entry(run_i, "DCTDC", "DCTdcParam", suffix, key="DCTDC")
+            params.append(entry)
+            if entry["missing"]:
+                missing.append(f"param:{entry['key']}")
+        if "drift" in req_modes:
+            entry = _param_entry(
                 run_i, "DCDRFT", "DCDriftParam", suffix, ext=".root", key="DCDRFT",
-            ),
-            _param_entry(run_i, "DCGEO", "DCGeomParam", suffix, key="DCGEO"),
-        ):
+            )
+            params.append(entry)
+            if entry["missing"]:
+                missing.append(f"param:{entry['key']}")
+        if "resi" in req_modes or "reso" in req_modes:
+            entry = _param_entry(run_i, "DCGEO", "DCGeomParam", suffix, key="DCGEO")
             params.append(entry)
             if entry["missing"]:
                 missing.append(f"param:{entry['key']}")
@@ -509,8 +526,6 @@ def build_subject(run: int, st: dict[str, Any]) -> dict[str, Any]:
             if dec["missing"]:
                 missing.append(f"decode:{key}")
 
-    req_keys = required_qa_keys(st)
-    fin_keys = final_qa_keys(req_keys)
     summary = (
         Path(config.OUTPUT_DIR) / "calib" / run_tag / "hdphc_rounds" / "summary.txt"
     )

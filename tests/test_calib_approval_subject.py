@@ -309,6 +309,52 @@ class BuildSubjectTests(unittest.TestCase):
         self.assertFalse(by_mode["t0"]["final"])
         self.assertTrue(by_mode["reso"]["final"])
 
+    def test_skip_hdphc_final_is_t0(self):
+        hdprm = self._write_param("HDPRM", "HodoParam", content=b"hdprm-v1")
+        hodo = self.data / "run00001_Hodo.root"
+        hodo.write_bytes(b"hodo-after-hdprm")
+        self._sealed_manifest(
+            "h_hdprm", "hodo", "hdprm",
+            decode_path=hodo, param_paths=[hdprm],
+            finished_at="2026-01-01T00:00:00Z",
+        )
+        hdprm.write_bytes(b"hdprm-after-t0")
+        hodo.write_bytes(b"hodo-after-t0")
+        self._sealed_manifest(
+            "h_t0", "hodo", "t0",
+            decode_path=hodo, param_paths=[hdprm],
+            finished_at="2026-01-01T00:01:00Z",
+        )
+        st = {
+            "plan": {
+                "calib_particle": "pion",
+                "steps": [{"name": "hodo", "opts": {"skip_hdphc": True}}],
+            },
+            "steps": [],
+        }
+        subject = calib_approval.build_subject(1, st)
+        self.assertEqual(subject["missing"], [])
+        finals = {(r["family"], r["mode"], r["chamber"]) for r in subject["qa_final"]}
+        self.assertEqual(finals, {("hodo", "t0", "")})
+        self.assertFalse(any(m.startswith("param:HDPHC") for m in subject["missing"]))
+        self.assertFalse(any(p.get("key") == "HDPHC" for p in subject["params"]))
+
+    def test_final_missing_input_token_blocks(self):
+        self._seed_hodo_complete()
+        man = self.out / "calib/run00001/qa_manifests/h_hdphc.json"
+        data = json.loads(man.read_text(encoding="utf-8"))
+        data["input_token"] = None
+        man.write_text(json.dumps(data) + "\n", encoding="utf-8")
+        st = {
+            "plan": {
+                "calib_particle": "pion",
+                "steps": [{"name": "hodo", "opts": {}}],
+            },
+            "steps": [],
+        }
+        subject = calib_approval.build_subject(1, st)
+        self.assertIn("qa_input:hodo:hdphc", subject["missing"])
+
     def test_particle_filters_manifest(self):
         self._sealed_manifest("k1", "hodo", "hdprm", particle="kaon")
         self._sealed_manifest("p1", "hodo", "hdprm", particle="pion")

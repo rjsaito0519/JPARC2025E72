@@ -81,16 +81,13 @@ def try_post_after_d5(
     kaon: bool = False,
     session: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
-    """Best-effort post from run_d5. Skip if Slack config missing/disabled."""
-    _, status = load_slack_config()
-    if status in ("missing", "disabled"):
-        return True, f"slack skip: {status}"
+    """Seal QA manifest first (Slack-independent), then best-effort Slack post."""
     manifest = None
     sealed_pdf = None
     if session is not None:
         ok, msg, hashes = qa_session.verify_sources(session)
         if not ok:
-            return False, msg
+            return False, f"QA seal skipped (verify failed): {msg}"
         paths = [Path(p) for p in session["expected"]]
         sealed = qa_session.seal_outputs(session, paths)
         geo = (
@@ -103,6 +100,9 @@ def try_post_after_d5(
         )
         manifest = qa_session.load_manifest(manifest_path)
         sealed_pdf = sealed[0]
+    _, status = load_slack_config()
+    if status in ("missing", "disabled"):
+        return True, f"slack skip: {status}"
     return post_d5_qa(
         run, kind, kaon=kaon, dry_run=False, manifest=manifest, pdf_path=sealed_pdf,
     )

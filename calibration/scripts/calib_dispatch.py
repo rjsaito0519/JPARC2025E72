@@ -586,6 +586,8 @@ def do_status(cfg):
     if st is None:
         runner.info(f"run{cfg['run']:05d}: not started (no {state_path(cfg['run'])})")
         sys.exit(runner.EXIT_OK)
+    if calib_approval.reconcile_stale_approval(cfg["run"]):
+        st = read_state(cfg["run"]) or st
     mom = st.get("momentum_gev_c")
     mom_src = st.get("momentum_source")
     eff = calib_approval.effective_status(st)

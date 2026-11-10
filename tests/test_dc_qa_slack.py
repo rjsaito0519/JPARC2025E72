@@ -86,5 +86,53 @@ class RunDcprmSlackRcTests(unittest.TestCase):
         self.assertIn("Slack", warn.call_args[0][0])
 
 
+class DcSealWithoutSlackTests(unittest.TestCase):
+    def test_seals_when_slack_disabled(self):
+        if str(REPO) not in sys.path:
+            sys.path.insert(0, str(REPO))
+        from common.lib import config, dc_qa_slack, qa_session
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        out = root / "out"
+        param = root / "param"
+        img = out / "img/run00001"
+        img.mkdir(parents=True)
+        pdir = param / "DCTDC" / "e72"
+        pdir.mkdir(parents=True)
+        pfile = pdir / "DCTdcParam_run00001_Pi"
+        pfile.write_bytes(b"tdc")
+        pdf = img / "run00001_BLC2_TDC_Pi.pdf"
+        pdf.write_bytes(b"%PDF-before")
+        old = {
+            "OUTPUT_DIR": config.OUTPUT_DIR,
+            "PARAM_DIR": config.PARAM_DIR,
+            "SUB_DIR": config.SUB_DIR,
+        }
+        config.OUTPUT_DIR = out
+        config.PARAM_DIR = param
+        config.SUB_DIR = "e72"
+        self.addCleanup(lambda: [setattr(config, k, v) for k, v in old.items()])
+        session = qa_session.begin(
+            1, "dc_t0", [pdf],
+            input_path=None,
+            meta={"family": "dc", "mode": "t0", "particle": "pion", "bcin": False},
+        )
+        # Simulate fit rewriting the PDF.
+        pdf.write_bytes(b"%PDF-after-fit")
+        with mock.patch.object(
+            dc_qa_slack, "load_slack_config", return_value=({}, "disabled"),
+        ), mock.patch.object(dc_qa_slack, "post_dc_qa") as post:
+            ok, msg = dc_qa_slack.try_post_after_dcprm(1, "t0", session=session)
+        self.assertTrue(ok, msg)
+        self.assertIn("slack skip", msg)
+        post.assert_not_called()
+        man = out / "calib/run00001/qa_manifests" / f"{session['exec_id']}.json"
+        self.assertTrue(man.is_file())
+        sealed = out / "calib/run00001/qa_manifests" / session["exec_id"] / pdf.name
+        self.assertTrue(sealed.is_file())
+
+
 if __name__ == "__main__":
     unittest.main()
