@@ -208,6 +208,62 @@ class SlackNotifyUnitTests(unittest.TestCase):
         self.assertFalse(posted)
         self.assertIn("slack skip", msg)
 
+    def test_api_timeout_becomes_false_not_raise(self):
+        with mock.patch(
+            "urllib.request.urlopen", side_effect=TimeoutError("timed out"),
+        ):
+            ok, body, msg = self.sn._api(
+                "chat.postMessage", "xoxb-test", {"channel": "C", "text": "t"},
+            )
+        self.assertFalse(ok)
+        self.assertEqual(body, {})
+        self.assertIn("TimeoutError", msg)
+        self.assertNotIn("xoxb-", msg)
+
+    def test_post_pdf_timeout_does_not_raise(self):
+        pdf = self.out / "img/run00005/x.pdf"
+        pdf.parent.mkdir(parents=True, exist_ok=True)
+        pdf.write_bytes(b"%PDF")
+
+        def boom_api(*_a, **_k):
+            raise TimeoutError("read timed out")
+
+        with mock.patch.object(self.sn, "_api", side_effect=boom_api):
+            ok, msg = self.sn.post_pdf(
+                5, "hdprm", pdf, "cap", config_path=self.cfg,
+            )
+        self.assertFalse(ok)
+        self.assertIn("TimeoutError", msg)
+
+    def test_save_state_oserror_does_not_raise(self):
+        pdf = self.out / "img/run00006/x.pdf"
+        pdf.parent.mkdir(parents=True, exist_ok=True)
+        pdf.write_bytes(b"%PDF")
+
+        def fake_api(method, token, payload, as_json=True):
+            if method == "chat.postMessage":
+                return True, {"ok": True, "ts": "1.2"}, "ok"
+            if method == "files.getUploadURLExternal":
+                return True, {
+                    "ok": True,
+                    "upload_url": "http://127.0.0.1/upload",
+                    "file_id": "F9",
+                }, "ok"
+            if method == "files.completeUploadExternal":
+                return True, {"ok": True}, "ok"
+            return False, {}, method
+
+        with mock.patch.object(self.sn, "_api", side_effect=fake_api), \
+             mock.patch("urllib.request.urlopen") as urlopen, \
+             mock.patch.object(self.sn, "save_state", return_value=False):
+            urlopen.return_value.__enter__.return_value.status = 200
+            urlopen.return_value.__enter__.return_value.read.return_value = b""
+            ok, msg = self.sn.post_pdf(
+                6, "hdprm", pdf, "cap", config_path=self.cfg,
+            )
+        self.assertFalse(ok)
+        self.assertIn("state save failed", msg)
+
 
 class RunHodoSlackRcTests(unittest.TestCase):
     """Slack failure must not change calibration rc from after_qa_merge."""
@@ -235,6 +291,39 @@ class RunHodoSlackRcTests(unittest.TestCase):
         self.assertEqual(rc, runner.EXIT_OK)
         warn.assert_called()
         self.assertIn("Slack", warn.call_args[0][0])
+
+    def test_after_qa_merge_keeps_rc_when_try_post_times_out(self):
+        if str(REPO) not in sys.path:
+            sys.path.insert(0, str(REPO))
+        from calibration.scripts import run_hodo as rh
+        from common.lib import runner
+
+        class Args:
+            kaon = False
+            ftof = False
+
+        with mock.patch.object(
+            rh.slack_notify, "post_hodo_qa",
+            side_effect=TimeoutError("injected"),
+        ), mock.patch.object(
+            rh.slack_notify, "load_slack_config",
+            return_value=({"token": "x", "channel_id": "C"}, "ok"),
+        ):
+            ok, msg = rh.slack_notify.try_post_hodo_after_merge(1, "hdprm")
+        self.assertFalse(ok)
+        self.assertIn("TimeoutError", msg)
+
+        with mock.patch.object(
+            rh.hodo_qa_pdf, "merge",
+            return_value=(True, "merged", Path("/tmp/x.pdf")),
+        ), mock.patch.object(
+            rh.slack_notify, "try_post_hodo_after_merge",
+            return_value=(False, "try_post_hodo_after_merge: TimeoutError"),
+        ), mock.patch.object(rh.runner, "info"), mock.patch.object(
+            rh.runner, "warn"
+        ):
+            rc = rh.after_qa_merge(1, "hdprm", Args(), runner.EXIT_OK)
+        self.assertEqual(rc, runner.EXIT_OK)
 
 
 class DiscordConfigNoEnvTests(unittest.TestCase):

@@ -18,16 +18,36 @@ from .local_notify_config import load_slack_config
 API_BASE = "https://slack.com/api"
 STATE_NAME = "slack_thread.json"
 
+# Transport / I/O failures that must not escape into calibration callers.
+# HTTPError is a URLError (and OSError); keep HTTPError first for status detail.
+_NOTIFY_TRANSPORT_ERRORS = (
+    TimeoutError,
+    ConnectionError,
+    BrokenPipeError,
+    urllib.error.HTTPError,
+    urllib.error.URLError,
+    OSError,
+)
+
 
 #_____________________________________________________________________________
 def _redact(text: str) -> str:
-    """Strip token-like / webhook-like substrings from error text."""
-    out = text
-    for needle in ("xoxb-", "xoxp-", "xoxa-", "discord.com/api/webhooks"):
+    """Strip token-like / webhook-like / signed-URL substrings from error text."""
+    out = str(text)
+    for needle in (
+        "xoxb-", "xoxp-", "xoxa-",
+        "discord.com/api/webhooks",
+        "files.slack.com",
+        "upload/v1/",
+    ):
         if needle in out:
-            out = "request failed (secret redacted)"
-            break
+            return "request failed (secret redacted)"
     return out
+
+
+#_____________________________________________________________________________
+def _exc_message(prefix: str, exc: BaseException) -> str:
+    return _redact(f"{prefix}: {type(exc).__name__}")
 
 
 #_____________________________________________________________________________
@@ -48,10 +68,15 @@ def load_state(run: int) -> dict[str, Any]:
 
 
 #_____________________________________________________________________________
-def save_state(run: int, data: dict[str, Any]) -> None:
+def save_state(run: int, data: dict[str, Any]) -> bool:
+    """Write state. Returns False on I/O failure (does not raise)."""
     path = state_path(run)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return True
+    except OSError:
+        return False
 
 
 #_____________________________________________________________________________
@@ -82,8 +107,8 @@ def _api(
         except Exception:  # noqa: BLE001
             pass
         return False, {}, _redact(f"HTTP {exc.code}: {detail or exc.reason}")
-    except urllib.error.URLError as exc:
-        return False, {}, _redact(f"URL error: {exc.reason}")
+    except _NOTIFY_TRANSPORT_ERRORS as exc:
+        return False, {}, _exc_message(f"Slack {method}", exc)
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
@@ -107,30 +132,34 @@ def ensure_run_thread(
     """Ensure a parent message for the run; return (ok, message, thread_ts)."""
     if dry_run:
         return True, f"dry-run: ensure thread run{run:05d}", "dry-run-ts"
-    cfg, status = load_slack_config(config_path)
-    if status != "ok" or cfg is None:
-        return False, f"slack config: {status}", None
+    try:
+        cfg, status = load_slack_config(config_path)
+        if status != "ok" or cfg is None:
+            return False, f"slack config: {status}", None
 
-    state = load_state(run)
-    existing = state.get("thread_ts")
-    if isinstance(existing, str) and existing:
-        return True, f"reuse thread_ts={existing}", existing
+        state = load_state(run)
+        existing = state.get("thread_ts")
+        if isinstance(existing, str) and existing:
+            return True, f"reuse thread_ts={existing}", existing
 
-    ok, body, msg = _api(
-        "chat.postMessage",
-        cfg["token"],
-        {"channel": cfg["channel_id"], "text": text},
-    )
-    if not ok:
-        return False, msg, None
-    ts = body.get("ts")
-    if not isinstance(ts, str) or not ts:
-        return False, "chat.postMessage: no ts", None
-    state["thread_ts"] = ts
-    state["channel_id"] = cfg["channel_id"]
-    state.setdefault("posts", {})
-    save_state(run, state)
-    return True, f"created thread_ts={ts}", ts
+        ok, body, msg = _api(
+            "chat.postMessage",
+            cfg["token"],
+            {"channel": cfg["channel_id"], "text": text},
+        )
+        if not ok:
+            return False, msg, None
+        ts = body.get("ts")
+        if not isinstance(ts, str) or not ts:
+            return False, "chat.postMessage: no ts", None
+        state["thread_ts"] = ts
+        state["channel_id"] = cfg["channel_id"]
+        state.setdefault("posts", {})
+        if not save_state(run, state):
+            return False, "state save failed", None
+        return True, f"created thread_ts={ts}", ts
+    except _NOTIFY_TRANSPORT_ERRORS as exc:
+        return False, _exc_message("ensure_run_thread", exc), None
 
 
 #_____________________________________________________________________________
@@ -142,9 +171,13 @@ def _upload_pdf(
     caption: str,
 ) -> tuple[bool, str]:
     pdf_path = Path(pdf_path)
-    if not pdf_path.is_file():
-        return False, f"PDF not found: {pdf_path.name}"
-    data = pdf_path.read_bytes()
+    try:
+        if not pdf_path.is_file():
+            return False, f"PDF not found: {pdf_path.name}"
+        data = pdf_path.read_bytes()
+    except OSError as exc:
+        return False, _exc_message("PDF read", exc)
+
     ok, body, msg = _api(
         "files.getUploadURLExternal",
         token,
@@ -171,8 +204,8 @@ def _upload_pdf(
                 return False, f"upload POST HTTP {resp.status}"
     except urllib.error.HTTPError as exc:
         return False, _redact(f"upload POST HTTP {exc.code}")
-    except urllib.error.URLError as exc:
-        return False, _redact(f"upload POST: {exc.reason}")
+    except _NOTIFY_TRANSPORT_ERRORS as exc:
+        return False, _exc_message("upload POST", exc)
 
     complete: dict[str, Any] = {
         "files": [{"id": file_id, "title": pdf_path.name}],
@@ -211,32 +244,36 @@ def post_pdf(
     if dry_run:
         return True, f"dry-run: post {pdf_path.name} key={key}"
 
-    cfg, status = load_slack_config(config_path)
-    if status != "ok" or cfg is None:
-        return False, f"slack config: {status}"
+    try:
+        cfg, status = load_slack_config(config_path)
+        if status != "ok" or cfg is None:
+            return False, f"slack config: {status}"
 
-    ok, msg, thread_ts = ensure_run_thread(
-        run, parent_text, config_path=config_path, dry_run=False,
-    )
-    if not ok or not thread_ts:
-        return False, msg
+        ok, msg, thread_ts = ensure_run_thread(
+            run, parent_text, config_path=config_path, dry_run=False,
+        )
+        if not ok or not thread_ts:
+            return False, msg
 
-    ok, msg = _upload_pdf(
-        cfg["token"], cfg["channel_id"], thread_ts, pdf_path, caption,
-    )
-    if not ok:
-        return False, msg
+        ok, msg = _upload_pdf(
+            cfg["token"], cfg["channel_id"], thread_ts, pdf_path, caption,
+        )
+        if not ok:
+            return False, msg
 
-    state = load_state(run)
-    posts = state.setdefault("posts", {})
-    if not isinstance(posts, dict):
-        posts = {}
-        state["posts"] = posts
-    posts[key] = {"pdf": pdf_path.name, "mode": mode, "particle": particle_suffix}
-    state["thread_ts"] = thread_ts
-    state["channel_id"] = cfg["channel_id"]
-    save_state(run, state)
-    return True, msg
+        state = load_state(run)
+        posts = state.setdefault("posts", {})
+        if not isinstance(posts, dict):
+            posts = {}
+            state["posts"] = posts
+        posts[key] = {"pdf": pdf_path.name, "mode": mode, "particle": particle_suffix}
+        state["thread_ts"] = thread_ts
+        state["channel_id"] = cfg["channel_id"]
+        if not save_state(run, state):
+            return False, "state save failed"
+        return True, msg
+    except _NOTIFY_TRANSPORT_ERRORS as exc:
+        return False, _exc_message("post_pdf", exc)
 
 
 #_____________________________________________________________________________
@@ -281,12 +318,15 @@ def try_post_hodo_after_merge(
     pdf_path: Path | None = None,
 ) -> tuple[bool, str]:
     """Best-effort post used from run_hodo. Skip quietly if config missing/disabled."""
-    _, status = load_slack_config()
-    if status in ("missing", "disabled"):
-        return True, f"slack skip: {status}"
-    return post_hodo_qa(
-        run, mode, kaon=kaon, ftof=ftof, pdf_path=pdf_path, dry_run=False,
-    )
+    try:
+        _, status = load_slack_config()
+        if status in ("missing", "disabled"):
+            return True, f"slack skip: {status}"
+        return post_hodo_qa(
+            run, mode, kaon=kaon, ftof=ftof, pdf_path=pdf_path, dry_run=False,
+        )
+    except _NOTIFY_TRANSPORT_ERRORS as exc:
+        return False, _exc_message("try_post_hodo_after_merge", exc)
 
 
 #_____________________________________________________________________________
@@ -306,52 +346,59 @@ def notify_failure(
     if dry_run:
         return True, f"dry-run: failure {key}", True
 
-    cfg, status = load_slack_config(config_path)
-    if status in ("missing", "disabled"):
-        return True, f"slack skip: {status}", False
-    if status != "ok" or cfg is None:
-        return False, f"slack config: {status}", False
+    try:
+        cfg, status = load_slack_config(config_path)
+        if status in ("missing", "disabled"):
+            return True, f"slack skip: {status}", False
+        if status != "ok" or cfg is None:
+            return False, f"slack config: {status}", False
 
-    state = load_state(run)
-    failures = state.setdefault("failures", {})
-    if not isinstance(failures, dict):
-        failures = {}
-        state["failures"] = failures
-    prev = failures.get(key)
-    if isinstance(prev, dict) and prev.get("text") == text:
-        return True, f"dedup: {key}", False
+        state = load_state(run)
+        failures = state.setdefault("failures", {})
+        if not isinstance(failures, dict):
+            failures = {}
+            state["failures"] = failures
+        prev = failures.get(key)
+        if isinstance(prev, dict) and prev.get("text") == text:
+            return True, f"dedup: {key}", False
 
-    parent = f"calib QA run{run:05d}"
-    ok, msg, thread_ts = ensure_run_thread(
-        run, parent, config_path=config_path, dry_run=False,
-    )
-    if not ok or not thread_ts:
-        return False, msg, False
+        parent = f"calib QA run{run:05d}"
+        ok, msg, thread_ts = ensure_run_thread(
+            run, parent, config_path=config_path, dry_run=False,
+        )
+        if not ok or not thread_ts:
+            return False, msg, False
 
-    ok, body, msg = _api(
-        "chat.postMessage",
-        cfg["token"],
-        {
-            "channel": cfg["channel_id"],
-            "thread_ts": thread_ts,
+        ok, body, msg = _api(
+            "chat.postMessage",
+            cfg["token"],
+            {
+                "channel": cfg["channel_id"],
+                "thread_ts": thread_ts,
+                "text": text,
+            },
+        )
+        if not ok:
+            return False, msg, False
+
+        failures[key] = {
             "text": text,
-        },
-    )
-    if not ok:
-        return False, msg, False
-
-    failures[key] = {
-        "text": text,
-        "ts": body.get("ts") if isinstance(body.get("ts"), str) else None,
-    }
-    state["thread_ts"] = thread_ts
-    state["channel_id"] = cfg["channel_id"]
-    save_state(run, state)
-    return True, f"notified failure {key}", True
+            "ts": body.get("ts") if isinstance(body.get("ts"), str) else None,
+        }
+        state["thread_ts"] = thread_ts
+        state["channel_id"] = cfg["channel_id"]
+        if not save_state(run, state):
+            return False, "state save failed", False
+        return True, f"notified failure {key}", True
+    except _NOTIFY_TRANSPORT_ERRORS as exc:
+        return False, _exc_message("notify_failure", exc), False
 
 
 #_____________________________________________________________________________
 def try_notify_failure(run: int, key: str, text: str) -> tuple[bool, str]:
     """Best-effort failure note for run_*. Skip if Slack config missing/disabled."""
-    ok, msg, _posted = notify_failure(run, key, text, dry_run=False)
-    return ok, msg
+    try:
+        ok, msg, _posted = notify_failure(run, key, text, dry_run=False)
+        return ok, msg
+    except _NOTIFY_TRANSPORT_ERRORS as exc:
+        return False, _exc_message("try_notify_failure", exc)
