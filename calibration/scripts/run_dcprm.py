@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, dc_qa_slack, runner  # noqa: E402
+from common.lib import config, dc_qa_slack, runner, slack_notify  # noqa: E402
 
 
 def chamber(args):
@@ -42,6 +42,18 @@ def after_qa_slack(run, mode, args, rc):
         runner.warn(f"Slack QA post failed: {post_msg}")
     elif not post_msg.startswith("slack skip:"):
         runner.info(post_msg)
+    if rc == runner.EXIT_CHECK:
+        suffix = "K" if args.kaon else "Pi"
+        chamber = "all" if getattr(args, "all", False) else ("bcin" if args.bcin else "bcout")
+        ok_n, nmsg = slack_notify.try_notify_failure(
+            run,
+            f"dc_{mode}_{chamber}_{suffix}",
+            f"[CHECK] run{run:05d} dc {mode} ({chamber}) exit CHECK — look at QA PDF",
+        )
+        if not ok_n:
+            runner.warn(f"Slack failure notify failed: {nmsg}")
+        elif nmsg.startswith("notified"):
+            runner.info(nmsg)
     return rc
 
 

@@ -287,3 +287,71 @@ def try_post_hodo_after_merge(
     return post_hodo_qa(
         run, mode, kaon=kaon, ftof=ftof, pdf_path=pdf_path, dry_run=False,
     )
+
+
+#_____________________________________________________________________________
+def notify_failure(
+    run: int,
+    key: str,
+    text: str,
+    *,
+    config_path: Path | None = None,
+    dry_run: bool = False,
+) -> tuple[bool, str, bool]:
+    """Post a short clear-failure note to the run thread.
+
+    Returns (ok, message, posted). Same key+text already recorded → dedup (posted=False).
+    No quality tracking beyond that. Does not change calibration exit codes.
+    """
+    if dry_run:
+        return True, f"dry-run: failure {key}", True
+
+    cfg, status = load_slack_config(config_path)
+    if status in ("missing", "disabled"):
+        return True, f"slack skip: {status}", False
+    if status != "ok" or cfg is None:
+        return False, f"slack config: {status}", False
+
+    state = load_state(run)
+    failures = state.setdefault("failures", {})
+    if not isinstance(failures, dict):
+        failures = {}
+        state["failures"] = failures
+    prev = failures.get(key)
+    if isinstance(prev, dict) and prev.get("text") == text:
+        return True, f"dedup: {key}", False
+
+    parent = f"calib QA run{run:05d}"
+    ok, msg, thread_ts = ensure_run_thread(
+        run, parent, config_path=config_path, dry_run=False,
+    )
+    if not ok or not thread_ts:
+        return False, msg, False
+
+    ok, body, msg = _api(
+        "chat.postMessage",
+        cfg["token"],
+        {
+            "channel": cfg["channel_id"],
+            "thread_ts": thread_ts,
+            "text": text,
+        },
+    )
+    if not ok:
+        return False, msg, False
+
+    failures[key] = {
+        "text": text,
+        "ts": body.get("ts") if isinstance(body.get("ts"), str) else None,
+    }
+    state["thread_ts"] = thread_ts
+    state["channel_id"] = cfg["channel_id"]
+    save_state(run, state)
+    return True, f"notified failure {key}", True
+
+
+#_____________________________________________________________________________
+def try_notify_failure(run: int, key: str, text: str) -> tuple[bool, str]:
+    """Best-effort failure note for run_*. Skip if Slack config missing/disabled."""
+    ok, msg, _posted = notify_failure(run, key, text, dry_run=False)
+    return ok, msg

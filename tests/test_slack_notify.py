@@ -173,6 +173,41 @@ class SlackNotifyUnitTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("channel_not_found", msg)
 
+    def test_notify_failure_dedup(self):
+        calls = []
+
+        def fake_api(method, token, payload, as_json=True):
+            calls.append((method, payload.get("text")))
+            if method == "chat.postMessage":
+                return True, {"ok": True, "ts": "333.444"}, "ok"
+            return False, {}, f"unexpected {method}"
+
+        with mock.patch.object(self.sn, "_api", side_effect=fake_api):
+            ok1, msg1, posted1 = self.sn.notify_failure(
+                3, "hodo_merge_hdprm_Pi", "[CHECK] merge failed",
+                config_path=self.cfg,
+            )
+            ok2, msg2, posted2 = self.sn.notify_failure(
+                3, "hodo_merge_hdprm_Pi", "[CHECK] merge failed",
+                config_path=self.cfg,
+            )
+        self.assertTrue(ok1, msg1)
+        self.assertTrue(posted1)
+        self.assertTrue(ok2, msg2)
+        self.assertFalse(posted2)
+        self.assertIn("dedup", msg2)
+        # parent create + failure note
+        self.assertEqual(sum(1 for m, _ in calls if m == "chat.postMessage"), 2)
+
+    def test_notify_failure_skip_without_config(self):
+        missing = Path(self.tmp.name) / "no_such_slack.yml"
+        ok, msg, posted = self.sn.notify_failure(
+            4, "dc_resi_bcout_Pi", "[CHECK] x", config_path=missing,
+        )
+        self.assertTrue(ok)
+        self.assertFalse(posted)
+        self.assertIn("slack skip", msg)
+
 
 class RunHodoSlackRcTests(unittest.TestCase):
     """Slack failure must not change calibration rc from after_qa_merge."""
@@ -213,6 +248,23 @@ class DiscordConfigNoEnvTests(unittest.TestCase):
             if "os.environ" in line and "DISCORD" in line
         ]
         self.assertEqual(env_hits, [])
+
+
+class TopSymlinkPolicyTests(unittest.TestCase):
+    def test_no_post_merge_calib_set_at_repo_root(self):
+        banned = [
+            "post_hodo_qa_slack.py",
+            "post_dc_qa_slack.py",
+            "post_d5_qa_slack.py",
+            "merge_hodo_qa_pdf.py",
+            "calib_dispatch.py",
+            "calib_session.py",
+            "set_tdc_window.py",
+        ]
+        for name in banned:
+            self.assertFalse((REPO / name).exists(), name)
+        for name in ("run_hodo.py", "create_runlist.py", "iterate_hodo_chain.py"):
+            self.assertTrue((REPO / name).is_symlink(), name)
 
 
 if __name__ == "__main__":

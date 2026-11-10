@@ -1,1 +1,0 @@
-calibration/scripts/post_dc_qa_slack.py

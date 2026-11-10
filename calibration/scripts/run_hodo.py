@@ -37,6 +37,16 @@ def after_qa_merge(run, mode, args, rc):
             runner.info(post_msg)
         return rc
     runner.warn(f"QA PDF merge failed: {message}")
+    suffix = "K" if args.kaon else "Pi"
+    ok_n, nmsg = slack_notify.try_notify_failure(
+        run,
+        f"hodo_merge_{mode}_{suffix}",
+        f"[CHECK] run{run:05d} hodo {mode} QA PDF merge failed: {message}",
+    )
+    if not ok_n:
+        runner.warn(f"Slack failure notify failed: {nmsg}")
+    elif nmsg.startswith("notified"):
+        runner.info(nmsg)
     if rc in (runner.EXIT_OK, runner.EXIT_SKIP, runner.EXIT_NOT_CONVERGED):
         return runner.EXIT_CHECK
     return rc

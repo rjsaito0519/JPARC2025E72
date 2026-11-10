@@ -35,7 +35,7 @@ from pathlib import Path
 from termcolor import colored
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, d5_qa_slack, runner  # noqa: E402
+from common.lib import config, d5_qa_slack, runner, slack_notify  # noqa: E402
 import calib_convergence as conv  # noqa: E402
 
 DCGEO_DIR = config.PARAM_DIR / "DCGEO" / config.SUB_DIR
@@ -376,6 +376,15 @@ def do_pos(args, s):
         if r["state"] == conv.SETTLED:
             print(colored(f"[SETTLED] {run_tag(run)}: not converging over {conv.SETTLE_PASSES} passes; "
                           "nothing written, look at the d5_pos_review PDF", "red", attrs=["bold"]))
+            ok_n, nmsg = slack_notify.try_notify_failure(
+                run,
+                f"d5_pos_settled_{s}",
+                f"[SETTLED] {run_tag(run)} d5 pos not converging — look at d5_pos_review PDF",
+            )
+            if not ok_n:
+                runner.warn(f"Slack failure notify failed: {nmsg}")
+            elif nmsg.startswith("notified"):
+                runner.info(nmsg)
         elif r["state"] == conv.SKIPPED:
             runner.info(f"{run_tag(run)} skipped: same D5 inputs already applied")
         elif r["state"] == conv.CONVERGED:
@@ -384,6 +393,15 @@ def do_pos(args, s):
             if pdf_rc != 0:
                 runner.warn(f"{run_tag(run)}: check PDF failed (exit {pdf_rc}); treating as EXIT_CHECK")
                 code = runner.worst([code, runner.EXIT_CHECK])
+                ok_n, nmsg = slack_notify.try_notify_failure(
+                    run,
+                    f"d5_plane_resi_qa_fail_{s}",
+                    f"[CHECK] {run_tag(run)} d5_plane_resi_qa failed (exit {pdf_rc})",
+                )
+                if not ok_n:
+                    runner.warn(f"Slack failure notify failed: {nmsg}")
+                elif nmsg.startswith("notified"):
+                    runner.info(nmsg)
             else:
                 after_qa_slack(run, "plane_resi_qa", s)
     sys.exit(code)
