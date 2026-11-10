@@ -86,6 +86,31 @@ class WriteBlockedTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         sh.assert_called_once()
 
+    def test_do_drift_blocked_when_held(self):
+        from calibration.scripts import run_dcprm
+
+        self._write_state(6, {
+            "status": "held",
+            "hold": {"reason": "manual"},
+            "hold_requested": False,
+        })
+        args = mock.Mock(
+            debug=False, force=False, kaon=False, bcin=False, bcout=True,
+        )
+        with mock.patch.object(
+            self.runner, "require_bins", return_value=("BLC_DRFT",),
+        ), mock.patch.object(
+            self.runner, "input_root", return_value=Path("/tmp/x.root"),
+        ), mock.patch.object(
+            run_dcprm, "_dc_session", return_value=None,
+        ), mock.patch.object(
+            run_dcprm, "after_qa_slack",
+            side_effect=lambda *a, **k: a[3],
+        ), mock.patch.object(self.runner, "sh") as sh:
+            rc = run_dcprm.do_drift(6, "Pi", args)
+        self.assertEqual(rc, self.runner.EXIT_CHECK)
+        sh.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

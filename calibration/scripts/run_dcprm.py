@@ -17,7 +17,14 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, dc_qa_slack, qa_session, runner, slack_notify  # noqa: E402
+from common.lib import (  # noqa: E402
+    calib_approval,
+    config,
+    dc_qa_slack,
+    qa_session,
+    runner,
+    slack_notify,
+)
 
 
 def chamber(args):
@@ -106,6 +113,12 @@ def do_drift(run, suffix, args):
     root = runner.input_root(run, chamber(args), suffix, args.force)
     session = _dc_session(run, suffix, args, "drift", root)
     if not args.debug:
+        blocked, reason = calib_approval.write_blocked(run)
+        if blocked:
+            runner.warn(f"drift param write blocked: {reason}")
+            return after_qa_slack(
+                run, "drift", args, runner.EXIT_CHECK, session=session,
+            )
         runner.backup_file(config.PARAM_DIR / "DCDRFT" / config.SUB_DIR / f"DCDriftParam_run{run:05d}_{suffix}.root")
     runner.step(f"run{run:05d}: BLC_DRFT ({chamber(args)})")
     runner.sh(f"{exe} {root} {suffix}" + (" --debug" if args.debug else ""))
