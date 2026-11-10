@@ -17,6 +17,7 @@ from common.lib import (  # noqa: E402
     decode_run,
     hodo_btof_monitor,
     hodo_hdphc_rounds,
+    hodo_qa_pdf,
     runner,
 )
 
@@ -121,6 +122,7 @@ def main():
     )
     entry = hodo_hdphc_rounds.snapshot_round(
         a.run, round_i, suffix, score, input_path=hodo_path,
+        qa_paths=hodo_qa_pdf.source_paths(a.run, "hdphc", a.kaon, a.ftof),
     )
     hodo_hdphc_rounds.write_summary(a.run)
     wtxt = (

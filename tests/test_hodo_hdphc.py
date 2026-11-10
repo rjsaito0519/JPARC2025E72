@@ -126,6 +126,72 @@ class SnapshotRestoreTests(unittest.TestCase):
                 self.assertEqual(e1["width"], 3.0)
                 self.assertEqual(e2["width"], 1.0)
 
+    def test_snapshot_stores_fit_qa_pdfs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = root / "out"
+            param = root / "param" / "HDPHC" / "e72"
+            param.mkdir(parents=True)
+            live = param / "HodoPHCParam_run00001_Pi"
+            live.write_text("round1\n", encoding="utf-8")
+            qa_src = root / "img" / "run00001_BHT_PHC_Pi.pdf"
+            qa_src.parent.mkdir(parents=True)
+            qa_src.write_bytes(b"%PDF-1.4 round1\n")
+            with mock.patch.object(hodo_hdphc_rounds.config, "OUTPUT_DIR", out), \
+                 mock.patch.object(hodo_hdphc_rounds.config, "PARAM_DIR", root / "param"), \
+                 mock.patch.object(hodo_hdphc_rounds.config, "SUB_DIR", "e72"):
+                hodo_hdphc_rounds.clear_rounds(1)
+                entry = hodo_hdphc_rounds.snapshot_round(
+                    1, 1, "Pi", {"width": 1.0, "n_entries": 10, "ok": True},
+                    qa_paths=[qa_src],
+                )
+                sealed = (
+                    out / "calib" / "run00001" / "hdphc_rounds" / "round_01" / "qa"
+                    / qa_src.name
+                )
+                self.assertTrue(sealed.is_file())
+                self.assertEqual(entry["qa_kind"], "fit")
+                self.assertEqual(entry["qa_files"][0]["name"], qa_src.name)
+                self.assertFalse(entry["qa_files"][0]["missing"])
+                qa_src.write_bytes(b"%PDF-1.4 overwritten\n")
+                self.assertEqual(sealed.read_bytes(), b"%PDF-1.4 round1\n")
+
+
+class QaOnlyTests(unittest.TestCase):
+    def test_qa_only_skips_update_and_merges(self):
+        sys.path.insert(0, str(REPO / "calibration" / "scripts"))
+        import run_hodo  # noqa: WPS433
+
+        args = SimpleNamespace(
+            skip_qa=False, qa_only=True, adopted_round=2,
+            kaon=False, ftof=False, force=False, debug=False,
+        )
+        with mock.patch.object(run_hodo.runner, "require_bins", return_value=["PHC"]), \
+             mock.patch.object(
+                 run_hodo.runner, "input_root", return_value=Path("/tmp/hodo.root"),
+             ), \
+             mock.patch.object(run_hodo.runner, "sh"), \
+             mock.patch.object(run_hodo.runner, "update_param") as upd, \
+             mock.patch.object(run_hodo.runner, "step"), \
+             mock.patch.object(run_hodo.runner, "info"), \
+             mock.patch.object(run_hodo.config, "hodo_detectors", return_value=["BHT"]), \
+             mock.patch.object(run_hodo, "hodo_param_path", return_value=Path("/tmp/p")), \
+             mock.patch.object(
+                 run_hodo.hodo_qa_pdf, "source_paths",
+                 return_value=[Path("/tmp/a.pdf")],
+             ), \
+             mock.patch.object(run_hodo.qa_session, "begin", return_value={"exec_id": "x"}), \
+             mock.patch.object(run_hodo.qa_session, "attach_params"), \
+             mock.patch(
+                 "common.lib.fit_overrides.write_flat_mip_left", return_value="/tmp/flat",
+             ), \
+             mock.patch.object(run_hodo, "after_qa_merge", return_value=0) as after:
+            rc = run_hodo.fit_and_update(1, "Pi", args, "hdphc", "PHC")
+        self.assertEqual(rc, 0)
+        upd.assert_not_called()
+        after.assert_called_once()
+        self.assertEqual(after.call_args[0][3], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

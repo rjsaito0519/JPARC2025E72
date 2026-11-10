@@ -2,6 +2,7 @@
 """Hodoscope calibration: fit, then write the params (update_param.py).
 
 Usage: run_hodo.py <run...> {hdprm,t0,hdphc,htof} [--kaon] [--ftof] [--debug] [--force]
+                   [--skip-qa] [--qa-only] [--adopted-round K]
   hdprm  <det>_HDPRM for the detector set of lib/config.py HODO_DETECTORS -> HDPRM
   t0     T0_Offset -> HDPRM (BH2 T0 offsets)
   hdphc  <det>_PHC for the detector set -> HDPHC
@@ -52,9 +53,10 @@ def after_qa_merge(run, mode, args, rc, session=None):
             _ok, _msg, hashes = qa_session.verify_sources(session)
             sealed = qa_session.seal_outputs(session, [out])
             suffix = "K" if args.kaon else "Pi"
-            qa_session.attach_params(
-                session, [hodo_param_path(run, mode, suffix)], role="written",
-            )
+            if not getattr(args, "qa_only", False):
+                qa_session.attach_params(
+                    session, [hodo_param_path(run, mode, suffix)], role="written",
+                )
             manifest_path = qa_session.write_manifest(
                 session, source_hashes=hashes, output_pdfs=sealed,
             )
@@ -89,20 +91,30 @@ def after_qa_merge(run, mode, args, rc, session=None):
 #_____________________________________________________________________________
 def fit_and_update(run, suffix, args, mode, bin_suffix):
     """Fit every detector of the set of `mode`, then write that mode's params."""
+    qa_only = bool(getattr(args, "qa_only", False))
+    if qa_only and mode != "hdphc":
+        runner.fail("--qa-only is only for hdphc")
+    if qa_only and getattr(args, "skip_qa", False):
+        runner.fail("--qa-only cannot be combined with --skip-qa")
     dets = config.hodo_detectors(mode, args.ftof)
     bins = runner.require_bins(*[f"{d}_{bin_suffix}" for d in dets])
     root = runner.input_root(run, "Hodo", suffix, args.force)
+    meta = {
+        "family": "hodo",
+        "mode": mode,
+        "particle": "kaon" if args.kaon else "pion",
+        "ftof": bool(args.ftof),
+        "qa_kind": "post_adopt" if qa_only else "fit",
+    }
+    adopted = getattr(args, "adopted_round", None)
+    if adopted is not None:
+        meta["adopted_round"] = int(adopted)
     session = qa_session.begin(
         run,
         f"hodo_{mode}",
         hodo_qa_pdf.source_paths(run, mode, args.kaon, args.ftof),
         input_path=root,
-        meta={
-            "family": "hodo",
-            "mode": mode,
-            "particle": "kaon" if args.kaon else "pion",
-            "ftof": bool(args.ftof),
-        },
+        meta=meta,
     )
     qa_session.attach_params(
         session, [hodo_param_path(run, mode, suffix)], role="fit_input",
@@ -114,9 +126,13 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
     os.environ["E72_FIT_OVERRIDE"] = str(flat)
     for b in bins:
         runner.sh(f"{b} {root} {suffix}")
-    rc = runner.update_param(
-        run, suffix, mode, *(["--ftof"] if args.ftof else []), debug=args.debug
-    )
+    if qa_only:
+        runner.info("--qa-only: params not written")
+        rc = runner.EXIT_OK
+    else:
+        rc = runner.update_param(
+            run, suffix, mode, *(["--ftof"] if args.ftof else []), debug=args.debug
+        )
     return after_qa_merge(run, mode, args, rc, session=session)
 
 
@@ -200,10 +216,24 @@ def main():
                              f"(lib/config.py HODO_DETECTORS: {config.HODO_DETECTORS}); t0 is unchanged")
     parser.add_argument("--skip-qa", action="store_true",
                         help="skip QA PDF merge/Slack (for intermediate hdphc iterations)")
+    parser.add_argument("--qa-only", action="store_true",
+                        help="hdphc: re-fit and merge QA without writing params "
+                             "(post-adopt final QA)")
+    parser.add_argument("--adopted-round", type=int, default=None,
+                        help="with --qa-only: 1-based hdphc round recorded in QA manifest")
     args = parser.parse_args()
+    if args.qa_only and args.mode != "hdphc":
+        runner.fail("--qa-only is only for hdphc")
+    if args.qa_only and args.skip_qa:
+        runner.fail("--qa-only cannot be combined with --skip-qa")
+    if args.adopted_round is not None and args.adopted_round < 1:
+        runner.fail("--adopted-round must be >= 1")
+    if args.adopted_round is not None and not args.qa_only:
+        runner.fail("--adopted-round requires --qa-only")
     suffix = runner.suffix_of(args)
     runner.info(f"mode {args.mode}, suffix {suffix}" + (", FTOF set" if args.ftof else "")
-                + (", --debug (no param written)" if args.debug else ""))
+                + (", --debug (no param written)" if args.debug else "")
+                + (", --qa-only" if args.qa_only else ""))
     codes = []
     if args.mode == "htof":
         codes.append(do_htof(args.runs, suffix, args))

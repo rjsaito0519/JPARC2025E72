@@ -6,9 +6,10 @@ Usage: iterate_hodo_chain.py <run> [--kaon] [--ftof] [--force] [--dry-run]
                              [--hdphc-iter N] [--adopt auto|K] [--skip-hdphc-adopt]
 
 hdprm/t0 run once. hdphc repeats N times (default 3): each pass fits, writes HDPHC,
-re-decodes, scores CBTOF robust width, and snapshots the param (no per-round QA PDF).
+re-decodes, scores CBTOF robust width, and snapshots the param plus fit-time QA PDFs.
 After the loop, the round with the smallest width is restored (or --adopt K), then a
-final decode runs and one QA merge/Slack for hdphc.
+final decode runs and `run_hodo hdphc --qa-only` regenerates post-adopt QA (no param write)
+with a manifest tied to the adopted round.
 
 Continue only on run_hodo EXIT_OK (0) for each step.
 
@@ -25,7 +26,6 @@ from common.lib import (  # noqa: E402
     hodo_hdphc_rounds,
     hodo_qa_pdf,
     runner,
-    slack_notify,
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -60,7 +60,9 @@ def resolve_hodo_runlist(run, explicit, require_exists=True):
 
 
 #_____________________________________________________________________________
-def hodo_cmd(run, mode, kaon, ftof, force, skip_qa=False):
+def hodo_cmd(
+    run, mode, kaon, ftof, force, skip_qa=False, qa_only=False, adopted_round=None,
+):
     parts = ["python3", str(RUN_HODO), str(run), mode]
     if kaon:
         parts.append("--kaon")
@@ -70,6 +72,10 @@ def hodo_cmd(run, mode, kaon, ftof, force, skip_qa=False):
         parts.append("--force")
     if skip_qa:
         parts.append("--skip-qa")
+    if qa_only:
+        parts.append("--qa-only")
+        if adopted_round is not None:
+            parts.append(f"--adopted-round {int(adopted_round)}")
     return " ".join(parts)
 
 
@@ -151,7 +157,10 @@ def main():
             )
             print(f"[dry-run] decode {runlist} + score_btof + snapshot round_{i:02d}")
         if n_hdphc and not a.skip_hdphc_adopt:
-            print(f"[dry-run] adopt {a.adopt} -> restore HDPHC + decode + QA")
+            print(
+                f"[dry-run] adopt {a.adopt} -> restore HDPHC + decode + "
+                f"run_hodo hdphc --qa-only"
+            )
         sys.exit(runner.EXIT_OK)
 
     # hdprm
@@ -180,6 +189,7 @@ def main():
         )
         entry = hodo_hdphc_rounds.snapshot_round(
             a.run, i, suffix, score, input_path=hodo_path,
+            qa_paths=hodo_qa_pdf.source_paths(a.run, "hdphc", a.kaon, a.ftof),
         )
         wtxt = (
             f"{float(entry['width']):.4f}"
@@ -206,22 +216,14 @@ def main():
     decode_run.run_decode(runlist)
     hodo_hdphc_rounds.write_summary(a.run, adopted=chosen)
 
-    # Final QA once (merge + Slack) without re-fitting.
-    ok, message, out = hodo_qa_pdf.merge(
-        a.run, "hdphc", kaon=a.kaon, ftof=a.ftof, dry_run=False, session=None,
+    # Post-adopt QA: re-fit plots on the restored param / final decode; no param write.
+    run_hodo_ok(
+        hodo_cmd(
+            a.run, "hdphc", a.kaon, a.ftof, a.force,
+            qa_only=True, adopted_round=chosen,
+        ),
+        f"hdphc[qa-only adopt={chosen}]",
     )
-    if ok:
-        runner.info(message)
-        posted, post_msg = slack_notify.try_post_hodo_after_merge(
-            a.run, "hdphc", kaon=a.kaon, ftof=a.ftof, pdf_path=out,
-        )
-        if not posted:
-            runner.warn(f"Slack QA post failed: {post_msg}")
-        elif not post_msg.startswith("slack skip:"):
-            runner.info(post_msg)
-    else:
-        runner.warn(f"QA PDF merge failed after adopt: {message}")
-        sys.exit(runner.EXIT_CHECK)
 
     runner.info(f"done: hdphc adopted round {chosen}")
     sys.exit(runner.EXIT_OK)

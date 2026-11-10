@@ -62,8 +62,9 @@ def snapshot_round(
     score: dict[str, Any],
     *,
     input_path: Path | None = None,
+    qa_paths=None,
 ) -> dict[str, Any]:
-    """Copy current HDPHC param into round_XX/ and append journal.jsonl."""
+    """Copy current HDPHC param (and optional fit QA PDFs) into round_XX/."""
     dest = round_dir(run, round_i)
     dest.mkdir(parents=True, exist_ok=True)
     src = hdphc_param_path(run, suffix)
@@ -74,6 +75,27 @@ def snapshot_round(
     tok = None
     if input_path is not None and Path(input_path).is_file():
         tok = qa_session.input_token(input_path)
+    qa_files: list[dict[str, Any]] = []
+    if qa_paths:
+        qa_dir = dest / "qa"
+        qa_dir.mkdir(parents=True, exist_ok=True)
+        for path in qa_paths:
+            path = Path(path)
+            if not path.is_file():
+                qa_files.append({
+                    "name": path.name,
+                    "sha": None,
+                    "missing": True,
+                })
+                continue
+            sealed = qa_dir / path.name
+            shutil.copy2(path, sealed)
+            qa_files.append({
+                "name": path.name,
+                "sha": qa_session.file_sha256(sealed),
+                "path": str(sealed),
+                "missing": False,
+            })
     entry = {
         "round": int(round_i),
         "width": score.get("width"),
@@ -82,6 +104,8 @@ def snapshot_round(
         "input_token": tok,
         "param_sha": param_sha,
         "param_file": src.name,
+        "qa_kind": "fit",
+        "qa_files": qa_files,
         "at": _utc_now(),
         "per_det": score.get("per_det") or {},
     }
