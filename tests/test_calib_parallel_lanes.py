@@ -98,6 +98,30 @@ class ChooseActionParallelTests(unittest.TestCase):
                 self.calib.choose_action(2847, {"status": "running"}, force=False,
                                          interactive=True, want_lanes=["hodo"])
 
+    def test_held_lane_without_waiter_can_restart(self):
+        state = {"status": "held", "stop_requested": True}
+        with mock.patch.object(self.calib.cd, "collect_lane_statuses", return_value={"hodo": "held"}), \
+                mock.patch.object(self.calib.cd, "read_state", return_value=state), \
+                mock.patch.object(sys.stdin, "isatty", return_value=True), \
+                mock.patch.object(self.calib, "prompt_continue_or_restart", return_value=self.calib.CHOICE_RESTART):
+            choice = self.calib.choose_action(3772, state, force=False,
+                                             interactive=True, want_lanes=["hodo"])
+            self.assertEqual(choice, self.calib.CHOICE_RESTART)
+            forced = self.calib.choose_action(3772, state, force=True,
+                                              interactive=False, want_lanes=["hodo"])
+            self.assertEqual(forced, self.calib.CHOICE_RESTART)
+
+    def test_live_gate_waiter_blocks_restart_even_after_stop_requested(self):
+        state = {"status": "held", "stop_requested": True, "gate_waiter": True}
+        with mock.patch.object(self.calib.cd, "collect_lane_statuses", return_value={"hodo": "held"}), \
+                mock.patch.object(self.calib.cd, "read_state", return_value=state), \
+                mock.patch.object(sys.stdin, "isatty", return_value=True), \
+                mock.patch.object(self.calib, "prompt_continue_or_restart", return_value=self.calib.CHOICE_RESTART):
+            for force in (False, True):
+                with self.subTest(force=force), self.assertRaises(SystemExit):
+                    self.calib.choose_action(3772, state, force=force,
+                                             interactive=True, want_lanes=["hodo"])
+
     def test_eof_does_not_implicitly_resume(self):
         with mock.patch.object(self.calib, "format_state_summary", return_value="prior"), \
                 mock.patch("builtins.input", side_effect=EOFError):

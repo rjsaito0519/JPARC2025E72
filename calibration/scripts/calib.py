@@ -203,6 +203,20 @@ def prompt_continue_or_restart(run, st):
 
 
 #_____________________________________________________________________________
+def restart_blockers(run, lane_status):
+    """A held state without a gate waiter has no worker left to disrupt."""
+    blockers = set(calib_lanes.running_lanes(lane_status))
+    for lane in lane_status:
+        state = cd.read_state(run, lane=lane) or {}
+        if state.get("gate_waiter"):
+            blockers.add(lane)
+    parent = cd.read_state(run, lane="") or {}
+    if parent.get("gate_waiter"):
+        blockers.add("parent")
+    return blockers
+
+
+#_____________________________________________________________________________
 def choose_action(run, st, *, force, interactive, want_lanes=None):
     """Decide continue / restart / attach given existing state."""
     status = calib_approval.effective_status(st) or st.get("status")
@@ -220,9 +234,10 @@ def choose_action(run, st, *, force, interactive, want_lanes=None):
     )
 
     if force:
-        if busy:
+        blockers = restart_blockers(run, lane_status)
+        if blockers:
             runner.fail(
-                f"run{run:05d}: already running on lane(s) {sorted(busy)}; "
+                f"run{run:05d}: active workers on lane(s) {sorted(blockers)}; "
                 f"./ops.py stop {run} first (cannot --force while busy)"
             )
         return CHOICE_RESTART
@@ -247,11 +262,13 @@ def choose_action(run, st, *, force, interactive, want_lanes=None):
     if want_held or want_stopped:
         if interactive and sys.stdin.isatty():
             choice = prompt_continue_or_restart(run, st)
-            if choice == CHOICE_RESTART and busy:
-                runner.fail(
-                    f"run{run:05d}: cannot restart while lane(s) {sorted(busy)} "
-                    f"are running or held; ./ops.py stop {run} first"
-                )
+            if choice == CHOICE_RESTART:
+                blockers = restart_blockers(run, lane_status)
+                if blockers:
+                    runner.fail(
+                        f"run{run:05d}: active workers on lane(s) {sorted(blockers)}; "
+                        "stop running work or use Slack Stop for a waiting gate first"
+                    )
             return choice
         return CHOICE_CONTINUE
 
@@ -408,6 +425,9 @@ def restart_from_beginning(a, calib_particle, steps, target, *, max_iter=10, hdp
     run = a.run
     runner.info(f"run{run:05d}: restarting from the beginning")
     if not a.dry_run:
+        blockers = restart_blockers(run, cd.collect_lane_statuses(run))
+        if blockers:
+            runner.fail(f"run{run:05d}: active workers on lane(s) {sorted(blockers)}; cannot restart")
         cd.clear_dispatch_state(run)
         cd.reset_progress(run)
         cd.append_progress(run, "restart", status="cleared")
