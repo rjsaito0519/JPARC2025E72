@@ -175,7 +175,13 @@ def build_app(bot_cfg):
             channel_id = str(channel.get("id") or body.get("channel_id") or "")
         else:
             channel_id = str(body.get("channel_id") or "")
+        runner.info(
+            f"phc_custom click user={user_id} channel={channel_id}"
+        )
         if not calib_ops.user_channel_allowed(bot_cfg, user_id, channel_id):
+            runner.warn(
+                f"phc_custom denied user={user_id} channel={channel_id}"
+            )
             client.chat_postEphemeral(
                 channel=channel_id or user_id,
                 user=user_id,
@@ -189,6 +195,7 @@ def build_app(bot_cfg):
         try:
             run = int(run_s)
         except (TypeError, ValueError):
+            runner.warn(f"phc_custom bad run value: {run_s!r}")
             client.chat_postEphemeral(
                 channel=channel_id or user_id,
                 user=user_id,
@@ -197,9 +204,25 @@ def build_app(bot_cfg):
             return
         proposal = phc_range_gate.read_proposal(run) or {}
         rows = proposal.get("proposals") if isinstance(proposal, dict) else None
+        n_rows = len(rows) if isinstance(rows, list) else 0
         trigger = str(body.get("trigger_id") or "")
         view = phc_range_gate.phc_custom_modal_view(run, rows)
-        client.views_open(trigger_id=trigger, view=view)
+        runner.info(
+            f"phc_custom views_open run={run:05d} rows={n_rows} "
+            f"trigger={'yes' if trigger else 'no'}"
+        )
+        try:
+            client.views_open(trigger_id=trigger, view=view)
+        except Exception as exc:
+            runner.warn(f"phc_custom views_open failed run={run:05d}: {exc}")
+            try:
+                client.chat_postEphemeral(
+                    channel=channel_id or user_id,
+                    user=user_id,
+                    text=f"PHC Custom modal failed: {exc}",
+                )
+            except Exception:
+                pass
 
     @app.view("calib_phc_custom_modal")
     def phc_custom_submit(ack, body, client):
@@ -208,6 +231,9 @@ def build_app(bot_cfg):
         det = vals.get("det") or vals.get("phc_det") or ""
         first_s = vals.get("first") or vals.get("phc_first") or ""
         last_s = vals.get("last") or vals.get("phc_last") or ""
+        runner.info(
+            f"phc_custom submit det={det!r} first={first_s!r} last={last_s!r}"
+        )
         try:
             run = int(str(view.get("private_metadata") or ""))
             first = int(first_s)
@@ -246,6 +272,7 @@ def build_app(bot_cfg):
         )
         calib_ops.record_op(run, "phc-range", user_id)
         text = f"run{run:05d} phc-range: {message}"
+        runner.info(text)
         try:
             client.chat_postMessage(channel=user_id, text=text)
         except Exception:
