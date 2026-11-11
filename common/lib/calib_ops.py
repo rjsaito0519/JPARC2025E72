@@ -25,7 +25,7 @@ OPS = (
     "status", "stop", "resume", "approve", "revoke",
     "hold", "decide", "hdphc-again", "flag", "clear",
     "proceed", "retry", "gate-stop",
-    "phc-accept", "phc-range",
+    "phc-go", "phc-range",
 )
 DECIDE_ACTIONS = ("refit", "continue")
 DEDUP_SECONDS = 5
@@ -33,7 +33,7 @@ USAGE = (
     "usage: /calib status|stop|resume|approve|revoke|hdphc-again <run> | "
     "hold <run> <reason...> | decide <run> refit|continue | "
     "proceed|retry|gate-stop <run> | "
-    "phc-accept <run> | phc-range <run> <det> <first> <last> | "
+    "phc-range <run> <det> <first> <last> | phc-go <run> | "
     "flag <run> <mode> <det> <channel> <reason...> | "
     "clear <run> <mode> <det> <channel>"
 )
@@ -148,9 +148,9 @@ def parse_calib_text(
             "channel": parts[4],
         }
 
-    if op == "phc-accept":
+    if op == "phc-go":
         if len(parts) != 2:
-            return None, None, "usage: /calib phc-accept <run>", {}
+            return None, None, "usage: /calib phc-go <run>", {}
         try:
             run = int(parts[1])
         except ValueError:
@@ -356,13 +356,56 @@ def _phc_refit_after_conf(
 
 
 #_____________________________________________________________________________
-def apply_phc_accept(
+def apply_phc_range(
+    run: int,
+    det: str,
+    first: int,
+    last: int,
+    *,
+    user_id: Optional[str] = None,
+) -> tuple[bool, str]:
+    """Write one hand range and refresh the Slack ask message (no auto-refit)."""
+    from . import phc_range_gate
+
+    _ = user_id
+    proposal = phc_range_gate.read_proposal(run)
+    suffix = "Pi"
+    if proposal and str(proposal.get("suffix") or "") in ("Pi", "K"):
+        suffix = str(proposal["suffix"])
+    elif session_wants_kaon(run):
+        suffix = "K"
+    key = phc_range_gate.upsert_phc_conf(run, suffix, det, int(first), int(last))
+    rows = []
+    if proposal and isinstance(proposal.get("proposals"), list):
+        rows = [r for r in proposal["proposals"] if isinstance(r, dict)]
+    ok_upd, upd_msg = phc_range_gate.update_phc_ask_slack(run)
+    upd_note = upd_msg if ok_upd else f"slack update: {upd_msg}"
+    if not rows:
+        return True, (
+            f"wrote {key} (no open proposal; {upd_note}; "
+            f"/calib phc-go {int(run)} when ready)"
+        )
+    missing = phc_range_gate.missing_proposal_dets(run, suffix, rows)
+    if missing:
+        return True, (
+            f"wrote {key}; still need: {', '.join(missing)} "
+            f"({upd_note}; then /calib phc-go {int(run)})"
+        )
+    return True, (
+        f"wrote {key}; all proposal dets set ({upd_note}). "
+        f"Press Go or /calib phc-go {int(run)}"
+    )
+
+
+#_____________________________________________________________________________
+def apply_phc_go(
     run: int,
     *,
     background_resume: bool = True,
     timeout_s: float = 30.0,
     user_id: Optional[str] = None,
 ) -> tuple[bool, str]:
+    """Refit hdphc after every ask-list det has a hand range in phc_conf."""
     from . import phc_range_gate
 
     proposal = phc_range_gate.read_proposal(run)
@@ -374,32 +417,13 @@ def apply_phc_accept(
     rows = proposal.get("proposals") or []
     if not isinstance(rows, list) or not rows:
         return False, "proposal has no detectors"
-    keys = []
-    for row in rows:
-        if not isinstance(row, dict):
-            return False, "proposal row must be an object"
-        det = str(row.get("det") or "")
-        if not det:
-            return False, "proposal row missing det"
-        if not phc_range_gate.row_has_suggest(row):
-            continue
-        try:
-            first = int(row["first"])
-            last = int(row["last"])
-        except (KeyError, TypeError, ValueError):
-            return False, f"bad first/last for det {det!r}"
-        keys.append(phc_range_gate.upsert_phc_conf(run, suffix, det, first, last))
-    if not keys:
+    rows = [r for r in rows if isinstance(r, dict)]
+    missing = phc_range_gate.missing_proposal_dets(run, suffix, rows)
+    if missing:
+        phc_range_gate.update_phc_ask_slack(run)
         return False, (
-            "no suggested ranges to accept; use Custom "
-            f"(/calib phc-range {int(run)} <det> <first> <last>)"
-        )
-    missing = phc_range_gate.missing_proposal_dets(run, suffix, rows)
-    if missing:
-        return True, (
-            f"accepted {', '.join(keys)}; still need range for: "
-            f"{', '.join(missing)} (Custom / "
-            f"/calib phc-range {int(run)} <det> <first> <last>)"
+            f"ranges still missing for: {', '.join(missing)} "
+            f"(Custom / /calib phc-range {int(run)} <det> <first> <last>)"
         )
     ok, msg = _phc_refit_after_conf(
         run,
@@ -407,52 +431,7 @@ def apply_phc_accept(
         timeout_s=timeout_s,
         user_id=user_id,
     )
-    prefix = f"accepted {', '.join(keys)}; "
-    return ok, prefix + msg
-
-
-#_____________________________________________________________________________
-def apply_phc_range(
-    run: int,
-    det: str,
-    first: int,
-    last: int,
-    *,
-    background_resume: bool = True,
-    timeout_s: float = 30.0,
-    user_id: Optional[str] = None,
-) -> tuple[bool, str]:
-    from . import phc_range_gate
-
-    proposal = phc_range_gate.read_proposal(run)
-    suffix = "Pi"
-    if proposal and str(proposal.get("suffix") or "") in ("Pi", "K"):
-        suffix = str(proposal["suffix"])
-    elif session_wants_kaon(run):
-        suffix = "K"
-    key = phc_range_gate.upsert_phc_conf(run, suffix, det, int(first), int(last))
-    rows = []
-    if proposal and isinstance(proposal.get("proposals"), list):
-        rows = [r for r in proposal["proposals"] if isinstance(r, dict)]
-    if not rows:
-        return True, (
-            f"wrote {key} (no open proposal; "
-            f"/calib decide {int(run)} refit && /calib resume {int(run)} if held)"
-        )
-    missing = phc_range_gate.missing_proposal_dets(run, suffix, rows)
-    if missing:
-        return True, (
-            f"wrote {key}; still need range for: {', '.join(missing)} "
-            f"(/calib phc-range {int(run)} <det> <first> <last> "
-            f"or /calib phc-accept {int(run)})"
-        )
-    ok, msg = _phc_refit_after_conf(
-        run,
-        background_resume=background_resume,
-        timeout_s=timeout_s,
-        user_id=user_id,
-    )
-    return ok, f"wrote {key}; all proposal dets set; {msg}"
+    return ok, f"phc-go; {msg}"
 
 
 #_____________________________________________________________________________
@@ -483,8 +462,8 @@ def run_dispatch(
             f"(run calib_session.py init first)"
         )
 
-    if command == "phc-accept":
-        return apply_phc_accept(
+    if command == "phc-go":
+        return apply_phc_go(
             run,
             background_resume=background_resume,
             timeout_s=timeout_s,
@@ -496,8 +475,6 @@ def run_dispatch(
             return False, "phc-range requires det first last"
         return apply_phc_range(
             run, str(det), int(first), int(last),
-            background_resume=background_resume,
-            timeout_s=timeout_s,
             user_id=user_id,
         )
 

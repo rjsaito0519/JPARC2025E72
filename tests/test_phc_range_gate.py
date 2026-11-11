@@ -122,7 +122,7 @@ class PhcRangeGateTests(unittest.TestCase):
             self.assertEqual(msg, "notified")
             notify.assert_called_once()
 
-    def test_phc_blocks_include_custom(self):
+    def test_phc_blocks_include_custom_and_go(self):
         rows = [
             {
                 "det": "BHT",
@@ -132,6 +132,16 @@ class PhcRangeGateTests(unittest.TestCase):
                 "total": 5,
                 "current_first": 15,
                 "current_last": 49,
+                "anomaly": True,
+            },
+            {
+                "det": "BH2",
+                "first": 2,
+                "last": 8,
+                "bad": 1,
+                "total": 4,
+                "current_first": None,
+                "current_last": None,
                 "anomaly": True,
             },
             {
@@ -147,19 +157,23 @@ class PhcRangeGateTests(unittest.TestCase):
         ]
         blocks = self.gate.phc_range_action_blocks(9, rows)
         text = blocks[0]["text"]["text"]
-        self.assertIn("current [15, 49]", text)
-        self.assertIn("suggest [1, 10]", text)
-        self.assertIn("suggest (none)", text)
+        self.assertIn("*range* `15`–`49`", text)
+        self.assertIn("_hint_ `2`–`8`", text)
+        self.assertIn("_range unset_", text)
+        self.assertIn(":large_green_circle:", text)
+        self.assertIn(":large_orange_circle:", text)
+        self.assertIn(":red_circle:", text)
+        self.assertIn("1/3 set", text)
         actions = blocks[1]["elements"]
         ids = [e["action_id"] for e in actions]
-        self.assertEqual(ids, ["calib_phc_accept", "calib_phc_custom"])
+        self.assertEqual(ids, ["calib_phc_custom", "calib_phc_go"])
         view = self.gate.phc_custom_modal_view(9, rows)
         self.assertEqual(view["callback_id"], "calib_phc_custom_modal")
         self.assertEqual(view["private_metadata"], "9")
         det_el = view["blocks"][0]["element"]
         self.assertEqual(det_el["type"], "static_select")
         self.assertEqual(
-            [o["value"] for o in det_el["options"]], ["BHT", "T1"],
+            [o["value"] for o in det_el["options"]], ["BHT", "BH2", "T1"],
         )
         self.assertEqual(det_el["initial_option"]["value"], "BHT")
         self.assertEqual(

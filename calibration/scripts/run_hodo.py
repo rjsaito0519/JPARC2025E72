@@ -58,7 +58,7 @@ def after_qa_merge(run, mode, args, rc, session=None):
     """Merge detector QA PDFs; incomplete book raises the run to EXIT_CHECK.
 
     When a PHC range ask is pending, always merge/post the hdphc PDF first
-    (even under --skip-qa), then post the Accept/Custom Slack UI.
+    (even under --skip-qa), then post the Custom/Go Slack UI.
     """
     phc_ask = mode == "hdphc" and phc_range_gate.pending_phc_ask(run)
     if getattr(args, "skip_qa", False) and not phc_ask:

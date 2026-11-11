@@ -7,13 +7,13 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO / "calibration" / "scripts"
 
-ACTION_IDS = (
+BUTTON_ACTION_IDS = (
     "calib_approve_run",
     "calib_revoke_run",
     "calib_step_proceed",
     "calib_step_refit",
     "calib_step_stop",
-    "calib_phc_accept",
+    "calib_phc_go",
 )
 
 
@@ -22,6 +22,7 @@ class FakeApp:
         self.token = token
         self.actions = {}
         self.commands = {}
+        self.views = {}
 
     def action(self, action_id):
         def decorator(fn):
@@ -32,6 +33,12 @@ class FakeApp:
     def command(self, name):
         def decorator(fn):
             self.commands[name] = fn
+            return fn
+        return decorator
+
+    def view(self, callback_id):
+        def decorator(fn):
+            self.views[callback_id] = fn
             return fn
         return decorator
 
@@ -56,7 +63,9 @@ class SlackBotButtonTests(unittest.TestCase):
             # Re-import path: build_app imports App from slack_bolt inside.
             app = bot.build_app(bot_cfg)
 
-        self.assertEqual(set(app.actions), set(ACTION_IDS))
+        self.assertTrue(set(BUTTON_ACTION_IDS).issubset(set(app.actions)))
+        self.assertIn("calib_phc_custom", app.actions)
+        self.assertIn("calib_phc_custom_modal", app.views)
 
         responses = []
 
@@ -73,7 +82,7 @@ class SlackBotButtonTests(unittest.TestCase):
             bot, "handle_calib_request",
             return_value=(True, "ok", False),
         ) as handle:
-            for action_id in ACTION_IDS:
+            for action_id in BUTTON_ACTION_IDS:
                 responses.clear()
                 handler = app.actions[action_id]
                 handler(ack=lambda: None, body=body, respond=respond)

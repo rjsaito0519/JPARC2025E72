@@ -469,3 +469,62 @@ def try_notify_failure(
         return ok, msg
     except _NOTIFY_TRANSPORT_ERRORS as exc:
         return False, _exc_message("try_notify_failure", exc)
+
+
+#_____________________________________________________________________________
+def update_failure_message(
+    run: int,
+    key: str,
+    text: str,
+    *,
+    blocks: list | None = None,
+    config_path: Path | None = None,
+) -> tuple[bool, str]:
+    """chat.update an earlier failure note (same key) when its ts is known."""
+    try:
+        cfg, status = load_slack_config(config_path)
+        if status in ("missing", "disabled"):
+            return True, f"slack skip: {status}"
+        if status != "ok" or cfg is None:
+            return False, f"slack config: {status}"
+
+        state = load_state(run)
+        failures = state.get("failures")
+        if not isinstance(failures, dict):
+            return False, f"no failure note for key {key}"
+        prev = failures.get(key)
+        if not isinstance(prev, dict):
+            return False, f"no failure note for key {key}"
+        ts = prev.get("ts")
+        if not isinstance(ts, str) or not ts:
+            return False, f"no message ts for key {key}"
+
+        payload: dict[str, Any] = {
+            "channel": cfg["channel_id"],
+            "ts": ts,
+            "text": text,
+        }
+        if blocks:
+            payload["blocks"] = blocks
+        ok, _body, msg = _api("chat.update", cfg["token"], payload)
+        if not ok:
+            return False, msg
+        failures[key] = {"text": text, "ts": ts}
+        state["failures"] = failures
+        if not save_state(run, state):
+            return False, "state save failed"
+        return True, f"updated failure {key}"
+    except _NOTIFY_TRANSPORT_ERRORS as exc:
+        return False, _exc_message("update_failure_message", exc)
+
+
+#_____________________________________________________________________________
+def try_update_failure_message(
+    run: int, key: str, text: str, *, blocks: list | None = None,
+) -> tuple[bool, str]:
+    try:
+        return update_failure_message(
+            int(run), key, text, blocks=blocks,
+        )
+    except _NOTIFY_TRANSPORT_ERRORS as exc:
+        return False, _exc_message("try_update_failure_message", exc)

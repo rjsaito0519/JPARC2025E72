@@ -15,8 +15,8 @@ Slash command (register /calib in the Slack app):
   /calib hold <run> <reason...>
   /calib decide <run> refit|continue
   /calib hdphc-again <run>
-  /calib phc-accept <run>
   /calib phc-range <run> <det> <first> <last>
+  /calib phc-go <run>
   /calib flag <run> <mode> <det> <channel> <reason...>
   /calib clear <run> <mode> <det> <channel>
 
@@ -24,11 +24,11 @@ Block Kit:
   - Approve / Revoke on awaiting-final (calib_approve_run / calib_revoke_run)
   - Proceed / Refit / Stop on step gate / EXIT_CHECK
     (calib_step_proceed / calib_step_refit / calib_step_stop)
-  - Accept PHC range proposal (calib_phc_accept)
   - Custom PHC range modal (calib_phc_custom → calib_phc_custom_modal)
+  - Go PHC refit when all ranges set (calib_phc_go)
 
 Does not run start or arbitrary shell. resume, proceed, retry,
-phc-accept (after conf write), and hdphc-again start resume work in
+phc-go (after conf write), and hdphc-again start resume work in
 the background when no in-process waiter is present.
 """
 from __future__ import annotations
@@ -168,7 +168,7 @@ def build_app(bot_cfg):
     app.action("calib_step_proceed")(_button_action("proceed"))
     app.action("calib_step_refit")(_button_action("retry"))
     app.action("calib_step_stop")(_button_action("gate-stop"))
-    app.action("calib_phc_accept")(_button_action("phc-accept"))
+    app.action("calib_phc_go")(_button_action("phc-go"))
 
     @app.action("calib_phc_custom")
     def phc_custom_open(ack, body, client):

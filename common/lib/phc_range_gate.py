@@ -1,8 +1,9 @@
-"""PHC usable-segment range ask (Slack Accept / Custom).
+"""PHC usable-segment range ask (Slack Custom then Go).
 
 When auto unused-seg ratio is high, ask for hand ranges on the whole hdphc
-detector set (PDF first, then Slack). Hand ranges live in
-calibration/scripts/phc_conf.py.
+detector set (PDF first, then Slack). Custom writes phc_conf and refreshes
+the same Slack message; Go refits when every det has a hand range.
+Hand ranges live in calibration/scripts/phc_conf.py.
 """
 from __future__ import annotations
 
@@ -16,7 +17,8 @@ from . import config
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PHC_CONF_PATH = PROJECT_ROOT / "calibration" / "scripts" / "phc_conf.py"
 PROPOSAL_NAME = "phc_range_proposal.json"
-
+# Stable Slack failure key so chat.update can refresh the same message.
+SLACK_ASK_KEY = "phc_range_ask"
 
 #_____________________________________________________________________________
 def proposal_path(run: int) -> Path:
@@ -81,25 +83,57 @@ def row_has_suggest(row: dict[str, Any]) -> bool:
 
 
 #_____________________________________________________________________________
+def read_hand_range(
+    run: int,
+    suffix: str,
+    det: str,
+    *,
+    path: Path | None = None,
+) -> Optional[tuple[int, int]]:
+    """Inclusive hand range from phc_conf.py, or None if unset."""
+    conf_path = Path(path) if path is not None else PHC_CONF_PATH
+    if not conf_path.is_file():
+        return None
+    try:
+        text = conf_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    key = conf_key(run, suffix, det)
+    match = re.search(
+        rf'"{re.escape(key)}"\s*:\s*\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]',
+        text,
+    )
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+#_____________________________________________________________________________
 def format_proposal_line(row: dict[str, Any]) -> str:
+    """One det line; ranges in code spans (Slack has no colored text)."""
     det = str(row.get("det") or "?")
     cur_f, cur_l = row.get("current_first"), row.get("current_last")
-    if cur_f is not None and cur_l is not None:
-        current = f"[{cur_f}, {cur_l}]"
-    else:
-        current = "(none)"
-    if row_has_suggest(row):
-        suggest = f"[{row.get('first')}, {row.get('last')}]"
-    else:
-        suggest = "(none) — Custom で指定"
     bad, total = row.get("bad"), row.get("total")
     if bad is not None and total is not None:
-        unused = f"unused {bad}/{total}"
+        unused = f"unused `{bad}/{total}`"
     else:
         unused = "unused n/a"
-    flag = "anomaly" if row.get("anomaly") else "ok"
-    return f"• `{det}`: current {current} / suggest {suggest} / {unused} ({flag})"
-
+    if cur_f is not None and cur_l is not None:
+        # Confirmed hand range — emphasize with bold + code.
+        return (
+            f":large_green_circle: *`{det}`*  "
+            f"*range* `{cur_f}`–`{cur_l}`  ·  {unused}"
+        )
+    if row_has_suggest(row):
+        return (
+            f":large_orange_circle: *`{det}`*  "
+            f"_hint_ `{row.get('first')}`–`{row.get('last')}`  ·  {unused}  "
+            f"— Custom で確定"
+        )
+    return (
+        f":red_circle: *`{det}`*  "
+        f"_range unset_  ·  {unused}  — Custom で指定"
+    )
 
 #_____________________________________________________________________________
 def upsert_phc_conf(
@@ -141,23 +175,35 @@ def upsert_phc_conf(
 
 #_____________________________________________________________________________
 def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
-    """Block Kit Accept + Custom (opens modal for det/first/last)."""
+    """Block Kit Custom + Go (refit when every det has a hand range)."""
     run_s = str(int(run))
     lines = [format_proposal_line(row) for row in proposals if isinstance(row, dict)]
     body = "\n".join(lines) if lines else "(no proposals)"
+    n_set = sum(
+        1 for row in proposals
+        if isinstance(row, dict)
+        and row.get("current_first") is not None
+        and row.get("current_last") is not None
+    )
+    n_all = sum(1 for row in proposals if isinstance(row, dict) and row.get("det"))
+    ready = n_all > 0 and n_set >= n_all
+    footer = (
+        f":white_check_mark: 全 {n_all} det の range 確定 — *Go* で hdphc refit"
+        if ready
+        else (
+            f"Custom で range を更新（この投稿が書き換わります）。"
+            f"そろったら *Go*（{n_set}/{n_all} set）"
+        )
+    )
     return [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"*run{int(run):05d}* PHC usable-segment range ask\n"
+                    f"*run{int(run):05d}* PHC segment range\n"
                     f"{body}\n"
-                    f"Accept = write suggested ranges to `phc_conf.py` "
-                    f"(dets without suggest stay for Custom). "
-                    f"Custom = enter det / first / last in the modal "
-                    f"(slash fallback: `/calib phc-range {int(run)} "
-                    f"<det> <first> <last>`)"
+                    f"{footer}"
                 ),
             },
         },
@@ -167,21 +213,20 @@ def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
             "elements": [
                 {
                     "type": "button",
-                    "action_id": "calib_phc_accept",
-                    "text": {"type": "plain_text", "text": "Accept 提案レンジ"},
-                    "style": "primary",
+                    "action_id": "calib_phc_custom",
+                    "text": {"type": "plain_text", "text": "Custom range"},
                     "value": run_s,
                 },
                 {
                     "type": "button",
-                    "action_id": "calib_phc_custom",
-                    "text": {"type": "plain_text", "text": "Custom range"},
+                    "action_id": "calib_phc_go",
+                    "text": {"type": "plain_text", "text": "Go（refit）"},
+                    "style": "primary",
                     "value": run_s,
                 },
             ],
         },
     ]
-
 
 #_____________________________________________________________________________
 def _placeholder_range(
@@ -276,6 +321,36 @@ def phc_custom_modal_view(run: int, proposals: list[dict[str, Any]] | None = Non
 
 
 #_____________________________________________________________________________
+def sync_proposal_currents(
+    run: int,
+    *,
+    path: Path | None = None,
+) -> Optional[dict[str, Any]]:
+    """Refresh current_* on the proposal from phc_conf; rewrite file."""
+    data = read_proposal(run)
+    if not data:
+        return None
+    suffix = str(data.get("suffix") or "")
+    rows = data.get("proposals")
+    if not isinstance(rows, list) or not rows:
+        return data
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        det = str(row.get("det") or "")
+        if not det or not suffix:
+            continue
+        hand = read_hand_range(run, suffix, det, path=path)
+        if hand is None:
+            row["current_first"] = None
+            row["current_last"] = None
+        else:
+            row["current_first"], row["current_last"] = hand
+    write_proposal(run, data)
+    return data
+
+
+#_____________________________________________________________________________
 def notify_phc_range_slack(
     run: int, proposals: list[dict[str, Any]],
 ) -> tuple[bool, str]:
@@ -285,20 +360,45 @@ def notify_phc_range_slack(
     dets = ",".join(str(p.get("det") or "?") for p in proposals)
     text = (
         f"run{int(run):05d}: PHC range ask for {n} detector(s) [{dets}]. "
-        f"Accept suggestions or /calib phc-range {int(run)} <det> <first> <last>"
+        f"Custom then Go, or /calib phc-range {int(run)} <det> <first> <last>"
     )
     return slack_notify.try_notify_failure(
         int(run),
-        f"phc_range_proposal:{dets}",
+        SLACK_ASK_KEY,
         text,
         blocks=phc_range_action_blocks(int(run), proposals),
     )
 
 
 #_____________________________________________________________________________
+def update_phc_ask_slack(run: int) -> tuple[bool, str]:
+    """Rewrite the existing PHC ask Slack message from on-disk proposal+conf."""
+    from . import slack_notify
+
+    data = sync_proposal_currents(run)
+    if not data:
+        return False, "no phc ask proposal on disk"
+    rows = data.get("proposals")
+    if not isinstance(rows, list) or not rows:
+        return False, "empty phc ask proposal"
+    n = len(rows)
+    dets = ",".join(str(p.get("det") or "?") for p in rows if isinstance(p, dict))
+    text = (
+        f"run{int(run):05d}: PHC range ask for {n} detector(s) [{dets}]. "
+        f"Custom then Go"
+    )
+    return slack_notify.try_update_failure_message(
+        int(run),
+        SLACK_ASK_KEY,
+        text,
+        blocks=phc_range_action_blocks(int(run), rows),
+    )
+
+
+#_____________________________________________________________________________
 def notify_pending_phc_ask(run: int) -> tuple[bool, str]:
     """Post Slack PHC ask from on-disk proposal; no-op if none."""
-    data = read_proposal(run)
+    data = sync_proposal_currents(run) or read_proposal(run)
     if not data:
         return True, "no phc ask pending"
     rows = data.get("proposals")
