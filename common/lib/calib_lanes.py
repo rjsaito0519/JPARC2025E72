@@ -10,6 +10,7 @@ LANE_BCIN = "bcin"
 LANE_D5 = "d5"
 LANE_ORDER = (LANE_HODO, LANE_BCOUT, LANE_BCIN, LANE_D5)
 LANE_ENV = "E72_CALIB_LANE"
+BUSY_STATUSES = frozenset({"running", "held"})
 
 HODO_NAMES = frozenset({
     "hodo", "hodo_hdprm", "hodo_t0", "hodo_hdphc", "hodo_hdphc_adopt",
@@ -79,3 +80,32 @@ def d5_ready(lane_status: dict[str, str], lane_steps: dict[str, list]) -> bool:
 def parallel_ready_lanes(lane_steps: dict[str, list]) -> list[str]:
     """Lanes that can start immediately (not d5)."""
     return [lane for lane in (LANE_HODO, LANE_BCOUT, LANE_BCIN) if lane in lane_steps]
+
+
+#_____________________________________________________________________________
+def requested_lanes(steps: list) -> list[str]:
+    """Lane ids implied by session/CLI steps, in LANE_ORDER."""
+    split = split_steps_by_lane(steps)
+    return [lane for lane in LANE_ORDER if lane in split]
+
+
+#_____________________________________________________________________________
+def is_busy_status(status: Optional[str]) -> bool:
+    return str(status or "") in BUSY_STATUSES
+
+
+#_____________________________________________________________________________
+def busy_lanes(status_map: dict[str, str]) -> set[str]:
+    """Lanes that are running or held."""
+    return {
+        str(lane)
+        for lane, status in (status_map or {}).items()
+        if is_busy_status(status)
+    }
+
+
+#_____________________________________________________________________________
+def overlap_lanes(want: list[str] | set[str], busy: set[str]) -> list[str]:
+    """Busy lanes that the request also wants, in LANE_ORDER."""
+    want_set = {str(x) for x in want}
+    return [lane for lane in LANE_ORDER if lane in want_set and lane in busy]

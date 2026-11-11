@@ -44,6 +44,26 @@ class CalibLanesTests(unittest.TestCase):
             self.lanes.d5_ready({"hodo": "running", "bcin": "done"}, split),
         )
 
+    def test_busy_and_overlap(self):
+        busy = self.lanes.busy_lanes(
+            {"hodo": "held", "bcout": "pending", "bcin": "running"},
+        )
+        self.assertEqual(busy, {"hodo", "bcin"})
+        self.assertEqual(
+            self.lanes.overlap_lanes(["bcout", "bcin"], busy),
+            ["bcin"],
+        )
+        self.assertEqual(
+            self.lanes.overlap_lanes(["bcout"], busy),
+            [],
+        )
+        self.assertEqual(
+            self.lanes.requested_lanes(
+                ["hodo_hdprm", {"dc_t0": {"bcin": True}}],
+            ),
+            ["hodo", "bcin"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -191,6 +191,37 @@ def expand_coarse_steps(
 
 
 #_____________________________________________________________________________
+def merge_session_steps(
+    existing_steps,
+    new_steps,
+    *,
+    auto=False,
+    hdphc_iter=3,
+    max_iter=10,
+):
+    """Union steps by lane: keep existing lanes, append missing lanes from new."""
+    from common.lib import calib_lanes
+
+    existing_fine = expand_coarse_steps(
+        list(existing_steps or []),
+        auto=auto, hdphc_iter=hdphc_iter, max_iter=max_iter,
+    )
+    new_fine = expand_coarse_steps(
+        list(new_steps or []),
+        auto=auto, hdphc_iter=hdphc_iter, max_iter=max_iter,
+    )
+    have = calib_lanes.split_steps_by_lane(existing_fine)
+    add = calib_lanes.split_steps_by_lane(new_fine)
+    out = []
+    for lane in calib_lanes.LANE_ORDER:
+        if lane in have:
+            out.extend(have[lane])
+        elif lane in add:
+            out.extend(add[lane])
+    return out
+
+
+#_____________________________________________________________________________
 def write_session(path, doc):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

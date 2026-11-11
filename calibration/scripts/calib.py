@@ -37,6 +37,7 @@ import calib_dispatch as cd  # noqa: E402
 import calib_session as cs  # noqa: E402
 from common.lib import (  # noqa: E402
     calib_approval,
+    calib_lanes,
     calib_list,
     calib_runlist,
     decode_run,
@@ -47,6 +48,7 @@ from common.lib import (  # noqa: E402
 
 CHOICE_CONTINUE = "continue"
 CHOICE_RESTART = "restart"
+CHOICE_ATTACH = "attach"
 
 
 #_____________________________________________________________________________
@@ -199,17 +201,39 @@ def prompt_continue_or_restart(run, st):
 
 
 #_____________________________________________________________________________
-def choose_action(run, st, *, force, interactive):
-    """Decide continue vs restart given existing state."""
+def choose_action(run, st, *, force, interactive, want_lanes=None):
+    """Decide continue / restart / attach given existing state."""
     status = calib_approval.effective_status(st) or st.get("status")
-    if st.get("status") == "running" or status == "running":
+    lane_status = cd.collect_lane_statuses(run)
+    busy = calib_lanes.busy_lanes(lane_status)
+    want = list(want_lanes or [])
+    overlap = calib_lanes.overlap_lanes(want, busy) if want else []
+
+    if force:
+        if busy:
+            runner.fail(
+                f"run{run:05d}: already running on lane(s) {sorted(busy)}; "
+                f"./ops.py stop {run} first (cannot --force while busy)"
+            )
+        return CHOICE_RESTART
+
+    if want and busy and not overlap:
+        # Complementary lanes: attach without clearing the other process.
+        return CHOICE_ATTACH
+
+    if overlap or (
+        not want and (st.get("status") == "running" or status == "running")
+    ):
+        detail = (
+            f"lane(s) {overlap}" if overlap
+            else "already running"
+        )
         runner.fail(
-            f"run{run:05d}: already running; "
+            f"run{run:05d}: {detail}; "
             f"./ops.py stop {run} first"
         )
-    if force:
-        return CHOICE_RESTART
-    if calib_approval.is_process_complete(st):
+
+    if calib_approval.is_process_complete(st) and not busy:
         if interactive and sys.stdin.isatty():
             print(format_state_summary(run, st), file=sys.stderr)
             print(
@@ -302,6 +326,58 @@ def restart_from_beginning(a, calib_particle, steps, target, *, max_iter=10, hdp
         cd.normalize_step(raw, i)
     _maybe_ensure_slack_bot(a, cfg2)
     cd.do_start(cfg2, a.dry_run)
+
+
+#_____________________________________________________________________________
+def attach_complementary_lanes(
+    a, calib_particle, steps, target, *, max_iter=10, hdphc_iter=3,
+):
+    """Merge CLI lanes into the session and start only the free lanes."""
+    run = a.run
+    path = cs.session_path(run)
+    if path.is_file():
+        path, doc = cs.load_session_file(path)
+        merged = cs.merge_session_steps(
+            doc.get("steps") or [],
+            steps,
+            auto=bool(a.auto or doc.get("auto")),
+            hdphc_iter=hdphc_iter,
+            max_iter=max_iter,
+        )
+        doc["steps"] = merged
+        doc["target"] = target or doc.get("target") or "custom"
+        if a.local:
+            doc["local"] = True
+        cs.write_session(path, doc)
+        runner.info(f"run{run:05d}: attached lanes into session {path}")
+    else:
+        path, doc = cs.ensure_session(
+            run,
+            calib_particle=calib_particle,
+            steps=steps,
+            target=target,
+            momentum=a.momentum,
+            beam_particle=getattr(a, "beam_particle", None),
+            charge=getattr(a, "charge", None),
+            write_table=bool(getattr(a, "write_table", False)),
+            max_iter=max_iter,
+            local=a.local,
+            auto=a.auto,
+            overwrite=True,
+            prompt_if_missing=a.momentum is None,
+            hdphc_iter=hdphc_iter,
+        )
+    if a.local:
+        cs.set_session_local(path, True)
+    _, cfg2 = cd.load_config(path)
+    for i, raw in enumerate(cfg2["steps"]):
+        cd.normalize_step(raw, i)
+    _maybe_ensure_slack_bot(a, cfg2)
+    runner.info(
+        f"run{run:05d}: attaching complementary lanes "
+        f"{calib_lanes.requested_lanes(cfg2['steps'])}"
+    )
+    cd.do_attach(cfg2, a.dry_run)
 
 
 #_____________________________________________________________________________
@@ -423,16 +499,34 @@ def main():
         hodo=a.hodo, bcout=a.bcout, bcin=a.bcin, d5=a.d5,
     )
     announce_chain(a.run, calib_particle, steps)
+    want_lanes = calib_lanes.requested_lanes(
+        cs.expand_coarse_steps(
+            steps, auto=a.auto, hdphc_iter=3, max_iter=10,
+        )
+    )
 
-    st = cd.read_state(a.run)
+    st = cd.read_state(a.run, lane="")
+    lane_status = cd.collect_lane_statuses(a.run)
+    has_prior = st is not None or bool(lane_status)
     interactive = (not a.dry_run)  # dry-run: no TTY ask; treat as continue/start
 
-    if st is not None:
+    if has_prior:
+        st_eff = st or {
+            "status": "running" if calib_lanes.busy_lanes(lane_status) else "stopped",
+            "lanes": dict(lane_status),
+            "mode": "lane_coordinator",
+        }
         choice = choose_action(
-            a.run, st, force=a.force, interactive=interactive and sys.stdin.isatty(),
+            a.run, st_eff,
+            force=a.force,
+            interactive=interactive and sys.stdin.isatty(),
+            want_lanes=want_lanes,
         )
         if choice == CHOICE_RESTART:
             restart_from_beginning(a, calib_particle, steps, target)
+            return
+        if choice == CHOICE_ATTACH:
+            attach_complementary_lanes(a, calib_particle, steps, target)
             return
 
         # continue: keep existing session unless missing
@@ -453,7 +547,7 @@ def main():
         for i, raw in enumerate(cfg["steps"]):
             cd.normalize_step(raw, i)
         # Re-read in case ensure_session side effects (none expected)
-        st = cd.read_state(a.run) or st
+        st = cd.read_state(a.run, lane="") or st_eff
         _maybe_ensure_slack_bot(a, cfg)
         continue_from_state(cfg, st, a.dry_run)
         return

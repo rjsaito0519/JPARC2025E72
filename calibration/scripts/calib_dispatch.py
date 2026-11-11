@@ -161,6 +161,31 @@ def iter_lane_state_paths(run):
 
 
 #_____________________________________________________________________________
+def collect_lane_statuses(run):
+    """Map lane -> status from top-level coordinator and per-lane state files.
+
+    Per-lane files win over the coordinator map for the same lane.
+    """
+    out = {}
+    top = read_state_file(state_path(run, lane=""))
+    if isinstance(top, dict):
+        lanes = top.get("lanes")
+        if isinstance(lanes, dict):
+            for lane, status in lanes.items():
+                out[str(lane)] = str(status)
+        # Legacy single-process top state without lanes map.
+        if top.get("mode") != "lane_coordinator" and top.get("status"):
+            # Infer from plan/step when possible; else leave to lane files.
+            pass
+    for path in iter_lane_state_paths(run):
+        lane = path.parent.name
+        st = read_state_file(path)
+        if isinstance(st, dict) and st.get("status"):
+            out[str(lane)] = str(st.get("status"))
+    return out
+
+
+#_____________________________________________________________________________
 def read_state_file(path):
     if not path.is_file():
         return None
@@ -579,6 +604,9 @@ def clear_dispatch_state(run):
     root = lanes_dir(run)
     if root.is_dir():
         shutil.rmtree(root)
+    from common.lib import phc_range_gate
+
+    phc_range_gate.clear_phc_ask_state(int(run))
     return path
 
 
@@ -1564,6 +1592,38 @@ def spawn_lane_worker(cfg, lane, steps, dry_run) -> subprocess.Popen:
 
 
 #_____________________________________________________________________________
+def wait_external_dc_done(run, session_lane_steps: dict, *, dry_run=False, poll_s=2.0):
+    """Block until bcout/bcin in the session are done on disk (other processes).
+
+    Used when this process only owns d5 (or needs DC that another terminal runs).
+    Lanes not present in session_lane_steps are ignored.
+    """
+    need = [
+        lane for lane in (calib_lanes.LANE_BCOUT, calib_lanes.LANE_BCIN)
+        if lane in session_lane_steps
+    ]
+    if not need:
+        return
+    if dry_run:
+        runner.info(f"[dry-run] would wait for DC lanes {need}")
+        return
+    runner.info(
+        f"run{int(run):05d}: waiting for external DC lanes {need} before d5"
+    )
+    while True:
+        statuses = collect_lane_statuses(run)
+        if any(statuses.get(lane) == "failed" for lane in need):
+            runner.fail(
+                f"run{int(run):05d}: DC lane failed while waiting for d5: "
+                f"{statuses}"
+            )
+        if all(statuses.get(lane) == "done" for lane in need):
+            runner.info(f"run{int(run):05d}: DC lanes done: {need}")
+            return
+        time.sleep(float(poll_s))
+
+
+#_____________________________________________________________________________
 def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
     """Parent: run hodo/bcout/bcin in parallel; d5 after both DC lanes done."""
     run = int(cfg["run"])
@@ -1576,13 +1636,16 @@ def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
     hist = []
 
     def write_parent():
+        # Merge external lane statuses so ops/status sees the full picture.
+        merged = dict(collect_lane_statuses(run))
+        merged.update(status)
         write_state(
             run,
             {
                 "run": run,
                 "status": "running",
                 "finished": False,
-                "lanes": dict(status),
+                "lanes": merged,
                 "mode": "lane_coordinator",
                 "updated_at": utc_now(),
                 "steps": list(hist),
@@ -1714,6 +1777,42 @@ def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
         write_state(run, base, lane="")
     runner.info(f"calib_dispatch lane coordinator complete (awaiting final)")
     sys.exit(worst)
+
+
+#_____________________________________________________________________________
+def do_attach(cfg, dry_run):
+    """Start complementary lanes without clearing busy/done lanes."""
+    run = int(cfg["run"])
+    session_lanes = calib_lanes.split_steps_by_lane(cfg["steps"])
+    existing = collect_lane_statuses(run)
+    to_run = {}
+    for lane, steps in session_lanes.items():
+        st = existing.get(lane)
+        if calib_lanes.is_busy_status(st):
+            runner.info(f"attach: lane [{lane}] already {st}; leave running")
+            continue
+        if st == "done":
+            runner.info(f"attach: lane [{lane}] already done; skip")
+            continue
+        to_run[lane] = steps
+    if not to_run:
+        runner.fail(
+            f"run{run:05d}: nothing to attach "
+            f"(requested={list(session_lanes)}, status={existing})"
+        )
+
+    if calib_lanes.LANE_D5 in to_run:
+        # DC may be owned by another terminal; wait on disk before d5.
+        wait_external_dc_done(run, session_lanes, dry_run=dry_run)
+
+    prior = {
+        lane: "done"
+        for lane, st in collect_lane_statuses(run).items()
+        if st == "done" and lane in to_run
+    }
+    _ensure_slack_bot_for_gates(cfg, dry_run)
+    # Always spawn lane workers (correct per-lane step lists).
+    run_lane_coordinator(cfg, dry_run, to_run, prior_lanes=prior)
 
 
 #_____________________________________________________________________________
