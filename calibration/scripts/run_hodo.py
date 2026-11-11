@@ -16,7 +16,14 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, hodo_qa_pdf, qa_session, runner, slack_notify  # noqa: E402
+from common.lib import (  # noqa: E402
+    config,
+    hodo_qa_pdf,
+    phc_range_gate,
+    qa_session,
+    runner,
+    slack_notify,
+)
 
 
 #_____________________________________________________________________________
@@ -36,11 +43,29 @@ def hodo_param_path(run, mode, suffix):
 
 
 #_____________________________________________________________________________
+def _notify_phc_ask_after_pdf(run):
+    ok_ask, ask_msg = phc_range_gate.notify_pending_phc_ask(run)
+    if not ok_ask:
+        runner.warn(f"PHC range Slack note failed: {ask_msg}")
+    elif ask_msg not in ("no phc ask pending",) and not str(ask_msg).startswith(
+        "slack skip:"
+    ):
+        runner.info(f"PHC range ask: {ask_msg}")
+
+
+#_____________________________________________________________________________
 def after_qa_merge(run, mode, args, rc, session=None):
-    """Merge detector QA PDFs; incomplete book raises the run to EXIT_CHECK."""
-    if getattr(args, "skip_qa", False):
+    """Merge detector QA PDFs; incomplete book raises the run to EXIT_CHECK.
+
+    When a PHC range ask is pending, always merge/post the hdphc PDF first
+    (even under --skip-qa), then post the Accept/Custom Slack UI.
+    """
+    phc_ask = mode == "hdphc" and phc_range_gate.pending_phc_ask(run)
+    if getattr(args, "skip_qa", False) and not phc_ask:
         return rc
     if mode not in hodo_qa_pdf.MERGE_MODES:
+        if phc_ask:
+            _notify_phc_ask_after_pdf(run)
         return rc
     ok, message, out = hodo_qa_pdf.merge(
         run, mode, kaon=args.kaon, ftof=args.ftof, dry_run=False, session=session,
@@ -71,6 +96,8 @@ def after_qa_merge(run, mode, args, rc, session=None):
             runner.warn(f"Slack QA post failed: {post_msg}")
         elif not post_msg.startswith("slack skip:"):
             runner.info(post_msg)
+        if phc_ask:
+            _notify_phc_ask_after_pdf(run)
         return rc
     runner.warn(f"QA PDF merge failed: {message}")
     suffix = "K" if args.kaon else "Pi"
@@ -83,6 +110,8 @@ def after_qa_merge(run, mode, args, rc, session=None):
         runner.warn(f"Slack failure notify failed: {nmsg}")
     elif nmsg.startswith("notified"):
         runner.info(nmsg)
+    if phc_ask:
+        _notify_phc_ask_after_pdf(run)
     if rc in (runner.EXIT_OK, runner.EXIT_SKIP, runner.EXIT_NOT_CONVERGED):
         return runner.EXIT_CHECK
     return rc

@@ -1,7 +1,8 @@
-"""PHC usable-segment range proposal (Slack Accept / Custom).
+"""PHC usable-segment range ask (Slack Accept / Custom).
 
-When auto unused-seg ratio is high, propose min–max of good segments instead
-of a hard anomaly stop. Hand ranges live in calibration/scripts/phc_conf.py.
+When auto unused-seg ratio is high, ask for hand ranges on the whole hdphc
+detector set (PDF first, then Slack). Hand ranges live in
+calibration/scripts/phc_conf.py.
 """
 from __future__ import annotations
 
@@ -65,6 +66,42 @@ def read_proposal(run: int) -> Optional[dict[str, Any]]:
 
 
 #_____________________________________________________________________________
+def pending_phc_ask(run: int) -> bool:
+    """True when a PHC range-ask proposal is on disk for this run."""
+    data = read_proposal(run)
+    if not data:
+        return False
+    rows = data.get("proposals")
+    return isinstance(rows, list) and bool(rows)
+
+
+#_____________________________________________________________________________
+def row_has_suggest(row: dict[str, Any]) -> bool:
+    return row.get("first") is not None and row.get("last") is not None
+
+
+#_____________________________________________________________________________
+def format_proposal_line(row: dict[str, Any]) -> str:
+    det = str(row.get("det") or "?")
+    cur_f, cur_l = row.get("current_first"), row.get("current_last")
+    if cur_f is not None and cur_l is not None:
+        current = f"[{cur_f}, {cur_l}]"
+    else:
+        current = "(none)"
+    if row_has_suggest(row):
+        suggest = f"[{row.get('first')}, {row.get('last')}]"
+    else:
+        suggest = "(none) — Custom で指定"
+    bad, total = row.get("bad"), row.get("total")
+    if bad is not None and total is not None:
+        unused = f"unused {bad}/{total}"
+    else:
+        unused = "unused n/a"
+    flag = "anomaly" if row.get("anomaly") else "ok"
+    return f"• `{det}`: current {current} / suggest {suggest} / {unused} ({flag})"
+
+
+#_____________________________________________________________________________
 def upsert_phc_conf(
     run: int,
     suffix: str,
@@ -106,17 +143,7 @@ def upsert_phc_conf(
 def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
     """Block Kit Accept + Custom (opens modal for det/first/last)."""
     run_s = str(int(run))
-    lines = []
-    for row in proposals:
-        det = str(row.get("det") or "?")
-        first = row.get("first")
-        last = row.get("last")
-        bad = row.get("bad")
-        total = row.get("total")
-        lines.append(
-            f"• `{det}` → [{first}, {last}] "
-            f"(unused {bad}/{total})"
-        )
+    lines = [format_proposal_line(row) for row in proposals if isinstance(row, dict)]
     body = "\n".join(lines) if lines else "(no proposals)"
     return [
         {
@@ -124,9 +151,10 @@ def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"*run{int(run):05d}* PHC usable-segment range proposal\n"
+                    f"*run{int(run):05d}* PHC usable-segment range ask\n"
                     f"{body}\n"
-                    f"Accept = write all to `phc_conf.py` and refit hdphc. "
+                    f"Accept = write suggested ranges to `phc_conf.py` "
+                    f"(dets without suggest stay for Custom). "
                     f"Custom = enter det / first / last in the modal "
                     f"(slash fallback: `/calib phc-range {int(run)} "
                     f"<det> <first> <last>`)"
@@ -156,6 +184,23 @@ def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
 
 
 #_____________________________________________________________________________
+def _placeholder_range(
+    proposals: list[dict[str, Any]] | None,
+) -> tuple[str, str]:
+    if not isinstance(proposals, list):
+        return "0", "31"
+    for row in proposals:
+        if not isinstance(row, dict):
+            continue
+        if row_has_suggest(row):
+            return str(row["first"]), str(row["last"])
+        cur_f, cur_l = row.get("current_first"), row.get("current_last")
+        if cur_f is not None and cur_l is not None:
+            return str(cur_f), str(cur_l)
+    return "0", "31"
+
+
+#_____________________________________________________________________________
 def phc_custom_modal_view(run: int, proposals: list[dict[str, Any]] | None = None) -> dict:
     """Modal view payload for Custom PHC range (det / first / last)."""
     run_i = int(run)
@@ -165,6 +210,7 @@ def phc_custom_modal_view(run: int, proposals: list[dict[str, Any]] | None = Non
             if isinstance(row, dict) and row.get("det"):
                 dets.append(str(row["det"]))
     hint = ", ".join(dets) if dets else "e.g. BHT"
+    first_ph, last_ph = _placeholder_range(proposals)
     return {
         "type": "modal",
         "callback_id": "calib_phc_custom_modal",
@@ -190,7 +236,7 @@ def phc_custom_modal_view(run: int, proposals: list[dict[str, Any]] | None = Non
                 "element": {
                     "type": "plain_text_input",
                     "action_id": "first",
-                    "placeholder": {"type": "plain_text", "text": "0"},
+                    "placeholder": {"type": "plain_text", "text": first_ph},
                 },
             },
             {
@@ -200,7 +246,7 @@ def phc_custom_modal_view(run: int, proposals: list[dict[str, Any]] | None = Non
                 "element": {
                     "type": "plain_text_input",
                     "action_id": "last",
-                    "placeholder": {"type": "plain_text", "text": "31"},
+                    "placeholder": {"type": "plain_text", "text": last_ph},
                 },
             },
         ],
@@ -216,8 +262,8 @@ def notify_phc_range_slack(
     n = len(proposals)
     dets = ",".join(str(p.get("det") or "?") for p in proposals)
     text = (
-        f"run{int(run):05d}: PHC range proposal for {n} detector(s) [{dets}]. "
-        f"Accept or /calib phc-range {int(run)} <det> <first> <last>"
+        f"run{int(run):05d}: PHC range ask for {n} detector(s) [{dets}]. "
+        f"Accept suggestions or /calib phc-range {int(run)} <det> <first> <last>"
     )
     return slack_notify.try_notify_failure(
         int(run),
@@ -225,6 +271,18 @@ def notify_phc_range_slack(
         text,
         blocks=phc_range_action_blocks(int(run), proposals),
     )
+
+
+#_____________________________________________________________________________
+def notify_pending_phc_ask(run: int) -> tuple[bool, str]:
+    """Post Slack PHC ask from on-disk proposal; no-op if none."""
+    data = read_proposal(run)
+    if not data:
+        return True, "no phc ask pending"
+    rows = data.get("proposals")
+    if not isinstance(rows, list) or not rows:
+        return True, "no phc ask pending"
+    return notify_phc_range_slack(int(run), rows)
 
 
 #_____________________________________________________________________________
@@ -247,7 +305,7 @@ def missing_proposal_dets(
     *,
     path: Path | None = None,
 ) -> list[str]:
-    """Detectors in the proposal that still lack a hand range in phc_conf."""
+    """Detectors in the ask list that still lack a hand range in phc_conf."""
     keys = conf_keys_on_disk(path=path)
     missing = []
     for row in proposals:

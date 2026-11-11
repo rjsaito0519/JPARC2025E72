@@ -123,17 +123,66 @@ class PhcRangeGateTests(unittest.TestCase):
             notify.assert_called_once()
 
     def test_phc_blocks_include_custom(self):
-        blocks = self.gate.phc_range_action_blocks(
-            9, [{"det": "BHT", "first": 1, "last": 10, "bad": 2, "total": 5}],
-        )
+        rows = [
+            {
+                "det": "BHT",
+                "first": 1,
+                "last": 10,
+                "bad": 2,
+                "total": 5,
+                "current_first": 15,
+                "current_last": 49,
+                "anomaly": True,
+            },
+            {
+                "det": "T1",
+                "first": None,
+                "last": None,
+                "bad": None,
+                "total": None,
+                "current_first": None,
+                "current_last": None,
+                "anomaly": False,
+            },
+        ]
+        blocks = self.gate.phc_range_action_blocks(9, rows)
+        text = blocks[0]["text"]["text"]
+        self.assertIn("current [15, 49]", text)
+        self.assertIn("suggest [1, 10]", text)
+        self.assertIn("suggest (none)", text)
         actions = blocks[1]["elements"]
         ids = [e["action_id"] for e in actions]
         self.assertEqual(ids, ["calib_phc_accept", "calib_phc_custom"])
-        view = self.gate.phc_custom_modal_view(
-            9, [{"det": "BHT", "first": 1, "last": 10}],
-        )
+        view = self.gate.phc_custom_modal_view(9, rows)
         self.assertEqual(view["callback_id"], "calib_phc_custom_modal")
         self.assertEqual(view["private_metadata"], "9")
+        self.assertEqual(
+            view["blocks"][1]["element"]["placeholder"]["text"], "1",
+        )
+
+    def test_pending_and_missing_ask_list(self):
+        self.gate.write_proposal(
+            11,
+            {
+                "run": 11,
+                "suffix": "Pi",
+                "proposals": [
+                    {"det": "BHT", "first": 15, "last": 49},
+                    {"det": "BH2", "first": None, "last": None},
+                    {"det": "T1", "first": 0, "last": 0},
+                ],
+            },
+        )
+        self.assertTrue(self.gate.pending_phc_ask(11))
+        conf = Path(self.tmp.name) / "phc_conf.py"
+        conf.write_text("limits_dict = {\n}\n", encoding="utf-8")
+        rows = self.gate.read_proposal(11)["proposals"]
+        missing = self.gate.missing_proposal_dets(11, "Pi", rows, path=conf)
+        self.assertEqual(missing, ["BHT", "BH2", "T1"])
+        self.gate.upsert_phc_conf(11, "Pi", "BHT", 15, 49, path=conf)
+        self.gate.upsert_phc_conf(11, "Pi", "T1", 0, 0, path=conf)
+        missing2 = self.gate.missing_proposal_dets(11, "Pi", rows, path=conf)
+        self.assertEqual(missing2, ["BH2"])
 
 
 if __name__ == "__main__":

@@ -379,14 +379,28 @@ def apply_phc_accept(
         if not isinstance(row, dict):
             return False, "proposal row must be an object"
         det = str(row.get("det") or "")
+        if not det:
+            return False, "proposal row missing det"
+        if not phc_range_gate.row_has_suggest(row):
+            continue
         try:
             first = int(row["first"])
             last = int(row["last"])
         except (KeyError, TypeError, ValueError):
             return False, f"bad first/last for det {det!r}"
-        if not det:
-            return False, "proposal row missing det"
         keys.append(phc_range_gate.upsert_phc_conf(run, suffix, det, first, last))
+    if not keys:
+        return False, (
+            "no suggested ranges to accept; use Custom "
+            f"(/calib phc-range {int(run)} <det> <first> <last>)"
+        )
+    missing = phc_range_gate.missing_proposal_dets(run, suffix, rows)
+    if missing:
+        return True, (
+            f"accepted {', '.join(keys)}; still need range for: "
+            f"{', '.join(missing)} (Custom / "
+            f"/calib phc-range {int(run)} <det> <first> <last>)"
+        )
     ok, msg = _phc_refit_after_conf(
         run,
         background_resume=background_resume,
