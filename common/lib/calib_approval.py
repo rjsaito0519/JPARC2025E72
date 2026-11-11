@@ -859,23 +859,38 @@ def step_gate_action_blocks(
 
 
 #_____________________________________________________________________________
+def exit_check_detail(reason: str) -> str:
+    """Explain missing QA when the fit stopped before producing its PDF."""
+    detail = str(reason or "reason unavailable")[:1200]
+    detail = detail.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    if "stale_input:" in reason:
+        detail += "\n入力が古いため fit 未実行・今回の QA PDF は未生成です。Refit で decode から再実行してください。"
+    elif "qa_delivery_failed:" in reason:
+        detail += "\nQA PDF の送信・作成確認に失敗しました。パラメータ更新済みの場合があります。再送と再計算を区別してください。"
+    return detail
+
+
+#_____________________________________________________________________________
 def exit_check_action_blocks(
     run: int, step: str, index: int, hold_id: str = "",
+    *, lane: str = "", reason: str = "",
 ) -> list[dict[str, Any]]:
-    """Block Kit Proceed / Refit / Stop after EXIT_CHECK (human review)."""
+    """Block Kit review with the reason and explicit meaning of Proceed."""
     run_s = str(int(run))
     step_s = str(step or "?")
     hold_s = str(hold_id or "").strip()
     value = f"{run_s}:{hold_s}" if hold_s else run_s
+    lane_label = f"[{lane}] " if lane else ""
+    detail = exit_check_detail(reason)
     return [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"*run{int(run):05d}* step `{step_s}` "
-                    f"(index {int(index)}) needs review (EXIT_CHECK). "
-                    "Proceed, refit, or stop — QA / PHC controls above."
+                    f"*run{int(run):05d}* {lane_label}step `{step_s}` "
+                    f"(index {int(index)}) needs review (EXIT_CHECK).\n"
+                    f"{detail}\nProceed はこの step を再実行せず次へ進みます。"
                 ),
             },
         },
@@ -886,7 +901,7 @@ def exit_check_action_blocks(
                 {
                     "type": "button",
                     "action_id": "calib_step_proceed",
-                    "text": {"type": "plain_text", "text": "次へ進む"},
+                    "text": {"type": "plain_text", "text": "この段階を省略して次へ"},
                     "style": "primary",
                     "value": value,
                 },
@@ -937,9 +952,12 @@ def notify_exit_check_slack(
     index = hold.get("index")
     index_i = int(index) if isinstance(index, int) else 0
     hold_s = str(hold.get("id") or "").strip()
+    lane = str(hold.get("lane") or "")
+    lane_label = f"[{lane}] " if lane else ""
     text = (
-        f"run{int(run):05d}: EXIT_CHECK after step {step_s}. "
-        f"Proceed, refit, or stop? "
+        f"run{int(run):05d}: EXIT_CHECK after {lane_label}step {step_s}.\n"
+        f"{exit_check_detail(reason)}\n"
+        f"Proceed はこの step を再実行せず次へ進みます。 "
         f"/calib decide {int(run)} continue|refit"
     )
     key = f"exit_check:{index_i}:{step_s}"
@@ -949,7 +967,7 @@ def notify_exit_check_slack(
         key,
         text,
         blocks=exit_check_action_blocks(
-            int(run), step_s, index_i, hold_id=hold_s,
+            int(run), step_s, index_i, hold_id=hold_s, lane=lane, reason=reason,
         ),
     )
 
