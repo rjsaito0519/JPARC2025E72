@@ -354,6 +354,22 @@ def post_hodo_qa(
         )
     mid = f"{mode}_ftof" if ftof and mode in ("hdprm", "hdphc") else mode
     caption = f"run{run:05d} hodo {mid} ({suffix})"
+    meta = (manifest or {}).get("meta") or {}
+    if mode == "hdphc":
+        round_i = meta.get("hdphc_round")
+        total = meta.get("hdphc_rounds")
+        adopted = meta.get("adopted_round")
+        denominator = f"/{total}" if total else ""
+        if adopted is not None:
+            caption += f"\n【採用後 QA】第{adopted}{denominator}ラウンドを採用。"
+        elif round_i is not None:
+            caption += f"\n【PHC 第{round_i}{denominator}ラウンド】"
+            if meta.get("fit_rc") == 0:
+                caption += "fit 結果です。この後、更新後 decode と幅評価を行い、完了後に round の承認ボタンを表示します。"
+            elif meta.get("fit_rc") == 4:
+                caption += "有効な更新結果なし・未適用で停止。round は未完了です。"
+            elif meta.get("fit_rc") == 3:
+                caption += "要確認です。後続のレンジ確認または確認ボタンから判断してください。"
     return post_pdf(
         run,
         mode,

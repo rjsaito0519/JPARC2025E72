@@ -12,6 +12,7 @@ Runs are processed one by one, except htof, which merges the runs and labels the
 first run. For htof, --force also allows a TPCHelixHTOF older than that run's Hodo (logged as a warning).
 Exit code: worst over runs (and htofprm/htofphc); 0 OK, 4 skip/debug, 3 check, 2 not converged, 1 fail.
 """
+import json
 import sys
 from pathlib import Path
 
@@ -62,6 +63,8 @@ def after_qa_merge(run, mode, args, rc, session=None):
     range ask is pending, post Custom/Go after the PDF.
     """
     phc_ask = mode == "hdphc" and phc_range_gate.pending_phc_ask(run)
+    if session is not None:
+        session.setdefault("meta", {})["fit_rc"] = rc
     if getattr(args, "skip_qa", False) and mode != "hdphc":
         return rc
     if mode not in hodo_qa_pdf.MERGE_MODES:
@@ -127,6 +130,38 @@ def after_qa_merge(run, mode, args, rc, session=None):
 
 
 #_____________________________________________________________________________
+def phc_round_metadata(run, args):
+    """Round labels from explicit iterator flags or the active dispatch plan."""
+    from common.lib import calib_lanes
+
+    round_i = getattr(args, "hdphc_round", None)
+    total = getattr(args, "hdphc_rounds", None)
+    lane = calib_lanes.active_lane()
+    if lane:
+        state_path = Path(config.OUTPUT_DIR) / "calib" / f"run{run:05d}" / "lanes" / lane / "calib_dispatch_state.json"
+        try:
+            state = json.loads(state_path.read_text())
+        except (OSError, ValueError):
+            state = {}
+        if state.get("step") == "hodo_hdphc":
+            round_i = (state.get("opts") or {}).get("hdphc_round", round_i)
+        rounds = [
+            (step.get("opts") or {}).get("hdphc_round")
+            for step in (state.get("plan") or {}).get("steps", [])
+            if step.get("name") == "hodo_hdphc"
+        ]
+        rounds = [value for value in rounds if isinstance(value, int) and value > 0]
+        if rounds:
+            total = max(rounds)
+    metadata = {}
+    if round_i is not None:
+        metadata["hdphc_round"] = int(round_i)
+    if total is not None:
+        metadata["hdphc_rounds"] = int(total)
+    return metadata
+
+
+#_____________________________________________________________________________
 def fit_and_update(run, suffix, args, mode, bin_suffix):
     """Fit every detector of the set of `mode`, then write that mode's params."""
     qa_only = bool(getattr(args, "qa_only", False))
@@ -144,6 +179,8 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
         "ftof": bool(args.ftof),
         "qa_kind": "post_adopt" if qa_only else "fit",
     }
+    if mode == "hdphc":
+        meta.update(phc_round_metadata(run, args))
     adopted = getattr(args, "adopted_round", None)
     if adopted is not None:
         meta["adopted_round"] = int(adopted)
@@ -257,9 +294,17 @@ def main():
     parser.add_argument("--qa-only", action="store_true",
                         help="hdphc: re-fit and merge QA without writing params "
                              "(post-adopt final QA)")
+    parser.add_argument("--hdphc-round", type=int, default=None,
+                        help="hdphc: current round for QA captions")
+    parser.add_argument("--hdphc-rounds", type=int, default=None,
+                        help="hdphc: planned round count for QA captions")
     parser.add_argument("--adopted-round", type=int, default=None,
                         help="with --qa-only: 1-based hdphc round recorded in QA manifest")
     args = parser.parse_args()
+    for name in ("hdphc_round", "hdphc_rounds"):
+        value = getattr(args, name)
+        if value is not None and (value < 1 or args.mode != "hdphc"):
+            runner.fail(f"--{name.replace('_', '-')} requires hdphc and a positive value")
     if args.qa_only and args.mode != "hdphc":
         runner.fail("--qa-only is only for hdphc")
     if args.qa_only and args.skip_qa:

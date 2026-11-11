@@ -40,6 +40,7 @@ OK_DRIVER = (runner.EXIT_OK, runner.EXIT_FAIL, runner.EXIT_NOT_CONVERGED,
 #_____________________________________________________________________________
 def hodo_cmd(
     run, mode, kaon, ftof, force, skip_qa=False, qa_only=False, adopted_round=None,
+    hdphc_round=None, hdphc_rounds=None,
 ):
     parts = ["python3", str(RUN_HODO), str(run), mode]
     if kaon:
@@ -48,6 +49,10 @@ def hodo_cmd(
         parts.append("--ftof")
     if force:
         parts.append("--force")
+    if hdphc_round is not None:
+        parts.append(f"--hdphc-round {int(hdphc_round)}")
+    if hdphc_rounds is not None:
+        parts.append(f"--hdphc-rounds {int(hdphc_rounds)}")
     if skip_qa:
         parts.append("--skip-qa")
     if qa_only:
@@ -185,7 +190,10 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
     runner.step(f"iterate_hodo_chain hdphc {round_i}")
     run_hodo_ok(
         a.run,
-        hodo_cmd(a.run, "hdphc", a.kaon, a.ftof, a.force, skip_qa=True),
+        hodo_cmd(
+            a.run, "hdphc", a.kaon, a.ftof, a.force, skip_qa=True,
+            hdphc_round=round_i, hdphc_rounds=getattr(a, "hdphc_iter", 3),
+        ),
         f"hdphc[{round_i}]",
     )
     decode_run.run_decode(runlist, local=a.local)
@@ -233,6 +241,7 @@ def run_hdphc_adopt_stage(a):
         hodo_cmd(
             a.run, "hdphc", a.kaon, a.ftof, a.force,
             qa_only=True, adopted_round=chosen,
+            hdphc_rounds=max(int(entry["round"]) for entry in journal),
         ),
         f"hdphc[qa-only adopt={chosen}]",
     )
