@@ -23,9 +23,9 @@ class ExitCheckNoticeTests(unittest.TestCase):
         self.assertIn("Refit", text)
         blocks = notify.call_args.kwargs["blocks"]
         self.assertIn("stale_input", blocks[0]["text"]["text"])
-        proceed = blocks[1]["elements"][0]
-        self.assertIn("省略", proceed["text"]["text"])
-        self.assertEqual(proceed["value"], "2977:current-hold")
+        buttons = blocks[1]["elements"]
+        self.assertNotIn("calib_step_proceed", [button["action_id"] for button in buttons])
+        self.assertEqual(buttons[0]["value"], "2977:current-hold")
 
     def test_delivery_failure_is_distinguished_from_missing_fit(self):
         detail = calib_approval.exit_check_detail("qa_delivery_failed: network down")

@@ -655,6 +655,10 @@ def apply_decide(run, action, note="", hold_id=None, user_id=None):
             runner.fail(f"run{run:05d}: held state missing hold object")
         if hold_id and str(hold.get("id") or "") != str(hold_id):
             runner.fail(f"run{run:05d}: hold changed before decide")
+        if action == "continue":
+            blocked_reason = calib_approval.continue_block_reason(run, hold)
+            if blocked_reason:
+                runner.fail(f"run{run:05d}: {blocked_reason}")
         hold = dict(hold)
         hold["decision"] = action
         hold["decided_at"] = utc_now()
@@ -1347,6 +1351,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
     last_index = start_index - 1
     prev0 = read_state(cfg["run"]) if not dry_run else None
     unverified = list((prev0 or {}).get("unverified") or []) if prev0 else []
+    stale_retries = {}
     i = start_index
     while i < n_steps:
         raw = cfg["steps"][i]
@@ -1365,6 +1370,8 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
             print(f"[dry-run] {cmd}")
             rc = runner.EXIT_OK
         else:
+            from common.lib import calib_anomaly
+            calib_anomaly.last_check_reason_path(cfg["run"]).unlink(missing_ok=True)
             try:
                 # Let the dispatcher record every child exit, including signals
                 # and shell errors, before stopping the chain.
@@ -1381,6 +1388,20 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
         last_index = i
         steps_hist.append({"index": i, "step": name, "opts": opts, "rc": rc})
         runner.info(f"step {name} exit={rc}")
+        if not dry_run and rc == runner.EXIT_CHECK:
+            detail = calib_anomaly.read_check_reason(cfg["run"])
+            # Fine steps regenerate their runlist and decode before fitting.
+            retryable = name not in ("hodo", "dc_chamber", "d5_align")
+            retries = stale_retries.get(i, 0)
+            if (detail.startswith("stale_input:") and retryable and retries < 2
+                    and not stop_requested(cfg["run"]) and not hold_requested(cfg["run"])):
+                stale_retries[i] = retries + 1
+                runner.warn(f"{name}: stale input; re-decode and retry ({retries + 1}/2)")
+                append_progress(
+                    cfg["run"], "stale_input_retry", step=name, index=i,
+                    rc=rc, status="running", stage=f"retry={retries + 1}",
+                )
+                continue
         if should_continue(rc, opts) and not dry_run:
             # Successful step clears its own unverified mark.
             tmp = {"unverified": unverified, "run": cfg["run"]}

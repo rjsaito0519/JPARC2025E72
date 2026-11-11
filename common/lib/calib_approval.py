@@ -5,6 +5,7 @@ Process complete → awaiting_final_approval (not auto-approved).
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -859,12 +860,50 @@ def step_gate_action_blocks(
 
 
 #_____________________________________________________________________________
+def continue_block_reason(run: int, hold: dict[str, Any]) -> str:
+    """Require a completed fit and the matching sealed PDF delivery before Proceed."""
+    reason = str(hold.get("reason") or "")
+    if "stale_input:" in reason:
+        return "fit 未実行のため続行できません。Refit で decode から再実行してください。"
+    if "qa_delivery_failed:" not in reason:
+        return ""
+    missing = "今回の QA PDF の送信成功を確認できません。--manifest で再送するか Refit してください。"
+    match = re.search(r"\bqa_exec_id=([A-Za-z0-9_]+)", reason)
+    if match is None:
+        return missing
+    exec_id = match[1]
+    try:
+        manifest = qa_session.load_manifest(qa_session.manifest_dir(run) / f"{exec_id}.json")
+        if manifest.get("exec_id") != exec_id or manifest.get("run") != int(run):
+            return missing
+        outputs = manifest.get("outputs") or []
+        if not outputs:
+            return missing
+        from . import slack_notify
+        posts = slack_notify.load_state(run).get("posts") or {}
+        for output in outputs:
+            path = Path(output["path"])
+            digest = output["sha"]
+            if not digest or qa_session.file_sha256(path) != digest:
+                return missing
+            if not any(
+                isinstance(post, dict) and post.get("exec_id") == exec_id
+                and post.get("pdf") == output["name"] and post.get("pdf_sha") == digest
+                for post in posts.values()
+            ):
+                return missing
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return missing
+    return ""
+
+
+#_____________________________________________________________________________
 def exit_check_detail(reason: str) -> str:
     """Explain missing QA when the fit stopped before producing its PDF."""
     detail = str(reason or "reason unavailable")[:1200]
     detail = detail.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     if "stale_input:" in reason:
-        detail += "\n入力が古いため fit 未実行・今回の QA PDF は未生成です。Refit で decode から再実行してください。"
+        detail += "\n入力が古いため fit 未実行・今回の QA PDF は未生成です。次へ進む操作は無効です。Refit で decode から再実行してください。"
     elif "qa_delivery_failed:" in reason:
         detail += "\nQA PDF の送信・作成確認に失敗しました。パラメータ更新済みの場合があります。再送と再計算を区別してください。"
     return detail
@@ -882,7 +921,7 @@ def exit_check_action_blocks(
     value = f"{run_s}:{hold_s}" if hold_s else run_s
     lane_label = f"[{lane}] " if lane else ""
     detail = exit_check_detail(reason)
-    return [
+    blocks = [
         {
             "type": "section",
             "text": {
@@ -890,7 +929,7 @@ def exit_check_action_blocks(
                 "text": (
                     f"*run{int(run):05d}* {lane_label}step `{step_s}` "
                     f"(index {int(index)}) needs review (EXIT_CHECK).\n"
-                    f"{detail}\nProceed はこの step を再実行せず次へ進みます。"
+                    f"{detail}"
                 ),
             },
         },
@@ -921,6 +960,12 @@ def exit_check_action_blocks(
             ],
         },
     ]
+
+    if "stale_input:" in reason:
+        blocks[1]["elements"].pop(0)
+    elif "qa_delivery_failed:" in reason:
+        blocks[1]["elements"][0]["text"]["text"] = "再送を確認して次へ"
+    return blocks
 
 
 #_____________________________________________________________________________
@@ -957,8 +1002,8 @@ def notify_exit_check_slack(
     text = (
         f"run{int(run):05d}: EXIT_CHECK after {lane_label}step {step_s}.\n"
         f"{exit_check_detail(reason)}\n"
-        f"Proceed はこの step を再実行せず次へ進みます。 "
-        f"/calib decide {int(run)} continue|refit"
+        f"/calib decide {int(run)} refit"
+        + ("" if "stale_input:" in reason else "|continue")
     )
     key = f"exit_check:{index_i}:{step_s}"
     key = f"{key}:{hold_s}" if hold_s else f"{key}:noid"

@@ -380,7 +380,9 @@ def after_qa_slack(run, kind, s, session=None):
         run, kind, kaon=(s == "K"), session=session,
     )
     if not posted:
-        calib_anomaly.remember_check_reason(run, f"qa_delivery_failed: {post_msg}")
+        calib_anomaly.remember_check_reason(
+            run, f"qa_delivery_failed: {post_msg}; qa_exec_id={(session or {}).get('exec_id', '')}",
+        )
         runner.warn(f"Slack QA post failed: {post_msg}")
     elif not post_msg.startswith("slack skip:"):
         runner.info(post_msg)
@@ -503,6 +505,7 @@ def do_pos(args, s):
             )
             pdf_rc = make_check_pdf(run, s)
             if pdf_rc != 0:
+                calib_anomaly.remember_check_reason(run, f"qa_delivery_failed: D5 check PDF failed (exit {pdf_rc})")
                 runner.warn(f"{run_tag(run)}: check PDF failed (exit {pdf_rc}); treating as EXIT_CHECK")
                 code = runner.worst([code, runner.EXIT_CHECK])
                 ok_n, nmsg = slack_notify.try_notify_failure(

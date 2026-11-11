@@ -556,6 +556,11 @@ def run_dispatch(
             and st.get("gate_waiter")
             and isinstance(st.get("hold"), dict)
         )
+        if action == "continue":
+            from . import calib_approval
+            blocked_reason = calib_approval.continue_block_reason(run, (st or {}).get("hold") or {})
+            if blocked_reason:
+                return False, blocked_reason
         # Prefer in-process decide so lane state files are updated by hold_id.
         try:
             sys.path.insert(0, str(DISPATCH_SCRIPT.parent))

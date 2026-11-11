@@ -79,7 +79,9 @@ def after_qa_slack(run, mode, args, rc, session=None):
     )
     if not posted:
         from common.lib import calib_anomaly
-        calib_anomaly.remember_check_reason(run, f"qa_delivery_failed: {post_msg}")
+        calib_anomaly.remember_check_reason(
+            run, f"qa_delivery_failed: {post_msg}; qa_exec_id={(session or {}).get('exec_id', '')}",
+        )
         runner.warn(f"Slack QA post failed: {post_msg}")
         if rc != runner.EXIT_FAIL:
             rc = runner.EXIT_CHECK
