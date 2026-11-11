@@ -5,8 +5,10 @@ import math
 from typing import Any, Iterable, Optional
 
 
-# ROOT TMinuit Fit() return: 0 = OK (see common/src/hodo.cpp write_phc_tree).
+# ROOT Fit() composite status: 4000 is an IMPROVE-only failure.
+# MIGRAD / MINOS / HESSE succeeded; finite parameter and statistics checks remain required.
 PHC_FIT_STATUS_OK = 0
+PHC_FIT_STATUSES_USABLE = frozenset({0, 4000})
 
 
 #_____________________________________________________________________________
@@ -24,10 +26,10 @@ def all_finite(values: Iterable[Any]) -> bool:
 
 #_____________________________________________________________________________
 def phc_fit_status_ok(status: Optional[Any]) -> bool:
-    """True when status is missing (legacy tree) or equals Fit OK."""
+    """Allow successful primary fits, including an IMPROVE-only failure."""
     if status is None:
         return True
     try:
-        return int(status) == PHC_FIT_STATUS_OK
+        return int(status) in PHC_FIT_STATUSES_USABLE
     except (TypeError, ValueError):
         return False

@@ -363,7 +363,7 @@ def post_hodo_qa(
         if adopted is not None:
             caption += f"\n【採用後 QA】第{adopted}{denominator}ラウンドを採用。"
         elif round_i is not None:
-            caption += f"\n【PHC 第{round_i}{denominator}ラウンド】"
+            caption += f"\n【PHC 第{round_i}ラウンド" + (f"・最大{total}回" if total else "") + "】"
             if meta.get("fit_rc") == 0:
                 caption += "fit 結果です。この後、更新後 decode と幅評価を行い、完了後に round の承認ボタンを表示します。"
             elif meta.get("fit_rc") == 4:

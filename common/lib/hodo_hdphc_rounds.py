@@ -10,6 +10,9 @@ from typing import Any, Optional
 
 from . import config, qa_session
 
+DEFAULT_MAX_ROUNDS = 10
+DEFAULT_PATIENCE = 3
+
 
 #_____________________________________________________________________________
 def rounds_dir(run: int) -> Path:
@@ -129,13 +132,49 @@ def load_journal(run: int) -> list[dict[str, Any]]:
     path = journal_path(run)
     if not path.is_file():
         return []
-    rows = []
+    rows = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
-        rows.append(json.loads(line))
-    return rows
+        entry = json.loads(line)
+        round_i = int(entry["round"])
+        # Refit of a round invalidates every later snapshot's dependency chain.
+        rows = {index: row for index, row in rows.items() if index < round_i}
+        rows[round_i] = entry
+    return [rows[index] for index in sorted(rows)]
+
+
+#_____________________________________________________________________________
+def adaptive_progress(journal, *, patience=DEFAULT_PATIENCE, max_rounds=DEFAULT_MAX_ROUNDS):
+    """Track best width; keep updating live params until patience or the cap."""
+    if patience < 1 or max_rounds < 1:
+        raise ValueError("PHC patience and round cap must be positive")
+    best_width = None
+    best_round = None
+    without_improvement = 0
+    for entry in journal:
+        width = entry.get("width")
+        if not entry.get("ok") or not width_ok(width):
+            continue
+        width = float(width)
+        if best_width is None or width < best_width:
+            best_width = width
+            best_round = int(entry["round"])
+            without_improvement = 0
+        else:
+            without_improvement += 1
+    completed = max((int(entry["round"]) for entry in journal), default=0)
+    reason = None
+    if completed >= max_rounds:
+        reason = "round_limit"
+    elif best_round is not None and without_improvement >= patience:
+        reason = "no_improvement"
+    return {
+        "finished": reason is not None, "reason": reason,
+        "completed": completed, "best_round": best_round, "best_width": best_width,
+        "without_improvement": without_improvement,
+    }
 
 
 #_____________________________________________________________________________

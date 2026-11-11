@@ -151,7 +151,7 @@ def phc_round_metadata(run, args):
             if step.get("name") == "hodo_hdphc"
         ]
         rounds = [value for value in rounds if isinstance(value, int) and value > 0]
-        if rounds:
+        if rounds and not getattr(args, "qa_only", False):
             total = max(rounds)
     metadata = {}
     if round_i is not None:
@@ -208,6 +208,12 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
         rc = runner.update_param(
             run, suffix, mode, *(["--ftof"] if args.ftof else []), debug=args.debug
         )
+        if mode == "hdphc" and rc == runner.EXIT_SKIP and not args.debug:
+            from common.lib import calib_anomaly
+            calib_anomaly.remember_check_reason(
+                run, "phc_no_update: no finite usable PHC fit parameters; check fit/statistics",
+            )
+            rc = runner.EXIT_CHECK
     return after_qa_merge(run, mode, args, rc, session=session)
 
 

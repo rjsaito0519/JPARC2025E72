@@ -51,8 +51,8 @@ class HodoChainRunlistTests(unittest.TestCase):
             "def score_btof(*a, **k):\n"
             "    return {}\n"
         )
-        for name in ("hodo_hdphc_rounds.py", "hodo_qa_pdf.py"):
-            (lib / name).write_text("pass\n")
+        (lib / "hodo_hdphc_rounds.py").write_text("DEFAULT_MAX_ROUNDS = 10\nDEFAULT_PATIENCE = 3\n")
+        (lib / "hodo_qa_pdf.py").write_text("pass\n")
         (lib / "beam_run_condition.py").write_text(
             "from pathlib import Path\n"
             f"_UP = Path({str(self.root / 'param/USER/e72')!r})\n"

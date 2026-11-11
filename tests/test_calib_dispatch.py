@@ -406,10 +406,11 @@ class DispatchTests(unittest.TestCase):
                 proc = self.start_chain_async(
                     f"raise SystemExit({rc})\n", steps,
                 )
-                state = self.wait_for_step_gate()
-                self.assertEqual(state["hold"]["source"], "step_gate")
-                self.assertFalse(next_path.exists())
-                self.continue_through_gates(proc=proc)
+                if rc == 0:
+                    state = self.wait_for_step_gate()
+                    self.assertEqual(state["hold"]["source"], "step_gate")
+                    self.assertFalse(next_path.exists())
+                    self.continue_through_gates(proc=proc)
                 out, err = proc.communicate(timeout=10)
                 self.assertEqual(proc.returncode, rc, err + out)
                 self.assertTrue(next_path.exists())

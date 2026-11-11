@@ -72,11 +72,11 @@ DC_CHAMBER_FINE = frozenset({
 # Options that apply to a given step (allow_skip is common).
 STEP_OPTS = {
     "hodo": frozenset({
-        "skip_t0", "skip_hdphc", "ftof", "allow_skip", "hdphc_iter", "adopt",
+        "skip_t0", "skip_hdphc", "ftof", "allow_skip", "hdphc_iter", "hdphc_patience", "adopt",
     }),
     "hodo_hdprm": frozenset({"ftof", "allow_skip"}),
     "hodo_t0": frozenset({"ftof", "allow_skip"}),
-    "hodo_hdphc": frozenset({"ftof", "allow_skip", "hdphc_round"}),
+    "hodo_hdphc": frozenset({"ftof", "allow_skip", "hdphc_round", "hdphc_patience"}),
     "hodo_hdphc_adopt": frozenset({"ftof", "allow_skip", "adopt"}),
     "dc_resi": frozenset({"bcin", "allow_skip"}),
     "dc_chamber": frozenset({
@@ -354,8 +354,8 @@ def normalize_step(raw, index):
     for key, value in opts.items():
         if key in BOOL_STEP_OPTS:
             require_bool(value, f"steps[{index}].{key}")
-        if key == "hdphc_iter":
-            require_int(value, f"steps[{index}].hdphc_iter", MAX_ITER_MIN, MAX_ITER_MAX)
+        if key in ("hdphc_iter", "hdphc_patience"):
+            require_int(value, f"steps[{index}].{key}", MAX_ITER_MIN, MAX_ITER_MAX)
         if key in ("hdphc_round", "pass"):
             require_int(value, f"steps[{index}].{key}", MAX_ITER_MIN, MAX_ITER_MAX)
         if key == "adopt":
@@ -515,6 +515,16 @@ def step_cmd(name, opts, cfg, dry_run):
                 parts += ["--hdphc-iter", str(opts["hdphc_iter"])]
             if "adopt" in opts:
                 parts += ["--adopt", str(opts["adopt"])]
+        if name in ("hodo_hdphc", "hodo_hdphc_adopt"):
+            rounds = [
+                (normalize_step(raw, index)[1]).get("hdphc_round", 0)
+                for index, raw in enumerate(cfg.get("steps") or [])
+                if normalize_step(raw, index)[0] == "hodo_hdphc"
+            ]
+            if rounds:
+                parts += ["--hdphc-iter", str(max(rounds))]
+        if "hdphc_patience" in opts:
+            parts += ["--hdphc-patience", str(opts["hdphc_patience"])]
         if opts.get("ftof"):
             parts.append("--ftof")
 
@@ -1528,7 +1538,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
 
         # Human next-step gate: wait in-process for Slack/CLI decide.
         # --auto / session auto: true skips gates (coarse or fine steps).
-        if not dry_run and i + 1 < n_steps and not cfg.get("auto"):
+        if not dry_run and rc == runner.EXIT_OK and i + 1 < n_steps and not cfg.get("auto"):
             # Refuse the gate if Socket Mode bot cannot be ensured.
             _ensure_slack_bot_for_gates(cfg, dry_run)
             hold = make_hold(
@@ -2099,6 +2109,23 @@ def do_resume(cfg, dry_run, *, lane=None):
     if st.get("mode") == "lane_coordinator" and not calib_lanes.active_lane():
         lane_steps = calib_lanes.split_steps_by_lane(cfg["steps"])
         prior = st.get("lanes") if isinstance(st.get("lanes"), dict) else {}
+        actual = collect_lane_statuses(run)
+        if lane_steps and all(
+            calib_lanes.lane_complete_for_deps(actual.get(lane)) for lane in lane_steps
+        ):
+            # A lane resumed externally can finish after its old coordinator stopped.
+            base = dict(st)
+            base.update({
+                "status": calib_approval.STATUS_AWAITING, "finished": True,
+                "lanes": {lane: "done" for lane in lane_steps},
+                "plan": plan_of(cfg), "session": cfg.get("session") or {},
+                "rc": runner.EXIT_OK,
+            })
+            base.pop("reason", None)
+            if not dry_run:
+                mark_awaiting_final(run, base)
+            runner.info(f"run{run:05d}: all lane states complete; awaiting final QA")
+            sys.exit(runner.EXIT_OK)
         if prior and all(prior.get(lane) == "done" for lane in lane_steps):
             runner.fail(f"run{run:05d}: all lanes done; nothing to resume")
         _ensure_slack_bot_for_gates(cfg, dry_run)

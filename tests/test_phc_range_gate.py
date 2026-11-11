@@ -164,6 +164,9 @@ class PhcRangeGateTests(unittest.TestCase):
             chain.hodo_hdphc_rounds, "snapshot_round",
             return_value={"width": 1.0, "n_entries": 1, "ok": True},
         ), mock.patch.object(
+            chain.hodo_hdphc_rounds, "load_journal",
+            return_value=[{"round": 1, "width": 1.0, "ok": True}],
+        ), mock.patch.object(
             chain.hodo_qa_pdf, "source_paths", return_value=[],
         ):
             chain.run_hdphc_one_round(args, 1, clear_journal=True)

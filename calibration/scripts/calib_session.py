@@ -124,7 +124,7 @@ def expand_coarse_steps(
     steps,
     *,
     auto=False,
-    hdphc_iter=3,
+    hdphc_iter=10,
     max_iter=10,
 ):
     """Expand hodo/dc_chamber/d5_align into fine steps unless auto=True."""
@@ -152,7 +152,9 @@ def expand_coarse_steps(
                 if n < 1:
                     n = 1
                 for i in range(1, n + 1):
-                    round_opts = {"hdphc_round": i}
+                    round_opts = {"hdphc_round": i, "allow_skip": True}
+                    if "hdphc_patience" in opts:
+                        round_opts["hdphc_patience"] = opts["hdphc_patience"]
                     round_opts.update(hodo_opts)
                     out.append({"hodo_hdphc": round_opts})
                 adopt = opts.get("adopt", "auto")
@@ -196,7 +198,7 @@ def merge_session_steps(
     new_steps,
     *,
     auto=False,
-    hdphc_iter=3,
+    hdphc_iter=10,
     max_iter=10,
 ):
     """Union steps by lane: keep existing lanes, append missing lanes from new."""
@@ -299,7 +301,7 @@ def build_session_doc(
     local=False,
     auto=False,
     prompt_if_missing=True,
-    hdphc_iter=3,
+    hdphc_iter=10,
 ):
     """Resolve beam fields and return a session mapping (does not write)."""
     if steps is None:
@@ -417,7 +419,7 @@ def ensure_session(
     out=None,
     prompt_if_missing=True,
     overwrite=False,
-    hdphc_iter=3,
+    hdphc_iter=10,
 ):
     """Create or reuse session YAML. Returns (path, doc).
 

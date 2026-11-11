@@ -393,7 +393,7 @@ def continue_from_state(cfg, st, dry_run, want_lanes=None):
 
 
 #_____________________________________________________________________________
-def restart_from_beginning(a, calib_particle, steps, target, *, max_iter=10, hdphc_iter=3):
+def restart_from_beginning(a, calib_particle, steps, target, *, max_iter=10, hdphc_iter=10):
     """Clear dispatch state + progress, rewrite session, start at step 0."""
     run = a.run
     runner.info(f"run{run:05d}: restarting from the beginning")
@@ -428,7 +428,7 @@ def restart_from_beginning(a, calib_particle, steps, target, *, max_iter=10, hdp
 
 #_____________________________________________________________________________
 def attach_complementary_lanes(
-    a, calib_particle, steps, target, *, max_iter=10, hdphc_iter=3,
+    a, calib_particle, steps, target, *, max_iter=10, hdphc_iter=10,
 ):
     """Merge CLI lanes into the session and start only the free lanes."""
     run = a.run
@@ -545,7 +545,7 @@ def run_one_from_opts(run, opts, *, cli_local=False):
     restart_from_beginning(
         a, calib_particle, steps, target,
         max_iter=int(opts.get("max_iter", 10)),
-        hdphc_iter=int(opts.get("hdphc_iter", 3)),
+        hdphc_iter=int(opts.get("hdphc_iter", 10)),
     )
 
 
@@ -605,7 +605,7 @@ def main():
     announce_chain(a.run, calib_particle, steps)
     want_lanes = calib_lanes.requested_lanes(
         cs.expand_coarse_steps(
-            steps, auto=a.auto, hdphc_iter=3, max_iter=10,
+            steps, auto=a.auto, hdphc_iter=10, max_iter=10,
         )
     )
 

@@ -1,0 +1,143 @@
+"""PHC keeps updating through worse rounds, then restores the global best."""
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "calibration/scripts"))
+from common.lib import config, fit_validity, hodo_hdphc_rounds as rounds, runner
+import calib_dispatch as cd
+import calib_session
+import iterate_hodo_chain as iterator
+import run_hodo
+
+
+class AdaptivePhcTests(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name)
+        for name, value in (("OUTPUT_DIR", self.root / "out"), ("PARAM_DIR", self.root / "param")):
+            override = mock.patch.object(config, name, value)
+            override.start()
+            self.addCleanup(override.stop)
+
+    def history(self, widths):
+        return [{"round": i, "width": width, "ok": True} for i, width in enumerate(widths, 1)]
+
+    def test_waits_for_three_rounds_without_new_best(self):
+        widths = [3.0, 2.0, 2.4, 2.5]
+        self.assertFalse(rounds.adaptive_progress(self.history(widths))["finished"])
+        summary = rounds.adaptive_progress(self.history(widths + [2.6]))
+        self.assertTrue(summary["finished"])
+        self.assertEqual(summary["best_round"], 2)
+        self.assertEqual(summary["reason"], "no_improvement")
+
+    def test_new_best_resets_patience(self):
+        summary = rounds.adaptive_progress(self.history([3.0, 2.0, 2.2, 1.9, 2.0]))
+        self.assertFalse(summary["finished"])
+        self.assertEqual(summary["without_improvement"], 1)
+        self.assertEqual(summary["best_round"], 4)
+
+    def test_improving_series_stops_at_explicit_cap(self):
+        summary = rounds.adaptive_progress(self.history([3.0, 2.0, 1.0]), max_rounds=3)
+        self.assertTrue(summary["finished"])
+        self.assertEqual(summary["reason"], "round_limit")
+        self.assertEqual(summary["best_round"], 3)
+
+    def test_worse_round_params_feed_next_round_and_best_is_restored_last(self):
+        parameter = rounds.hdphc_param_path(1, "Pi")
+        parameter.parent.mkdir(parents=True)
+        parameter.write_text("initial")
+        root_file = self.root / "run00001_Hodo.root"
+        root_file.write_bytes(b"input")
+        seen_inputs = []
+        widths = [3.0, 2.0, 2.4, 2.5, 2.6]
+
+        def fit(*args):
+            seen_inputs.append(parameter.read_text())
+            parameter.write_text(f"round{len(seen_inputs)}")
+
+        args = SimpleNamespace(run=1, kaon=False, ftof=False, force=False,
+                               local=False, hdphc_iter=10, hdphc_patience=3)
+        scores = [{"width": width, "ok": True, "n_entries": 1000} for width in widths]
+        with mock.patch.object(iterator, "stage_prepare_and_decode", return_value=self.root / "runlist.yml"), \
+                mock.patch.object(iterator, "run_hodo_ok", side_effect=fit), \
+                mock.patch.object(iterator.decode_run, "run_decode"), \
+                mock.patch.object(iterator.hodo_btof_monitor, "hodo_root", return_value=root_file), \
+                mock.patch.object(iterator.hodo_btof_monitor, "score_btof", side_effect=scores), \
+                mock.patch.object(iterator.hodo_qa_pdf, "source_paths", return_value=[]):
+            for index in range(1, 6):
+                self.assertEqual(iterator.run_hdphc_one_round(args, index, clear_journal=index == 1), runner.EXIT_OK)
+            self.assertEqual(iterator.run_hdphc_one_round(args, 6, clear_journal=False), runner.EXIT_SKIP)
+        self.assertEqual(seen_inputs, ["initial", "round1", "round2", "round3", "round4"])
+        self.assertEqual(parameter.read_text(), "round5")
+        chosen = rounds.pick_round(rounds.load_journal(1), "auto")
+        rounds.restore_round(1, chosen, "Pi")
+        self.assertEqual(chosen, 2)
+        self.assertEqual(parameter.read_text(), "round2")
+
+    def test_refit_invalidates_later_round_scores(self):
+        path = rounds.journal_path(1)
+        path.parent.mkdir(parents=True)
+        rows = self.history([3.0, 2.0, 1.0]) + [{"round": 2, "width": 2.5, "ok": True}]
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        journal = rounds.load_journal(1)
+        self.assertEqual([row["round"] for row in journal], [1, 2])
+        self.assertEqual(rounds.pick_round(journal, "auto"), 2)
+
+    def test_improve_only_failure_is_usable_but_primary_failures_are_rejected(self):
+        self.assertTrue(fit_validity.phc_fit_status_ok(4000))
+        for status in (4, 4070, 4140, 4210, -1):
+            self.assertFalse(fit_validity.phc_fit_status_ok(status))
+        self.assertFalse(fit_validity.all_finite([float("nan"), 1.0, 2.0]))
+
+    def test_default_plan_exposes_cap_and_allows_completed_rounds_to_skip(self):
+        steps = calib_session.expand_coarse_steps(["hodo"])
+        phc = [step["hodo_hdphc"] for step in steps if isinstance(step, dict) and "hodo_hdphc" in step]
+        self.assertEqual(len(phc), 10)
+        self.assertTrue(all(step["allow_skip"] for step in phc))
+        cfg = {"run": 1, "kaon": False, "force": False, "max_iter": 10, "steps": steps}
+        command = cd.step_cmd("hodo_hdphc", phc[0], cfg, False)
+        self.assertIn("--hdphc-iter 10", command)
+
+    def test_no_usable_fit_is_review_not_an_adaptive_skip(self):
+        args = SimpleNamespace(kaon=False, ftof=False, force=False, debug=False,
+                               qa_only=False, skip_qa=True)
+        from common.lib import fit_overrides
+        with mock.patch.dict(os.environ, {"E72_CALIB_LANE": ""}), \
+                mock.patch.object(runner, "require_bins", return_value=[]), \
+                mock.patch.object(runner, "input_root", return_value=self.root / "input.root"), \
+                mock.patch.object(run_hodo.qa_session, "begin", return_value={"meta": {}}), \
+                mock.patch.object(run_hodo.qa_session, "attach_params"), \
+                mock.patch.object(fit_overrides, "write_flat_mip_left", return_value=self.root / "override"), \
+                mock.patch.object(runner, "update_param", return_value=runner.EXIT_SKIP), \
+                mock.patch.object(run_hodo, "after_qa_merge", side_effect=lambda run, mode, args, rc, **kwargs: rc):
+            self.assertEqual(run_hodo.fit_and_update(1, "Pi", args, "hdphc", "PHC"), runner.EXIT_CHECK)
+
+    def test_completed_external_lane_finalizes_without_restarting_any_work(self):
+        cfg = {"run": 1, "steps": ["hodo_hdprm", "dc_t0"], "kaon": False,
+               "force": False, "local": False, "max_iter": 10, "auto": False}
+        with mock.patch.dict(os.environ, {"E72_CALIB_LANE": ""}):
+            cd.write_state(1, {"status": "stopped", "mode": "lane_coordinator",
+                               "lanes": {"hodo": "stopped", "bcout": "done"}}, lane="")
+            for lane in ("hodo", "bcout"):
+                cd.write_state(1, {"status": "awaiting_final_approval", "finished": True}, lane=lane)
+            with mock.patch.object(cd, "run_lane_coordinator") as spawn, \
+                    mock.patch.object(cd, "mark_awaiting_final") as finalize:
+                with self.assertRaises(SystemExit) as completed:
+                    cd.do_resume(cfg, False)
+        self.assertEqual(completed.exception.code, runner.EXIT_OK)
+        spawn.assert_not_called()
+        self.assertEqual(finalize.call_args.args[1]["status"], "awaiting_final_approval")
+        self.assertTrue(finalize.call_args.args[1]["finished"])
+
+
+if __name__ == "__main__":
+    unittest.main()

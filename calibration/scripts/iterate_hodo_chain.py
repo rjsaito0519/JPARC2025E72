@@ -111,8 +111,10 @@ def parse_args():
     p.add_argument("--skip-t0", action="store_true", help="omit t0 stage")
     p.add_argument("--skip-hdphc", action="store_true",
                    help="omit hdphc loop and adopt")
-    p.add_argument("--hdphc-iter", type=int, default=3,
-                   help="number of hdphc→decode passes (default 3)")
+    p.add_argument("--hdphc-iter", type=int, default=hodo_hdphc_rounds.DEFAULT_MAX_ROUNDS,
+                   help="maximum hdphc→decode rounds (default 10)")
+    p.add_argument("--hdphc-patience", type=int, default=hodo_hdphc_rounds.DEFAULT_PATIENCE,
+                   help="stop after this many rounds without a new best width (default 3)")
     p.add_argument("--adopt", default="auto",
                    help="auto (min CBTOF width) or 1-based round index to keep")
     p.add_argument("--skip-hdphc-adopt", action="store_true",
@@ -181,18 +183,27 @@ def run_t0_stage(a):
 #_____________________________________________________________________________
 def run_hdphc_one_round(a, round_i, *, clear_journal):
     suffix = "K" if a.kaon else "Pi"
+    if clear_journal:
+        hodo_hdphc_rounds.clear_rounds(a.run)
+    journal = hodo_hdphc_rounds.load_journal(a.run)
+    prior = [entry for entry in journal if int(entry["round"]) < round_i]
+    progress = hodo_hdphc_rounds.adaptive_progress(
+        prior, patience=getattr(a, "hdphc_patience", 3),
+        max_rounds=getattr(a, "hdphc_iter", 10),
+    )
+    if progress["finished"]:
+        runner.info(f"PHC series complete ({progress['reason']}); round {round_i} not run")
+        return runner.EXIT_SKIP
     runlist = stage_prepare_and_decode(
         a.run, a.kaon, "hdphc", local=a.local, dry_run=False,
     )
-    if clear_journal:
-        hodo_hdphc_rounds.clear_rounds(a.run)
     hodo_path = hodo_btof_monitor.hodo_root(a.run)
     runner.step(f"iterate_hodo_chain hdphc {round_i}")
     run_hodo_ok(
         a.run,
         hodo_cmd(
             a.run, "hdphc", a.kaon, a.ftof, a.force, skip_qa=True,
-            hdphc_round=round_i, hdphc_rounds=getattr(a, "hdphc_iter", 3),
+            hdphc_round=round_i, hdphc_rounds=getattr(a, "hdphc_iter", 10),
         ),
         f"hdphc[{round_i}]",
     )
@@ -213,6 +224,20 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
         f"hdphc round {round_i}: width={wtxt} n_entries={entry.get('n_entries')} "
         f"ok={entry.get('ok')}"
     )
+    if not entry.get("ok") or not hodo_hdphc_rounds.width_ok(entry.get("width")):
+        from common.lib import calib_anomaly
+        calib_anomaly.remember_check_reason(a.run, "phc_score_invalid: no finite TOF width after update")
+        sys.exit(runner.EXIT_CHECK)
+    progress = hodo_hdphc_rounds.adaptive_progress(
+        hodo_hdphc_rounds.load_journal(a.run),
+        patience=getattr(a, "hdphc_patience", 3), max_rounds=getattr(a, "hdphc_iter", 10),
+    )
+    runner.info(
+        f"PHC best=round {progress['best_round']} width={progress['best_width']:.4f}; "
+        f"rounds without improvement={progress['without_improvement']}/"
+        f"{getattr(a, 'hdphc_patience', 3)}"
+    )
+    return runner.EXIT_OK
 
 
 #_____________________________________________________________________________
@@ -251,6 +276,8 @@ def run_hdphc_adopt_stage(a):
 #_____________________________________________________________________________
 def main():
     a = parse_args()
+    if a.hdphc_patience < 1:
+        runner.fail("--hdphc-patience must be >= 1")
     if a.hdphc_iter < 1 and not a.skip_hdphc and a.only is None:
         runner.fail("--hdphc-iter must be >= 1")
     if a.adopt != "auto":
@@ -299,10 +326,11 @@ def main():
         elif a.only == "t0":
             run_t0_stage(a)
         elif a.only == "hdphc":
-            run_hdphc_one_round(
+            rc = run_hdphc_one_round(
                 a, int(a.hdphc_round),
                 clear_journal=(int(a.hdphc_round) == 1),
             )
+            sys.exit(rc)
         elif a.only == "hdphc-adopt":
             run_hdphc_adopt_stage(a)
         sys.exit(runner.EXIT_OK)
@@ -339,7 +367,8 @@ def main():
         sys.exit(runner.EXIT_OK)
 
     for i in range(1, n_hdphc + 1):
-        run_hdphc_one_round(a, i, clear_journal=(i == 1))
+        if run_hdphc_one_round(a, i, clear_journal=(i == 1)) == runner.EXIT_SKIP:
+            break
 
     if a.skip_hdphc_adopt:
         hodo_hdphc_rounds.write_summary(a.run)
