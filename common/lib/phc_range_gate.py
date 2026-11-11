@@ -85,6 +85,16 @@ def pending_phc_ask(run: int) -> bool:
 
 
 #_____________________________________________________________________________
+def clear_proposal(run: int) -> bool:
+    """Remove on-disk PHC ask proposal. Returns True if a file was removed."""
+    path = proposal_path(run)
+    if not path.is_file():
+        return False
+    path.unlink()
+    return True
+
+
+#_____________________________________________________________________________
 def row_has_suggest(row: dict[str, Any]) -> bool:
     return row.get("first") is not None and row.get("last") is not None
 

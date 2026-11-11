@@ -69,11 +69,25 @@ def pdf_page_count(path):
 
 
 #_____________________________________________________________________________
+def prepend_btof0_source(run, sources, *, kaon=False, force=False):
+    """Put CBtof0 QA PDF first for hdphc books. Returns (sources, note)."""
+    from . import hodo_btof_qa
+
+    ok, msg, path = hodo_btof_qa.ensure_btof0_pdf(
+        run, kaon=kaon, force=force,
+    )
+    if ok and path is not None and path.is_file():
+        return [path] + list(sources), msg
+    return list(sources), f"btof0 skip: {msg}"
+
+
+#_____________________________________________________________________________
 def merge(run, mode, kaon=False, ftof=False, dry_run=False, session=None):
     """Merge stage PDFs. Returns (ok: bool, message: str, out_path: Path|None).
 
     When session is set (auto path from run_hodo), require sources to differ from
     the begin() snapshot before uniting. Manual CLI leaves session=None.
+    hdphc books prepend CBtof0 (btof0) when available.
     """
     if mode not in MERGE_MODES:
         return False, f"unsupported mode {mode!r}", None
@@ -82,6 +96,7 @@ def merge(run, mode, kaon=False, ftof=False, dry_run=False, session=None):
 
     sources = source_paths(run, mode, kaon, ftof)
     out = img_dir(run) / output_name(run, mode, kaon, ftof)
+    btof_note = ""
 
     if session is not None:
         from . import qa_session
@@ -93,6 +108,11 @@ def merge(run, mode, kaon=False, ftof=False, dry_run=False, session=None):
         if missing:
             names = ", ".join(p.name for p in missing)
             return False, f"missing PDF(s): {names}", out
+
+    if mode == "hdphc":
+        sources, btof_note = prepend_btof0_source(
+            run, sources, kaon=kaon, force=True,
+        )
 
     page_counts = []
     for path in sources:
@@ -130,4 +150,7 @@ def merge(run, mode, kaon=False, ftof=False, dry_run=False, session=None):
         ), out
 
     listing = "+".join(str(n) for n in page_counts)
-    return True, f"wrote {out} ({listing}={out_pages} pages)", out
+    msg = f"wrote {out} ({listing}={out_pages} pages)"
+    if btof_note:
+        msg = f"{msg}; {btof_note}"
+    return True, msg, out

@@ -41,6 +41,20 @@ class PhcRangeGateTests(unittest.TestCase):
             ["BHT", "BH2", "CVC"],
         )
 
+    def test_clear_proposal(self):
+        self.gate.write_proposal(
+            21,
+            {
+                "run": 21,
+                "suffix": "Pi",
+                "proposals": [{"det": "BHT", "first": 1, "last": 10}],
+            },
+        )
+        self.assertTrue(self.gate.pending_phc_ask(21))
+        self.assertTrue(self.gate.clear_proposal(21))
+        self.assertFalse(self.gate.pending_phc_ask(21))
+        self.assertFalse(self.gate.clear_proposal(21))
+
     def test_upsert_phc_conf(self):
         conf = Path(self.tmp.name) / "phc_conf.py"
         conf.write_text(
