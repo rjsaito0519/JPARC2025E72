@@ -425,9 +425,10 @@ def apply_phc_go(
             f"ranges still missing for: {', '.join(missing)} "
             f"(Custom / /calib phc-range {int(run)} <det> <first> <last>)"
         )
-    # Clear before refit so later hdphc rounds do not re-enter range-ask wait
-    # (EXIT_CHECK without buttons).
+    # Clear ask + mark session-confirmed so later iters skip range UI;
+    # restart / round1 clear drops confirmed so a re-run asks again.
     phc_range_gate.clear_proposal(run)
+    phc_range_gate.set_range_confirmed(run)
     ok, msg = _phc_refit_after_conf(
         run,
         background_resume=background_resume,

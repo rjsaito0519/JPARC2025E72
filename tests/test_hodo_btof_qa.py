@@ -54,6 +54,19 @@ class HodoBtofQaTests(unittest.TestCase):
         self.assertIsNone(path)
         self.assertIn("missing", msg.lower())
 
+    def test_draw_missing_binary(self):
+        root = self.out / "run00007_Hodo.root"
+        root.write_bytes(b"dummy")
+        with mock.patch.object(
+            self.qa.hodo_btof_monitor, "hodo_root", return_value=root,
+        ), mock.patch.object(
+            self.qa.runner, "BIN_DIR", self.out / "nobin",
+        ):
+            ok, msg, path = self.qa.draw_btof0_pdf(7, kaon=False)
+        self.assertFalse(ok)
+        self.assertIsNone(path)
+        self.assertIn("CBtof0_QA", msg)
+
 
 if __name__ == "__main__":
     unittest.main()

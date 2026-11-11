@@ -68,6 +68,8 @@ class WriteBlockedTests(unittest.TestCase):
         self.assertFalse(blocked)
 
     def test_update_param_returns_check_when_held(self):
+        from common.lib import calib_anomaly
+
         self._write_state(4, {
             "status": "held",
             "hold": {"reason": "manual"},
@@ -77,6 +79,9 @@ class WriteBlockedTests(unittest.TestCase):
             rc = self.runner.update_param(4, "Pi", "hdphc")
         self.assertEqual(rc, self.runner.EXIT_CHECK)
         sh.assert_not_called()
+        reason = calib_anomaly.read_check_reason(4)
+        self.assertTrue(reason.startswith("write_blocked:"))
+        self.assertIn("held", reason)
 
     def test_update_param_runs_when_clear(self):
         with mock.patch.object(
@@ -87,7 +92,7 @@ class WriteBlockedTests(unittest.TestCase):
         sh.assert_called_once()
 
     def test_channel_flag_blocks_update_param(self):
-        from common.lib import channel_flags
+        from common.lib import calib_anomaly, channel_flags
 
         channel_flags.append_flag(
             8,
@@ -103,6 +108,9 @@ class WriteBlockedTests(unittest.TestCase):
             rc = self.runner.update_param(8, "Pi", "hdprm")
         self.assertEqual(rc, self.runner.EXIT_CHECK)
         sh.assert_not_called()
+        reason = calib_anomaly.read_check_reason(8)
+        self.assertTrue(reason.startswith("write_blocked:"))
+        self.assertIn("needs_review", reason)
 
     def test_do_drift_blocked_when_held(self):
         from calibration.scripts import run_dcprm

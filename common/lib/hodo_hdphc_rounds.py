@@ -52,6 +52,10 @@ def clear_rounds(run: int) -> None:
     if path.is_dir():
         shutil.rmtree(path)
     path.mkdir(parents=True, exist_ok=True)
+    # Starting hdphc from round 1 again: re-confirm ranges next collect_phc.
+    from . import phc_range_gate
+
+    phc_range_gate.clear_range_confirmed(int(run))
 
 
 #_____________________________________________________________________________

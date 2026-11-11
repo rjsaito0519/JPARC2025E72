@@ -852,6 +852,19 @@ def exit_check_action_blocks(
 
 
 #_____________________________________________________________________________
+def _phc_range_ui_active(run: int, reason: str) -> bool:
+    """True only when a live PHC ask proposal exists (not a stale reason string)."""
+    if not (
+        reason.startswith("phc_range_proposal")
+        or "phc_range_proposal:" in reason
+    ):
+        return False
+    from . import phc_range_gate
+
+    return phc_range_gate.pending_phc_ask(int(run))
+
+
+#_____________________________________________________________________________
 def notify_exit_check_slack(
     run: int, hold: dict[str, Any] | None,
 ) -> tuple[bool, str]:
@@ -860,8 +873,8 @@ def notify_exit_check_slack(
 
     hold = hold if isinstance(hold, dict) else {}
     reason = str(hold.get("reason") or "")
-    if reason.startswith("phc_range_proposal") or "phc_range_proposal:" in reason:
-        # Dedicated Accept / Custom modal already notified; waiter still runs.
+    if _phc_range_ui_active(int(run), reason):
+        # Dedicated Custom / Go already notified; waiter still runs.
         return True, "slack skip: phc_range_proposal already notified"
     step_s = str(hold.get("step") or "?")
     index = hold.get("index")
@@ -890,7 +903,7 @@ def notify_held_slack(
 ) -> tuple[bool, str]:
     """Thread note when dispatch enters held (manual hold, etc.).
 
-    Skips step_gate / exit_check (buttoned notifies) and phc_range_proposal.
+    Skips step_gate / exit_check (buttoned notifies) and live phc_range ask.
     """
     from . import slack_notify
 
@@ -901,7 +914,7 @@ def notify_held_slack(
     if source == "exit_check":
         return True, "slack skip: exit_check uses notify_exit_check_slack"
     reason = str(hold.get("reason") or "")
-    if reason.startswith("phc_range_proposal") or "phc_range_proposal:" in reason:
+    if _phc_range_ui_active(int(run), reason):
         return True, "slack skip: phc_range_proposal already notified"
     step_s = str(hold.get("step") or "?")
     index = hold.get("index")

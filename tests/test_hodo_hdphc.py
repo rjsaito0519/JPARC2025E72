@@ -58,15 +58,41 @@ class PickRoundTests(unittest.TestCase):
 
 
 class SkipQaTests(unittest.TestCase):
-    def test_skip_qa_bypasses_merge(self):
+    def test_skip_qa_still_merges_hdphc_full_book(self):
+        sys.path.insert(0, str(REPO / "calibration" / "scripts"))
+        import run_hodo  # noqa: WPS433
+
+        args = SimpleNamespace(
+            skip_qa=True, kaon=False, ftof=False, qa_only=False,
+        )
+        with mock.patch.object(
+            run_hodo.phc_range_gate, "pending_phc_ask", return_value=False,
+        ), mock.patch.object(
+            run_hodo, "hodo_qa_pdf",
+        ) as qa, mock.patch.object(
+            run_hodo.slack_notify, "try_post_hodo_after_merge",
+            return_value=(True, "posted"),
+        ) as post:
+            qa.MERGE_MODES = ("hdprm", "t0", "hdphc")
+            qa.merge.return_value = (
+                True, "merged", Path("/tmp/run00001_hodo_hdphc_Pi.pdf"),
+            )
+            rc = run_hodo.after_qa_merge(1, "hdphc", args, 0, session=None)
+        self.assertEqual(rc, 0)
+        qa.merge.assert_called_once()
+        post.assert_called_once()
+        self.assertEqual(
+            post.call_args.kwargs["pdf_path"],
+            Path("/tmp/run00001_hodo_hdphc_Pi.pdf"),
+        )
+
+    def test_skip_qa_bypasses_non_hdphc(self):
         sys.path.insert(0, str(REPO / "calibration" / "scripts"))
         import run_hodo  # noqa: WPS433
 
         args = SimpleNamespace(skip_qa=True, kaon=False, ftof=False)
-        with mock.patch.object(
-            run_hodo.phc_range_gate, "pending_phc_ask", return_value=False,
-        ), mock.patch.object(run_hodo, "hodo_qa_pdf") as qa:
-            rc = run_hodo.after_qa_merge(1, "hdphc", args, 0)
+        with mock.patch.object(run_hodo, "hodo_qa_pdf") as qa:
+            rc = run_hodo.after_qa_merge(1, "hdprm", args, 0)
         self.assertEqual(rc, 0)
         qa.merge.assert_not_called()
 

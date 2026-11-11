@@ -221,9 +221,10 @@ def htof_phc_report(path):
 def collect_phc(a, dets, inputs):
     """Fit outputs → HDPHC/HTOFPHC rows, or SETTLED with a full-set range ask.
 
-    On any unused-seg anomaly (no hand range), do not write params. Build an ask
-    for every detector in `dets` (current conf + optional suggest). Slack notify
-    is deferred to run_hodo after the QA PDF (hdphc); HTOF-only notifies here.
+    On unused-seg anomaly (no hand range), or hand ranges present but not yet
+    session-confirmed (Go), do not write params. Build an ask for every
+    detector in `dets` (current conf + optional suggest). Slack notify is
+    deferred to run_hodo after the QA PDF (hdphc); HTOF-only notifies here.
     """
     from common.lib import phc_range_gate
 
@@ -231,6 +232,7 @@ def collect_phc(a, dets, inputs):
     data = {}
     by_det = {}
     anomaly_triggered = False
+    range_confirmed = phc_range_gate.is_range_confirmed(a.run)
     for det, path in found.items():
         hand_rng = phc_conf.limits_dict.get(
             f"{a.run:05d}_{a.suffix}_{det.lower()}"
@@ -244,8 +246,29 @@ def collect_phc(a, dets, inputs):
         if hand_rng is not None:
             cur_f, cur_l = int(hand_rng[0]), int(hand_rng[1])
         # Hand range: outside segs are intentional; do not treat as PHC anomaly.
+        # Unconfirmed + needs_range_ask → confirm ask (session restart / re-run).
         if hand_rng is not None:
-            data.update(d)
+            if range_confirmed or not phc_range_gate.needs_range_ask(det):
+                data.update(d)
+                by_det[det] = {
+                    "det": det,
+                    "anomaly": False,
+                    "bad": len(not_used),
+                    "total": None,
+                    "labels": [],
+                    "current_first": cur_f,
+                    "current_last": cur_l,
+                    "first": cur_f,
+                    "last": cur_l,
+                }
+                ok(
+                    f"{det:<6}", len(d),
+                    f" (hand range {hand_rng}; mean of used segments for {not_used})",
+                )
+                if det == "HTOF":
+                    htof_phc_report(str(path))
+                continue
+            anomaly_triggered = True
             by_det[det] = {
                 "det": det,
                 "anomaly": False,
@@ -258,11 +281,9 @@ def collect_phc(a, dets, inputs):
                 "last": cur_l,
             }
             ok(
-                f"{det:<6}", len(d),
-                f" (hand range {hand_rng}; mean of used segments for {not_used})",
+                f"{det:<6}", 0,
+                f" (hand range {hand_rng}; awaiting session confirm)",
             )
-            if det == "HTOF":
-                htof_phc_report(str(path))
             continue
         import uproot
         tree = uproot.open(str(path))["tree"].arrays(library="np")

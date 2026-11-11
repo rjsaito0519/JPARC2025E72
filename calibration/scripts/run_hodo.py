@@ -18,7 +18,6 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from common.lib import (  # noqa: E402
     config,
-    hodo_btof_qa,
     hodo_qa_pdf,
     phc_range_gate,
     qa_session,
@@ -55,36 +54,15 @@ def _notify_phc_ask_after_pdf(run):
 
 
 #_____________________________________________________________________________
-def _post_btof0_only(run, args):
-    """Intermediate hdphc rounds: post CBtof0 PDF even under --skip-qa."""
-    ok, msg, path = hodo_btof_qa.ensure_btof0_pdf(
-        run, kaon=bool(args.kaon), force=True,
-    )
-    if not ok or path is None:
-        runner.warn(f"hdphc BTOF0 QA skipped: {msg}")
-        return
-    runner.info(msg)
-    posted, post_msg = slack_notify.try_post_hodo_after_merge(
-        run, "hdphc", kaon=args.kaon, ftof=args.ftof, pdf_path=path,
-    )
-    if not posted:
-        runner.warn(f"Slack BTOF0 post failed: {post_msg}")
-    elif not post_msg.startswith("slack skip:"):
-        runner.info(post_msg)
-
-
-#_____________________________________________________________________________
 def after_qa_merge(run, mode, args, rc, session=None):
     """Merge detector QA PDFs; incomplete book raises the run to EXIT_CHECK.
 
-    When a PHC range ask is pending, always merge/post the hdphc PDF first
-    (even under --skip-qa), then post the Custom/Go Slack UI.
-    Intermediate hdphc --skip-qa still posts CBtof0 (btof0) alone.
+    hdphc always merges/posts the full book (CBtof0 + det PHC), including under
+    --skip-qa. Other modes still skip merge when --skip-qa is set. When a PHC
+    range ask is pending, post Custom/Go after the PDF.
     """
     phc_ask = mode == "hdphc" and phc_range_gate.pending_phc_ask(run)
-    if getattr(args, "skip_qa", False) and not phc_ask:
-        if mode == "hdphc":
-            _post_btof0_only(run, args)
+    if getattr(args, "skip_qa", False) and mode != "hdphc":
         return rc
     if mode not in hodo_qa_pdf.MERGE_MODES:
         if phc_ask:

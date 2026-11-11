@@ -121,10 +121,13 @@ def update_param(run, suffix, ptype, *opts, debug=False):
     if debug:
         warn(f"--debug: {ptype} params not written")
         return EXIT_SKIP
-    from . import calib_approval
+    from . import calib_anomaly, calib_approval
     blocked, reason = calib_approval.write_blocked(run, mode=ptype)
     if blocked:
         warn(f"param write blocked for {ptype}: {reason}")
+        calib_anomaly.remember_check_reason(
+            int(run), f"write_blocked: {reason}",
+        )
         return EXIT_CHECK
     step(f"update params ({ptype})")
     rc, _ = sh(" ".join(["python3", str(SCRIPT_DIR / "update_param.py"), str(run), suffix, ptype, *opts]),

@@ -55,6 +55,84 @@ class PhcRangeGateTests(unittest.TestCase):
         self.assertFalse(self.gate.pending_phc_ask(21))
         self.assertFalse(self.gate.clear_proposal(21))
 
+    def test_range_confirmed_set_and_clear(self):
+        self.assertFalse(self.gate.is_range_confirmed(31))
+        path = self.gate.set_range_confirmed(31)
+        self.assertTrue(path.is_file())
+        self.assertTrue(self.gate.is_range_confirmed(31))
+        self.assertTrue(self.gate.clear_range_confirmed(31))
+        self.assertFalse(self.gate.is_range_confirmed(31))
+        self.assertFalse(self.gate.clear_range_confirmed(31))
+
+    def test_clear_phc_ask_state_drops_proposal_and_confirmed(self):
+        self.gate.write_proposal(
+            32,
+            {
+                "run": 32,
+                "suffix": "Pi",
+                "proposals": [{"det": "BHT", "first": 1, "last": 10}],
+            },
+        )
+        self.gate.set_range_confirmed(32)
+        self.gate.clear_phc_ask_state(32)
+        self.assertFalse(self.gate.pending_phc_ask(32))
+        self.assertFalse(self.gate.is_range_confirmed(32))
+
+    def test_apply_phc_go_sets_confirmed(self):
+        from common.lib import calib_ops
+
+        conf = Path(self.tmp.name) / "phc_conf.py"
+        conf.write_text("limits_dict = {\n}\n", encoding="utf-8")
+        self.gate.write_proposal(
+            33,
+            {
+                "run": 33,
+                "suffix": "Pi",
+                "proposals": [{"det": "BHT", "first": 1, "last": 10}],
+            },
+        )
+        self.gate.upsert_phc_conf(33, "Pi", "BHT", 1, 10, path=conf)
+        with mock.patch.object(
+            self.gate, "missing_proposal_dets", return_value=[],
+        ), mock.patch.object(
+            calib_ops, "_phc_refit_after_conf", return_value=(True, "refit ok"),
+        ):
+            ok, msg = calib_ops.apply_phc_go(33, background_resume=False)
+        self.assertTrue(ok)
+        self.assertIn("phc-go", msg)
+        self.assertFalse(self.gate.pending_phc_ask(33))
+        self.assertTrue(self.gate.is_range_confirmed(33))
+
+    def test_clear_rounds_clears_confirmed(self):
+        from common.lib import hodo_hdphc_rounds
+
+        self.gate.set_range_confirmed(34)
+        with mock.patch.object(hodo_hdphc_rounds.config, "OUTPUT_DIR", self.out):
+            hodo_hdphc_rounds.clear_rounds(34)
+        self.assertFalse(self.gate.is_range_confirmed(34))
+        self.assertTrue(
+            (self.out / "calib" / "run00034" / "hdphc_rounds").is_dir()
+        )
+
+    def test_clear_dispatch_state_clears_confirmed(self):
+        scripts = str(REPO / "calibration" / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import calib_dispatch as cd
+
+        self.gate.write_proposal(
+            35,
+            {
+                "run": 35,
+                "suffix": "Pi",
+                "proposals": [{"det": "BHT", "first": 1, "last": 5}],
+            },
+        )
+        self.gate.set_range_confirmed(35)
+        cd.clear_dispatch_state(35)
+        self.assertFalse(self.gate.pending_phc_ask(35))
+        self.assertFalse(self.gate.is_range_confirmed(35))
+
     def test_upsert_phc_conf(self):
         conf = Path(self.tmp.name) / "phc_conf.py"
         conf.write_text(
@@ -92,6 +170,14 @@ class PhcRangeGateTests(unittest.TestCase):
     def test_notify_held_skips_phc_and_step_gate(self):
         from common.lib import calib_approval
 
+        self.gate.write_proposal(
+            3,
+            {
+                "run": 3,
+                "suffix": "Pi",
+                "proposals": [{"det": "BHT", "first": 1, "last": 10}],
+            },
+        )
         with mock.patch(
             "common.lib.slack_notify.try_notify_failure",
             return_value=(True, "notified"),
@@ -143,6 +229,43 @@ class PhcRangeGateTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertEqual(msg, "notified")
             notify.assert_called_once()
+
+    def test_exit_check_posts_buttons_when_phc_reason_stale(self):
+        from common.lib import calib_approval
+
+        # Stale reason string, no proposal on disk → Proceed/Refit/Stop.
+        self.assertFalse(self.gate.pending_phc_ask(41))
+        with mock.patch(
+            "common.lib.slack_notify.try_notify_failure",
+            return_value=(True, "notified"),
+        ) as notify:
+            ok, msg = calib_approval.notify_exit_check_slack(
+                41,
+                {
+                    "source": "exit_check",
+                    "reason": (
+                        "step hodo_hdphc EXIT_CHECK (rc=3): "
+                        "phc_range_proposal: trial BHT,BH2,T1"
+                    ),
+                    "step": "hodo_hdphc",
+                    "index": 3,
+                    "id": "stalehold",
+                },
+            )
+        self.assertTrue(ok)
+        self.assertEqual(msg, "notified")
+        notify.assert_called_once()
+        _args, kwargs = notify.call_args
+        blocks = kwargs.get("blocks") or []
+        action_ids = [
+            el.get("action_id")
+            for b in blocks if b.get("type") == "actions"
+            for el in b.get("elements") or []
+        ]
+        self.assertEqual(
+            action_ids,
+            ["calib_step_proceed", "calib_step_refit", "calib_step_stop"],
+        )
 
     def test_phc_blocks_include_custom_and_go(self):
         rows = [

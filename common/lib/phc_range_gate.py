@@ -17,6 +17,7 @@ from . import config
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PHC_CONF_PATH = PROJECT_ROOT / "calibration" / "scripts" / "phc_conf.py"
 PROPOSAL_NAME = "phc_range_proposal.json"
+CONFIRMED_NAME = "phc_range_confirmed.json"
 # Stable Slack failure key so chat.update can refresh the same message.
 SLACK_ASK_KEY = "phc_range_ask"
 # Single-segment (etc.): no usable-range ask / Custom choice.
@@ -28,10 +29,18 @@ def needs_range_ask(det: str) -> bool:
     return str(det or "") not in RANGE_ASK_SKIP
 
 #_____________________________________________________________________________
+def calib_run_dir(run: int) -> Path:
+    return Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}"
+
+
+#_____________________________________________________________________________
 def proposal_path(run: int) -> Path:
-    return (
-        Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}" / PROPOSAL_NAME
-    )
+    return calib_run_dir(run) / PROPOSAL_NAME
+
+
+#_____________________________________________________________________________
+def confirmed_path(run: int) -> Path:
+    return calib_run_dir(run) / CONFIRMED_NAME
 
 
 #_____________________________________________________________________________
@@ -92,6 +101,55 @@ def clear_proposal(run: int) -> bool:
         return False
     path.unlink()
     return True
+
+
+#_____________________________________________________________________________
+def is_range_confirmed(run: int) -> bool:
+    """True after Go in this calib session (survives resume, not restart)."""
+    path = confirmed_path(run)
+    if not path.is_file():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and data.get("confirmed") is True
+
+
+#_____________________________________________________________________________
+def set_range_confirmed(run: int) -> Path:
+    """Mark PHC hand ranges confirmed for this session (after Go)."""
+    from datetime import datetime, timezone
+
+    path = confirmed_path(run)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "run": int(run),
+        "confirmed": True,
+        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+#_____________________________________________________________________________
+def clear_range_confirmed(run: int) -> bool:
+    """Clear session confirm flag so the next hdphc re-asks. Returns if removed."""
+    path = confirmed_path(run)
+    if not path.is_file():
+        return False
+    path.unlink()
+    return True
+
+
+#_____________________________________________________________________________
+def clear_phc_ask_state(run: int) -> None:
+    """Drop proposal + confirmed (fresh chain / restart)."""
+    clear_proposal(run)
+    clear_range_confirmed(run)
 
 
 #_____________________________________________________________________________
