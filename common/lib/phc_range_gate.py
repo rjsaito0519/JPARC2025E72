@@ -120,26 +120,20 @@ def format_proposal_line(row: dict[str, Any]) -> str:
     """One det line; ranges in code spans (Slack has no colored text)."""
     det = str(row.get("det") or "?")
     cur_f, cur_l = row.get("current_first"), row.get("current_last")
-    bad, total = row.get("bad"), row.get("total")
-    if bad is not None and total is not None:
-        unused = f"unused `{bad}/{total}`"
-    else:
-        unused = "unused n/a"
     if cur_f is not None and cur_l is not None:
-        # Confirmed hand range — emphasize with bold + code.
         return (
             f":large_green_circle: *`{det}`*  "
-            f"*range* `{cur_f}`–`{cur_l}`  ·  {unused}"
+            f"*range* `{cur_f}`–`{cur_l}`"
         )
     if row_has_suggest(row):
         return (
             f":large_orange_circle: *`{det}`*  "
-            f"_hint_ `{row.get('first')}`–`{row.get('last')}`  ·  {unused}  "
+            f"_hint_ `{row.get('first')}`–`{row.get('last')}`  "
             f"— Custom で確定"
         )
     return (
         f":red_circle: *`{det}`*  "
-        f"_range unset_  ·  {unused}  — Custom で指定"
+        f"_range unset_  — Custom で指定"
     )
 
 #_____________________________________________________________________________
