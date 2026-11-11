@@ -171,7 +171,8 @@ class PhcRangeGateTests(unittest.TestCase):
         self.assertIn(":large_green_circle:", text)
         self.assertIn(":large_orange_circle:", text)
         self.assertIn(":red_circle:", text)
-        self.assertIn("1/3 set", text)
+        self.assertNotIn("Go で hdphc", text)
+        self.assertNotIn("set）", text)
         actions = blocks[1]["elements"]
         ids = [e["action_id"] for e in actions]
         self.assertEqual(ids, ["calib_phc_custom", "calib_phc_go"])

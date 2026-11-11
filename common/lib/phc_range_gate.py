@@ -186,22 +186,6 @@ def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
     run_s = str(int(run))
     lines = [format_proposal_line(row) for row in proposals if isinstance(row, dict)]
     body = "\n".join(lines) if lines else "(no proposals)"
-    n_set = sum(
-        1 for row in proposals
-        if isinstance(row, dict)
-        and row.get("current_first") is not None
-        and row.get("current_last") is not None
-    )
-    n_all = sum(1 for row in proposals if isinstance(row, dict) and row.get("det"))
-    ready = n_all > 0 and n_set >= n_all
-    footer = (
-        f":white_check_mark: 全 {n_all} det の range 確定 — *Go* で hdphc refit"
-        if ready
-        else (
-            f"Custom で range を更新（この投稿が書き換わります）。"
-            f"そろったら *Go*（{n_set}/{n_all} set）"
-        )
-    )
     return [
         {
             "type": "section",
@@ -209,8 +193,7 @@ def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
                 "type": "mrkdwn",
                 "text": (
                     f"*run{int(run):05d}* PHC segment range\n"
-                    f"{body}\n"
-                    f"{footer}"
+                    f"{body}"
                 ),
             },
         },
