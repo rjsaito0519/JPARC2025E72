@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -456,6 +457,47 @@ class BuildSubjectTests(unittest.TestCase):
         new_st = json.loads(state_path.read_text(encoding="utf-8"))
         self.assertEqual(new_st["status"], "awaiting_final_approval")
         self.assertNotIn("approval", new_st)
+
+    def test_fine_plan_empty_artifacts_blocks_approve(self):
+        """#45: expand_coarse fine steps must not approve with empty subject."""
+        scripts = str(REPO / "calibration" / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import calib_dispatch as cd
+        import calib_session as cs
+
+        expanded = cs.expand_coarse_steps(
+            ["hodo", {"dc_chamber": {}}, {"dc_chamber": {"bcin": True}}, "d5_align"],
+        )
+        plan_steps = []
+        for i, raw in enumerate(expanded):
+            name, opts = cd.normalize_step(raw, i)
+            plan_steps.append({"name": name, "opts": opts})
+        st = {
+            "status": "awaiting_final_approval",
+            "finished": True,
+            "plan": {"calib_particle": "pion", "steps": plan_steps},
+            "steps": [],
+            "unverified": [],
+        }
+        families = calib_approval.plan_families(st)
+        self.assertEqual(families, {"hodo", "dc", "d5"})
+        req = calib_approval.required_qa_keys(st)
+        self.assertIn(("hodo", "hdprm", ""), req)
+        self.assertIn(("dc", "t0", "bcout"), req)
+        self.assertIn(("dc", "t0", "bcin"), req)
+        self.assertIn(("d5", "pos_review", ""), req)
+        subject = calib_approval.build_subject(1, st)
+        self.assertTrue(subject["missing"])
+        missing = calib_approval.subject_missing(subject)
+        self.assertTrue(missing)
+        cd.write_state(1, st, lane="")
+        with mock.patch(
+            "common.lib.channel_flags.open_needs_review", return_value=[],
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                cd.do_approve({"run": 1}, None, "cli", None, None)
+        self.assertNotEqual(caught.exception.code, 0)
 
 
 class FinalQaIndexFilterTests(unittest.TestCase):

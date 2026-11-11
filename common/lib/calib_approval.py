@@ -106,17 +106,56 @@ def plan_step_names(st: dict[str, Any]) -> set[str]:
     return names
 
 
+# Coarse + fine dispatch step names that map to approval families / QA.
+_HODO_PLAN_STEPS = frozenset({
+    "hodo", "hodo_hdprm", "hodo_t0", "hodo_hdphc", "hodo_hdphc_adopt",
+})
+_DC_PLAN_STEPS = frozenset({
+    "dc_chamber", "dc_resi", "dc_t0", "dc_drift", "dc_ch_resi", "dc_reso",
+})
+_D5_PLAN_STEPS = frozenset({"d5_align", "d5_pass"})
+_KNOWN_PLAN_STEPS = _HODO_PLAN_STEPS | _DC_PLAN_STEPS | _D5_PLAN_STEPS
+
+
 #_____________________________________________________________________________
 def plan_families(st: dict[str, Any]) -> set[str]:
     names = plan_step_names(st)
     families: set[str] = set()
-    if "hodo" in names:
+    if names & _HODO_PLAN_STEPS:
         families.add("hodo")
-    if "dc_resi" in names or "dc_chamber" in names:
+    if names & _DC_PLAN_STEPS:
         families.add("dc")
-    if "d5_align" in names:
+    if names & _D5_PLAN_STEPS:
         families.add("d5")
     return families
+
+
+#_____________________________________________________________________________
+def unrecognized_plan_steps(st: dict[str, Any]) -> list[str]:
+    """Calib-looking step names that approval does not know how to gate."""
+    out = []
+    for name in sorted(plan_step_names(st)):
+        if name in _KNOWN_PLAN_STEPS:
+            continue
+        # Ignore non-calib placeholders; flag anything else with a calib-ish prefix.
+        if name.startswith(("hodo", "dc_", "d5")):
+            out.append(name)
+    return out
+
+
+#_____________________________________________________________________________
+def plan_coverage_gaps(st: dict[str, Any]) -> list[str]:
+    """Human-readable reasons the plan cannot be approved as-is."""
+    gaps: list[str] = []
+    unknown = unrecognized_plan_steps(st)
+    if unknown:
+        gaps.append(f"unrecognized plan steps: {unknown}")
+    names = plan_step_names(st) & _KNOWN_PLAN_STEPS
+    if names and not plan_families(st):
+        gaps.append("plan has calib steps but plan_families is empty")
+    if names and not required_qa_keys(st):
+        gaps.append("plan has calib steps but required_qa_keys is empty")
+    return gaps
 
 
 #_____________________________________________________________________________
@@ -164,7 +203,7 @@ def _dc_chambers_from_plan(st: dict[str, Any]) -> set[str]:
     for entry in plan.get("steps") or []:
         if not isinstance(entry, dict):
             continue
-        if entry.get("name") not in ("dc_resi", "dc_chamber"):
+        if entry.get("name") not in _DC_PLAN_STEPS:
             continue
         opts = entry.get("opts") if isinstance(entry.get("opts"), dict) else {}
         chambers.add("BcIn" if opts.get("bcin") else "BcOut")
@@ -212,6 +251,12 @@ def required_qa_keys(st: dict[str, Any]) -> set[tuple[str, str, str]]:
             keys.add(("hodo", "hdprm", ""))
             if not opts.get("skip_hdphc"):
                 keys.add(("hodo", "hdphc", ""))
+        elif name == "hodo_hdprm":
+            keys.add(("hodo", "hdprm", ""))
+        elif name == "hodo_t0":
+            keys.add(("hodo", "t0", ""))
+        elif name in ("hodo_hdphc", "hodo_hdphc_adopt"):
+            keys.add(("hodo", "hdphc", ""))
         elif name == "dc_chamber":
             chamber = "bcin" if opts.get("bcin") else "bcout"
             for mode, skip in (
@@ -225,7 +270,19 @@ def required_qa_keys(st: dict[str, Any]) -> set[tuple[str, str, str]]:
         elif name == "dc_resi":
             chamber = "bcin" if opts.get("bcin") else "bcout"
             keys.add(("dc", "resi", chamber))
-        elif name == "d5_align":
+        elif name == "dc_t0":
+            chamber = "bcin" if opts.get("bcin") else "bcout"
+            keys.add(("dc", "t0", chamber))
+        elif name == "dc_drift":
+            chamber = "bcin" if opts.get("bcin") else "bcout"
+            keys.add(("dc", "drift", chamber))
+        elif name == "dc_ch_resi":
+            chamber = "bcin" if opts.get("bcin") else "bcout"
+            keys.add(("dc", "resi", chamber))
+        elif name == "dc_reso":
+            chamber = "bcin" if opts.get("bcin") else "bcout"
+            keys.add(("dc", "reso", chamber))
+        elif name in ("d5_align", "d5_pass"):
             keys.add(("d5", "pos_review", ""))
     return keys
 
@@ -462,7 +519,7 @@ def build_subject(run: int, st: dict[str, Any]) -> dict[str, Any]:
 
     params: list[dict[str, Any]] = []
     decodes: list[dict[str, Any]] = []
-    missing: list[str] = []
+    missing: list[str] = list(plan_coverage_gaps(st))
 
     if "hodo" in families:
         if "t0" in req_modes or "hdprm" in req_modes:
