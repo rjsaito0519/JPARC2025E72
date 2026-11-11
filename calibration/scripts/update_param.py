@@ -26,7 +26,7 @@ from termcolor import colored
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from common.lib import calib_anomaly, config, runner  # noqa: E402
-from common.lib.param import ParamFile  # noqa: E402
+from common.lib.param import ParamFile, exclusive_param_lock  # noqa: E402
 import calib_convergence as conv  # noqa: E402
 import phc_conf  # noqa: E402
 import update_dctdc  # noqa: E402
@@ -692,49 +692,52 @@ def main():
     a = parse_args()
     cat = CATEGORIES[a.ptype]
     target = config.PARAM_DIR / cat["dir"] / config.SUB_DIR / f"{cat['prefix']}_run{a.run:05d}_{a.suffix}"
-    if not target.exists():
-        source = new_param_source(cat, a.run, a.suffix)
-        runner.warn(f"{target.name} does not exist; created from {source.name}")
-        ParamFile.create_from_template(source, target)
-    pf = ParamFile(target)
-    print(colored(f"\n>>> Collecting results for {a.ptype} <<<", "cyan"))
-    collected = COLLECT[a.ptype](a, pf)
-    data, states = collected[0], collected[1]
-    pending = collected[2] if len(collected) > 2 else []
-    if data:
-        missing, duplicates = pf.key_issues(data, key_len=cat["key_len"])
-        if missing or duplicates:
-            parts = []
-            if missing:
-                parts.append(f"missing keys: {missing}")
-            if duplicates:
-                parts.append(f"duplicate keys: {duplicates}")
-            runner.fail("nothing written (" + "; ".join(parts) + ")")
-        before = conv.file_sha256(target)
-        n = pf.update(data, key_len=cat["key_len"], start_col=cat["start_col"])
-        if n != len(data):
-            runner.fail(f"nothing written (updated {n} rows, expected {len(data)})")
-        after = conv.sha256_hex(pf.serialized_text())
-        for rec in pending:
-            key = rec.get("apply_key") or rec.get("fit_token")
-            conv.record(
-                rec["path"], rec["group"], rec["value"], conv.PENDING,
-                conv.details_with_apply(key, before=before, after=after),
-            )
-        pf.write()
-        after_disk = conv.file_sha256(target)
-        for rec in pending:
-            key = rec.get("apply_key") or rec.get("fit_token")
-            conv.record(
-                rec["path"], rec["group"], rec["value"], conv.WRITTEN,
-                conv.details_with_apply(key, before=before, after=after_disk),
-            )
-        print(colored(f"\n[SUCCESS] Updated {n} entries total for Run {a.run} {a.suffix}", "green", attrs=["bold"]))
-        print(f"File: {target.relative_to(config.ANALYZER_DIR)}\n")
-    elif not states:
-        runner.warn(f"no results for run {a.run} {a.suffix} {a.ptype}; nothing written")
-        sys.exit(runner.EXIT_SKIP)
-    sys.exit(conv.exit_code(states))
+    # BcIn/BcOut (and any parallel writers) share this file: hold the lock for
+    # the whole load → collect (may add to current rows) → update → write path.
+    with exclusive_param_lock(target):
+        if not target.exists():
+            source = new_param_source(cat, a.run, a.suffix)
+            runner.warn(f"{target.name} does not exist; created from {source.name}")
+            ParamFile.create_from_template(source, target)
+        pf = ParamFile(target)
+        print(colored(f"\n>>> Collecting results for {a.ptype} <<<", "cyan"))
+        collected = COLLECT[a.ptype](a, pf)
+        data, states = collected[0], collected[1]
+        pending = collected[2] if len(collected) > 2 else []
+        if data:
+            missing, duplicates = pf.key_issues(data, key_len=cat["key_len"])
+            if missing or duplicates:
+                parts = []
+                if missing:
+                    parts.append(f"missing keys: {missing}")
+                if duplicates:
+                    parts.append(f"duplicate keys: {duplicates}")
+                runner.fail("nothing written (" + "; ".join(parts) + ")")
+            before = conv.file_sha256(target)
+            n = pf.update(data, key_len=cat["key_len"], start_col=cat["start_col"])
+            if n != len(data):
+                runner.fail(f"nothing written (updated {n} rows, expected {len(data)})")
+            after = conv.sha256_hex(pf.serialized_text())
+            for rec in pending:
+                key = rec.get("apply_key") or rec.get("fit_token")
+                conv.record(
+                    rec["path"], rec["group"], rec["value"], conv.PENDING,
+                    conv.details_with_apply(key, before=before, after=after),
+                )
+            pf.write()
+            after_disk = conv.file_sha256(target)
+            for rec in pending:
+                key = rec.get("apply_key") or rec.get("fit_token")
+                conv.record(
+                    rec["path"], rec["group"], rec["value"], conv.WRITTEN,
+                    conv.details_with_apply(key, before=before, after=after_disk),
+                )
+            print(colored(f"\n[SUCCESS] Updated {n} entries total for Run {a.run} {a.suffix}", "green", attrs=["bold"]))
+            print(f"File: {target.relative_to(config.ANALYZER_DIR)}\n")
+        elif not states:
+            runner.warn(f"no results for run {a.run} {a.suffix} {a.ptype}; nothing written")
+            sys.exit(runner.EXIT_SKIP)
+        sys.exit(conv.exit_code(states))
 
 
 if __name__ == "__main__":

@@ -1,9 +1,47 @@
 import datetime
+import fcntl
 import shutil
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import config
+
+
+#_____________________________________________________________________________
+@contextmanager
+def exclusive_param_lock(path, *, timeout_s=600.0):
+    """Exclusive flock for read-modify-write of a shared param file.
+
+    Sidecar ``<path>.lock`` so writers can lock before the target exists.
+    BcIn/BcOut lanes update the same DCTDC/DCGEO; without this lock one
+    chamber's row changes are lost when both do load→edit→save.
+    """
+    path = Path(path)
+    lock_path = Path(str(path) + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("a+", encoding="utf-8")
+    deadline = None
+    if timeout_s is not None and float(timeout_s) > 0:
+        deadline = time.monotonic() + float(timeout_s)
+    try:
+        while True:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"param lock timeout ({timeout_s}s): {lock_path}"
+                    )
+                time.sleep(0.05)
+        yield lock_path
+    finally:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock_file.close()
 
 
 def backup_file(path):
