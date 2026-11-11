@@ -73,12 +73,22 @@ def bac_rows(tree, cid):
         runner.fail("BAC fit output has no adc_ok/tdc_ok (made by an older BAC_HDPRM); run BAC_HDPRM again")
     data = {}
     if tree["tdc_ok"][0]:
-        data[f"{cid}-0-4-1-0"] = [tree["tdc_p0_val"][0][0], TDC_GAIN]
+        row = _finite_row(
+            [tree["tdc_p0_val"][0][0], TDC_GAIN],
+            label="BAC TDC",
+        )
+        if row is not None:
+            data[f"{cid}-0-4-1-0"] = row
     else:
         runner.warn(f"BAC TDC: offset {tree['tdc_p0_val'][0][0]:.0f} outside the window, not written (current value kept)")
     for i, ch in enumerate(tree["ch"]):
         if tree["adc_ok"][i]:
-            data[f"{cid}-0-{ch:.0f}-0-0"] = [tree["adc_p0_val"][i][0]]
+            row = _finite_row(
+                [tree["adc_p0_val"][i][0]],
+                label=f"BAC seg{ch:.0f} ADC",
+            )
+            if row is not None:
+                data[f"{cid}-0-{ch:.0f}-0-0"] = row
         else:
             runner.warn(f"BAC seg{ch:.0f} ADC: pedestal not determined (signal-dominated), not written (current value kept)")
     return data
@@ -92,12 +102,22 @@ def kvc_rows(tree, cid, n_ud):
     data = {}
     for i, ch in enumerate(tree["ch"]):
         if tree["tdc_ok"][i]:
-            data[f"{cid}-0-{ch:.0f}-1-4"] = [tree["tdc_p0_val"][i][0], TDC_GAIN]
+            row = _finite_row(
+                [tree["tdc_p0_val"][i][0], TDC_GAIN],
+                label=f"KVC seg{ch:.0f}S TDC",
+            )
+            if row is not None:
+                data[f"{cid}-0-{ch:.0f}-1-4"] = row
         else:
             runner.warn(f"KVC seg{ch:.0f}S TDC: too few hits around the peak, not written (current value kept)")
         for ud in range(n_ud):
             if "adc_p0_val" in tree:
-                data[f"{cid}-0-{ch:.0f}-0-{ud}"] = [tree["adc_p0_val"][i][ud]]
+                row = _finite_row(
+                    [tree["adc_p0_val"][i][ud]],
+                    label=f"KVC seg{ch:.0f} ud{ud} ADC",
+                )
+                if row is not None:
+                    data[f"{cid}-0-{ch:.0f}-0-{ud}"] = row
     return data
 
 
@@ -107,7 +127,12 @@ def htof_tdc_rows(tree, cid):
     for i, ch in enumerate(tree["ch"]):
         for ud in range(3):
             if "tdc_p0_val" in tree:
-                data[f"{cid}-0-{ch:.0f}-1-{ud}"] = [tree["tdc_p0_val"][i][ud], TDC_GAIN]
+                row = _finite_row(
+                    [tree["tdc_p0_val"][i][ud], TDC_GAIN],
+                    label=f"HTOF seg{int(ch)} ud{ud} TDC",
+                )
+                if row is not None:
+                    data[f"{cid}-0-{ch:.0f}-1-{ud}"] = row
     return data
 
 
@@ -152,8 +177,13 @@ def make_htofprm_dictdata(root_file_path):
     for i in range(len(tree["ch"])):
         ch = tree["ch"][i]
         for UorD in range(3):
-            key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
-            data[key] = [ tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD] ]
+            row = _finite_row(
+                [tree["adc_p0_val"][i][UorD], tree["adc_p1_val"][i][UorD]],
+                label=f"HTOF seg{int(ch)} ud{UorD} ADC",
+            )
+            if row is not None:
+                key = f"{detector_id}-0-{ch:.0f}-0-{UorD:.0f}"
+                data[key] = row
     return data
 # ---------------------------------------------------------------------------
 

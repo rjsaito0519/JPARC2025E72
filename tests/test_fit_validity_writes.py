@@ -116,6 +116,58 @@ class HdprmUpdateTests(unittest.TestCase):
             data = self.hd.make_t0_offset_dictdata("/dev/null")
         self.assertEqual(data, {})
 
+    def test_kvc_skips_nan_adc(self):
+        tree = {
+            "ch": [0],
+            "tdc_ok": [1],
+            "tdc_p0_val": [[123.0]],
+            "adc_p0_val": [[float("nan"), 10.0, 10.0, 10.0, 10.0]],
+        }
+        data = self.hd.kvc_rows(tree, 6, 5)
+        self.assertNotIn("6-0-0-0-0", data)
+        self.assertIn("6-0-0-0-1", data)
+        self.assertIn("6-0-0-1-4", data)
+        for vals in data.values():
+            self.assertTrue(all(math.isfinite(float(x)) for x in vals))
+
+    def test_bac_skips_nan_adc(self):
+        tree = {
+            "ch": np.array([0.0, 1.0]),
+            "adc_ok": np.array([1, 1]),
+            "tdc_ok": np.array([1]),
+            "tdc_p0_val": np.array([[100.0]]),
+            "adc_p0_val": np.array([[float("nan")], [5.0]]),
+        }
+        data = self.hd.bac_rows(tree, cid=3)
+        self.assertNotIn("3-0-0-0-0", data)
+        self.assertEqual(data.get("3-0-1-0-0"), [5.0])
+        self.assertEqual(data.get("3-0-4-1-0")[0], 100.0)
+
+    def test_htof_tdc_skips_inf(self):
+        tree = {
+            "ch": np.array([0.0]),
+            "tdc_p0_val": np.array([[1.0, float("inf"), 3.0]]),
+        }
+        data = self.hd.htof_tdc_rows(tree, cid=7)
+        self.assertIn("7-0-0-1-0", data)
+        self.assertNotIn("7-0-0-1-1", data)
+        self.assertIn("7-0-0-1-2", data)
+
+    def test_htofprm_skips_nan(self):
+        tree = {
+            "ch": np.array([0.0]),
+            "adc_p0_val": np.array([[1.0, float("nan"), 3.0]]),
+            "adc_p1_val": np.array([[10.0, 20.0, 30.0]]),
+        }
+        fake = mock.MagicMock()
+        fake.__getitem__.return_value.arrays.return_value = tree
+        with mock.patch.object(self.hd.uproot, "open", return_value=fake), \
+             mock.patch.object(self.hd.config, "DETECTOR_I_LIST", {"HTOF": 7}):
+            data = self.hd.make_htofprm_dictdata("/dev/null")
+        self.assertIn("7-0-0-0-0", data)
+        self.assertNotIn("7-0-0-0-1", data)
+        self.assertIn("7-0-0-0-2", data)
+
 
 class ResidualUpdateTests(unittest.TestCase):
     @classmethod
@@ -182,6 +234,82 @@ class D5PosScoreTests(unittest.TestCase):
                 state = self.d5.judge_pos(1, r, "Pi", 0.01)
         self.assertEqual(state, self.d5.conv.SETTLED)
         rec.assert_called()
+
+    def _write_pos_txt(self, directory, body):
+        path = Path(directory) / "d5_pos_review_run00001_Pi.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def _measure_with_txt(self, body):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            self._write_pos_txt(out, body)
+            with mock.patch.object(self.d5.runner, "sh", return_value=(0, "")), \
+                 mock.patch.object(self.d5, "txt_dir", return_value=out), \
+                 mock.patch.object(self.d5.calib_anomaly, "remember_check_reason"):
+                return self.d5.measure(1, "Pi")
+
+    def test_measure_rejects_nan_err_b(self):
+        body = (
+            "dy_a_mm 0\n"
+            "dy_b_mm 0\n"
+            "dy_a_err_mm 0.01\n"
+            "dy_b_err_mm nan\n"
+            "blc1_ab_opposite_shift_s_mm 0\n"
+            "ddxu_mean_percent 0\n"
+            "dv_mean_mrad 0\n"
+        )
+        self.assertIsNone(self._measure_with_txt(body))
+
+    def test_measure_rejects_nan_err_a(self):
+        body = (
+            "dy_a_mm 0\n"
+            "dy_b_mm 0\n"
+            "dy_a_err_mm nan\n"
+            "dy_b_err_mm 0.01\n"
+            "blc1_ab_opposite_shift_s_mm 0\n"
+            "ddxu_mean_percent 0\n"
+            "dv_mean_mrad 0\n"
+        )
+        self.assertIsNone(self._measure_with_txt(body))
+
+    def test_measure_rejects_inf_and_nonpositive_err(self):
+        body_inf = (
+            "dy_a_mm 0\n"
+            "dy_b_mm 0\n"
+            "dy_a_err_mm 0.01\n"
+            "dy_b_err_mm inf\n"
+            "blc1_ab_opposite_shift_s_mm 0\n"
+            "ddxu_mean_percent 0\n"
+            "dv_mean_mrad 0\n"
+        )
+        body_zero = (
+            "dy_a_mm 0\n"
+            "dy_b_mm 0\n"
+            "dy_a_err_mm 0.0\n"
+            "dy_b_err_mm 0.01\n"
+            "blc1_ab_opposite_shift_s_mm 0\n"
+            "ddxu_mean_percent 0\n"
+            "dv_mean_mrad 0\n"
+        )
+        self.assertIsNone(self._measure_with_txt(body_inf))
+        self.assertIsNone(self._measure_with_txt(body_zero))
+
+    def test_measure_accepts_finite_errs(self):
+        body = (
+            "dy_a_mm 0\n"
+            "dy_b_mm 0\n"
+            "dy_a_err_mm 0.01\n"
+            "dy_b_err_mm 0.02\n"
+            "blc1_ab_opposite_shift_s_mm 0\n"
+            "ddxu_mean_percent 0\n"
+            "dv_mean_mrad 0\n"
+        )
+        r = self._measure_with_txt(body)
+        self.assertIsNotNone(r)
+        self.assertEqual(r["dy_err"], 0.02)
+        self.assertLess(self.d5.pos_score(r, 0.01), 1.0)
 
 
 if __name__ == "__main__":

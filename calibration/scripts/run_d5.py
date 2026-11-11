@@ -226,7 +226,22 @@ def measure(run, s):
     except (KeyError, ValueError):
         runner.warn(f"{txt}: missing or bad values")
         return None
-    r["dy_err"] = max(r.pop("dy_err_a"), r.pop("dy_err_b"))
+    # Check each side's uncertainty before max(): max(finite, nan) would
+    # discard the NaN and look like a valid measurement.
+    err_a = r.pop("dy_err_a")
+    err_b = r.pop("dy_err_b")
+    for key, err in (("dy_err_a", err_a), ("dy_err_b", err_b)):
+        if not fit_validity.is_finite_number(err) or float(err) <= 0.0:
+            runner.warn(
+                f"{txt}: invalid {key}={err!r}; "
+                f"measurement unusable (human check, not converged)"
+            )
+            calib_anomaly.remember_check_reason(
+                run,
+                f"d5 pos invalid {key}={err!r} ({s})",
+            )
+            return None
+    r["dy_err"] = max(float(err_a), float(err_b))
     # Low-stats C++ core may emit NaN; do not treat as measured (no converge/update).
     for key in ("dy_a", "dy_b", "dy_err", "s"):
         if not fit_validity.is_finite_number(r[key]):
