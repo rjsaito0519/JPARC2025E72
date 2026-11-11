@@ -1,0 +1,97 @@
+# Beam-table runs (2489–2535). Full chain: hodo + bcout + bcin + d5.
+# Proton rows use calib_particle: kaon (window); beam_particle stays proton.
+# Launch: ./calib.py --list calibration/caliblist/beam_table_2489_2535.yml
+
+DEFAULT:
+  calib_particle: pion
+  hodo: true
+  bcout: true
+  bcin: true
+  d5: true
+  local: false
+  force: false
+  auto: false
+  dry_run: false
+  max_iter: 10
+  hdphc_iter: 3
+
+RUN:
+  # p = 1.000 GeV/c
+  2489:
+    beam_particle: pion
+    momentum: 1.000
+
+  2491:
+    # table Proton → kaon calib window
+    calib_particle: kaon
+    beam_particle: proton
+    momentum: 1.000
+
+  # p = 0.814 GeV/c
+  2494:
+    calib_particle: kaon
+    beam_particle: proton
+    momentum: 0.814
+
+  2500:
+    calib_particle: kaon
+    beam_particle: kaon
+    momentum: 0.814
+
+  2502:
+    beam_particle: pion
+    momentum: 0.814
+
+  # p = 0.645 GeV/c
+  2504:
+    calib_particle: kaon
+    beam_particle: proton
+    momentum: 0.645
+
+  2509:
+    beam_particle: pion
+    momentum: 0.645
+
+  # p = 0.400 / 0.300 GeV/c
+  2512:
+    beam_particle: pion
+    momentum: 0.400
+
+  2514:
+    beam_particle: pion
+    momentum: 0.300
+
+  # p = 1.000 GeV/c (second set)
+  2516:
+    beam_particle: pion
+    momentum: 1.000
+
+  2518:
+    calib_particle: kaon
+    beam_particle: proton
+    momentum: 1.000
+
+  # p = 0.814 GeV/c (second set)
+  2520:
+    beam_particle: pion
+    momentum: 0.814
+
+  2522:
+    calib_particle: kaon
+    beam_particle: proton
+    momentum: 0.814
+
+  # p = 0.645 GeV/c (second set)
+  2524:
+    beam_particle: pion
+    momentum: 0.645
+
+  2527:
+    calib_particle: kaon
+    beam_particle: proton
+    momentum: 0.645
+
+  # p = 0.400 GeV/c
+  2535:
+    beam_particle: pion
+    momentum: 0.400
