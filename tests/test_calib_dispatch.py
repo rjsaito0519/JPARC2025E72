@@ -412,7 +412,7 @@ class DispatchTests(unittest.TestCase):
                     self.assertFalse(next_path.exists())
                     self.continue_through_gates(proc=proc)
                 out, err = proc.communicate(timeout=10)
-                self.assertEqual(proc.returncode, rc, err + out)
+                self.assertEqual(proc.returncode, 0, err + out)
                 self.assertTrue(next_path.exists())
                 self.assertEqual(
                     self.read_primary_state()["status"],

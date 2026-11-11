@@ -107,6 +107,12 @@ class AdaptivePhcTests(unittest.TestCase):
         command = cd.step_cmd("hodo_hdphc", phc[0], cfg, False)
         self.assertIn("--hdphc-iter 10", command)
 
+    def test_only_explicitly_allowed_completion_skips_count_as_success(self):
+        accepted = [{"index": 0, "rc": 4, "opts": {"allow_skip": True}},
+                    {"index": 1, "rc": 0, "opts": {}}]
+        self.assertEqual(cd.overall_rc(accepted), runner.EXIT_OK)
+        self.assertEqual(cd.overall_rc([{"index": 0, "rc": 4, "opts": {}}]), runner.EXIT_SKIP)
+
     def test_no_usable_fit_is_review_not_an_adaptive_skip(self):
         args = SimpleNamespace(kaon=False, ftof=False, force=False, debug=False,
                                qa_only=False, skip_qa=True)

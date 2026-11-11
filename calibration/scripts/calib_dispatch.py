@@ -929,7 +929,10 @@ def overall_rc(steps_hist, fallback=runner.EXIT_OK):
         return fallback
     by_index = {}
     for entry in steps_hist:
-        by_index[entry["index"]] = entry["rc"]
+        rc = entry["rc"]
+        if rc == runner.EXIT_SKIP and (entry.get("opts") or {}).get("allow_skip") is True:
+            rc = runner.EXIT_OK
+        by_index[entry["index"]] = rc
     return runner.worst([by_index[i] for i in sorted(by_index)])
 
 
