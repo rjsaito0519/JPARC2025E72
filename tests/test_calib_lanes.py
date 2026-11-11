@@ -89,6 +89,40 @@ class CalibLanesTests(unittest.TestCase):
             ["hodo"],
         )
 
+    def test_complete_for_deps_and_attach_block(self):
+        self.assertTrue(self.lanes.lane_complete_for_deps("done"))
+        self.assertTrue(
+            self.lanes.lane_complete_for_deps("awaiting_final_approval"),
+        )
+        self.assertFalse(self.lanes.lane_complete_for_deps("held"))
+        self.assertFalse(self.lanes.lane_complete_for_deps("stopped"))
+        split = self.lanes.split_steps_by_lane(
+            ["dc_t0", {"dc_t0": {"bcin": True}}, "d5_align"],
+        )
+        self.assertTrue(
+            self.lanes.d5_ready(
+                {
+                    "bcout": "awaiting_final_approval",
+                    "bcin": "done",
+                },
+                split,
+            ),
+        )
+        self.assertEqual(
+            self.lanes.free_requested_lanes(
+                ["hodo", "bcin"],
+                {"bcin": "stopped", "bcout": "held"},
+            ),
+            ["hodo"],
+        )
+        self.assertEqual(
+            self.lanes.free_requested_lanes(
+                ["bcin"],
+                {"bcin": "awaiting_final_approval"},
+            ),
+            [],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

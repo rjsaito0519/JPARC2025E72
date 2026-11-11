@@ -1118,9 +1118,40 @@ def do_clear_channel(cfg, mode, det, channel, reason):
 
 
 #_____________________________________________________________________________
+def resolve_approval_state(run):
+    """Pick the state file approve/revoke should read/write.
+
+    Returns (state_dict, lane_id) where lane_id='' means top-level.
+    Prefers a process-complete top state; otherwise a single lane-only
+    complete state (hodo-only / one DC lane).
+    """
+    top = read_state(run, lane="")
+    lane_rows = []
+    for path in iter_lane_state_paths(run):
+        st = read_state_file(path)
+        if isinstance(st, dict) and st.get("status"):
+            lane_rows.append((path.parent.name, st))
+
+    if top and calib_approval.is_process_complete(top):
+        return top, ""
+
+    complete_lanes = [
+        (name, st) for name, st in lane_rows
+        if calib_approval.is_process_complete(st)
+    ]
+    if len(lane_rows) == 1 and complete_lanes:
+        return complete_lanes[0][1], complete_lanes[0][0]
+    if top is not None:
+        return top, ""
+    if len(lane_rows) == 1:
+        return lane_rows[0][1], lane_rows[0][0]
+    return None, ""
+
+
+#_____________________________________________________________________________
 def do_approve(cfg, note, via, user_id, expected_subject_sha=None):
     via = via or "cli"
-    st = read_state(cfg["run"])
+    st, state_lane = resolve_approval_state(cfg["run"])
     if st is None:
         runner.fail(f"run{cfg['run']:05d}: not started; cannot approve")
     if not calib_approval.is_process_complete(st):
@@ -1183,22 +1214,27 @@ def do_approve(cfg, note, via, user_id, expected_subject_sha=None):
     st["status"] = calib_approval.STATUS_APPROVED
     st["finished"] = True
     st["updated_at"] = utc_now()
-    write_state(cfg["run"], st)
+    write_state(cfg["run"], st, lane=state_lane)
     calib_approval.append_approval_journal(cfg["run"], {
         "event": "approve",
         "subject_sha": sha,
         "via": via,
         "user_id": user_id,
         "note": note,
+        "lane": state_lane or None,
     })
-    runner.info(f"run{cfg['run']:05d}: approved (subject_sha={sha[:8]}… via={via})")
+    where = f" lane={state_lane}" if state_lane else ""
+    runner.info(
+        f"run{cfg['run']:05d}: approved{where} "
+        f"(subject_sha={sha[:8]}… via={via})"
+    )
     sys.exit(runner.EXIT_OK)
 
 
 #_____________________________________________________________________________
 def do_revoke(cfg, reason):
     reason = (reason or "manual revoke").strip() or "manual revoke"
-    st = read_state(cfg["run"])
+    st, state_lane = resolve_approval_state(cfg["run"])
     if st is None:
         runner.fail(f"run{cfg['run']:05d}: not started; cannot revoke")
     if not calib_approval.is_process_complete(st):
@@ -1216,16 +1252,17 @@ def do_revoke(cfg, reason):
             st["status"] = calib_approval.STATUS_AWAITING
             st["finished"] = True
             st["updated_at"] = utc_now()
-            write_state(cfg["run"], st)
+            write_state(cfg["run"], st, lane=state_lane)
         sys.exit(runner.EXIT_OK)
     st["status"] = calib_approval.STATUS_AWAITING
     st["finished"] = True
     st.pop("approval", None)
     st["updated_at"] = utc_now()
-    write_state(cfg["run"], st)
+    write_state(cfg["run"], st, lane=state_lane)
     calib_approval.append_approval_journal(cfg["run"], {
         "event": "revoke",
         "reason": reason,
+        "lane": state_lane or None,
     })
     runner.info(f"run{cfg['run']:05d}: approval revoked ({reason})")
     sys.exit(runner.EXIT_OK)
@@ -1593,10 +1630,11 @@ def spawn_lane_worker(cfg, lane, steps, dry_run) -> subprocess.Popen:
 
 #_____________________________________________________________________________
 def wait_external_dc_done(run, session_lane_steps: dict, *, dry_run=False, poll_s=2.0):
-    """Block until bcout/bcin in the session are done on disk (other processes).
+    """Block until bcout/bcin in the session finished work on disk (other processes).
 
     Used when this process only owns d5 (or needs DC that another terminal runs).
     Lanes not present in session_lane_steps are ignored.
+    awaiting_final_approval counts as complete for this wait.
     """
     need = [
         lane for lane in (calib_lanes.LANE_BCOUT, calib_lanes.LANE_BCIN)
@@ -1617,10 +1655,32 @@ def wait_external_dc_done(run, session_lane_steps: dict, *, dry_run=False, poll_
                 f"run{int(run):05d}: DC lane failed while waiting for d5: "
                 f"{statuses}"
             )
-        if all(statuses.get(lane) == "done" for lane in need):
+        if all(
+            calib_lanes.lane_complete_for_deps(statuses.get(lane))
+            for lane in need
+        ):
             runner.info(f"run{int(run):05d}: DC lanes done: {need}")
             return
         time.sleep(float(poll_s))
+
+
+#_____________________________________________________________________________
+def _coordinator_outcome_for_lane(run, lane, rc):
+    """Map child exit to coordinator lane status (Stop/held ≠ done)."""
+    lane_st = read_state(run, lane=lane) or {}
+    disk_status = str(lane_st.get("status") or "")
+    if disk_status == "held" or calib_lanes.is_held_status(disk_status):
+        return "held"
+    if disk_status == "stopped":
+        return "stopped"
+    if disk_status == "failed" or (isinstance(rc, int) and rc != 0):
+        return "failed"
+    if calib_lanes.lane_complete_for_deps(disk_status) or lane_st.get("finished"):
+        return "done"
+    if isinstance(rc, int) and rc == 0:
+        # Worker exited OK but left no complete/held marker — treat as done.
+        return "done"
+    return "failed"
 
 
 #_____________________________________________________________________________
@@ -1630,7 +1690,7 @@ def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
     status = {lane: "pending" for lane in lane_steps}
     if isinstance(prior_lanes, dict):
         for lane, lane_st in prior_lanes.items():
-            if lane in status and lane_st == "done":
+            if lane in status and calib_lanes.lane_complete_for_deps(lane_st):
                 status[lane] = "done"
     procs: dict[str, subprocess.Popen] = {}
     hist = []
@@ -1638,6 +1698,8 @@ def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
     def write_parent():
         # Merge external lane statuses so ops/status sees the full picture.
         merged = dict(collect_lane_statuses(run))
+        for lane, lane_st in list(merged.items()):
+            merged[lane] = calib_lanes.normalize_status_for_deps(lane_st)
         merged.update(status)
         write_state(
             run,
@@ -1671,13 +1733,18 @@ def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
             if rc is None:
                 continue
             del procs[lane]
-            if rc == 0:
-                status[lane] = "done"
-                hist.append({"lane": lane, "rc": rc})
+            outcome = _coordinator_outcome_for_lane(run, lane, rc)
+            status[lane] = outcome
+            hist.append({"lane": lane, "rc": rc, "outcome": outcome})
+            if outcome == "done":
                 runner.info(f"lane done [{lane}] rc={rc}")
+            elif outcome in ("held", "stopped"):
+                runner.info(
+                    f"lane {outcome} [{lane}] rc={rc}; "
+                    f"not treating as done for D5"
+                )
+                write_parent()
             else:
-                status[lane] = "failed"
-                hist.append({"lane": lane, "rc": rc})
                 write_parent()
                 runner.warn(f"lane failed [{lane}] rc={rc}; stopping coordinator")
                 for other, op in list(procs.items()):
@@ -1716,20 +1783,18 @@ def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
 
         write_parent()
         if not procs and all(
-            status.get(lane) in ("done", "failed", "stopped")
+            status.get(lane) in calib_lanes.COORD_TERMINAL_STATUSES
             for lane in lane_steps
         ):
             break
         if not procs and calib_lanes.LANE_D5 in lane_steps \
                 and status.get(calib_lanes.LANE_D5) == "pending" \
                 and not calib_lanes.d5_ready(status, lane_steps):
-            # DC required for d5 but missing/failed — stop.
+            # DC required for d5 but missing/failed/held/stopped — stop.
             runner.warn(
                 f"run{run:05d}: d5 waiting for DC lanes; "
                 f"status={status}"
             )
-            # If DC lanes never existed, d5_ready is True — handled above.
-            # If DC failed, we already exited. If still pending somehow, wait.
             if all(
                 status.get(lane) != "running"
                 for lane in (calib_lanes.LANE_BCOUT, calib_lanes.LANE_BCIN)
@@ -1754,6 +1819,38 @@ def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
                 )
                 sys.exit(runner.EXIT_FAIL)
         time.sleep(0.5)
+
+    # Stop/held lanes mean the run did not fully complete — do not await approve.
+    incomplete = [
+        lane for lane, lane_st in status.items()
+        if lane_st in ("held", "stopped", "failed")
+    ]
+    if incomplete:
+        worst = runner.worst(
+            [e["rc"] for e in hist if isinstance(e.get("rc"), int)]
+        ) if hist else runner.EXIT_FAIL
+        write_state(
+            run,
+            {
+                "run": run,
+                "status": "stopped",
+                "finished": False,
+                "lanes": dict(status),
+                "mode": "lane_coordinator",
+                "rc": worst,
+                "reason": f"lanes incomplete: {incomplete}",
+                "steps": list(hist),
+                "updated_at": utc_now(),
+                "session": cfg.get("session") or {},
+                "plan": plan_of(cfg),
+            },
+            lane="",
+        )
+        runner.info(
+            f"calib_dispatch lane coordinator stopped "
+            f"(incomplete={incomplete})"
+        )
+        sys.exit(worst if worst else runner.EXIT_FAIL)
 
     worst = runner.worst([e["rc"] for e in hist]) if hist else runner.EXIT_OK
     base = {
@@ -1780,19 +1877,34 @@ def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
 
 
 #_____________________________________________________________________________
-def do_attach(cfg, dry_run):
-    """Start complementary lanes without clearing busy/done lanes."""
+def do_attach(cfg, dry_run, want_lanes=None):
+    """Start free complementary lanes without clearing busy/held/stopped/done.
+
+    want_lanes: if set, only those CLI-requested lanes are candidates (session
+    may already list other lanes from a prior merge).
+    """
     run = int(cfg["run"])
     session_lanes = calib_lanes.split_steps_by_lane(cfg["steps"])
+    if want_lanes is not None:
+        want_set = {str(x) for x in want_lanes}
+        session_lanes = {
+            lane: steps for lane, steps in session_lanes.items()
+            if lane in want_set
+        }
     existing = collect_lane_statuses(run)
     to_run = {}
     for lane, steps in session_lanes.items():
         st = existing.get(lane)
-        if calib_lanes.is_busy_status(st):
-            runner.info(f"attach: lane [{lane}] already {st}; leave running")
-            continue
-        if st == "done":
-            runner.info(f"attach: lane [{lane}] already done; skip")
+        if lane not in calib_lanes.free_requested_lanes([lane], existing):
+            if calib_lanes.is_busy_status(st):
+                runner.info(f"attach: lane [{lane}] already {st}; leave as-is")
+            elif calib_lanes.lane_complete_for_deps(st):
+                runner.info(f"attach: lane [{lane}] already complete ({st}); skip")
+            else:
+                runner.info(
+                    f"attach: lane [{lane}] status={st}; "
+                    f"skip (use continue/resume)"
+                )
             continue
         to_run[lane] = steps
     if not to_run:
@@ -1802,13 +1914,20 @@ def do_attach(cfg, dry_run):
         )
 
     if calib_lanes.LANE_D5 in to_run:
-        # DC may be owned by another terminal; wait on disk before d5.
-        wait_external_dc_done(run, session_lanes, dry_run=dry_run)
+        # Wait only for DC lanes this attach is not starting itself.
+        full_lanes = calib_lanes.split_steps_by_lane(cfg["steps"])
+        wait_map = {
+            lane: full_lanes[lane]
+            for lane in (calib_lanes.LANE_BCOUT, calib_lanes.LANE_BCIN)
+            if lane in full_lanes and lane not in to_run
+        }
+        if wait_map:
+            wait_external_dc_done(run, wait_map, dry_run=dry_run)
 
     prior = {
         lane: "done"
         for lane, st in collect_lane_statuses(run).items()
-        if st == "done" and lane in to_run
+        if calib_lanes.lane_complete_for_deps(st) and lane in to_run
     }
     _ensure_slack_bot_for_gates(cfg, dry_run)
     # Always spawn lane workers (correct per-lane step lists).

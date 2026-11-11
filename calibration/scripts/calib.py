@@ -344,7 +344,7 @@ def continue_from_state(cfg, st, dry_run, want_lanes=None):
                 f"run{run:05d}: coordinator running; "
                 f"attaching free lanes {want_free}"
             )
-            cd.do_attach(cfg, dry_run)
+            cd.do_attach(cfg, dry_run, want_lanes=want_free)
             return
         runner.fail(
             f"run{run:05d}: coordinator running "
@@ -464,11 +464,17 @@ def attach_complementary_lanes(
     for i, raw in enumerate(cfg2["steps"]):
         cd.normalize_step(raw, i)
     _maybe_ensure_slack_bot(a, cfg2)
-    runner.info(
-        f"run{run:05d}: attaching complementary lanes "
-        f"{calib_lanes.requested_lanes(cfg2['steps'])}"
+    # Session may already list other lanes; attach only CLI-requested free ones.
+    want = calib_lanes.requested_lanes(
+        cs.expand_coarse_steps(
+            steps, auto=bool(a.auto or doc.get("auto")),
+            hdphc_iter=hdphc_iter, max_iter=max_iter,
+        )
     )
-    cd.do_attach(cfg2, a.dry_run)
+    runner.info(
+        f"run{run:05d}: attaching complementary lanes {want}"
+    )
+    cd.do_attach(cfg2, a.dry_run, want_lanes=want)
 
 
 #_____________________________________________________________________________

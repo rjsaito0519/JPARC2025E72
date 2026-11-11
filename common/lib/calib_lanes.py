@@ -15,6 +15,22 @@ RUNNING_STATUSES = frozenset({"running"})
 HELD_STATUSES = frozenset({"held"})
 # Legacy alias: treat as "blocks --force restart", not attach/resume.
 BUSY_STATUSES = frozenset({"running", "held"})
+# Coordinator / attach / D5 wait: worker finished its steps (human may still approve).
+COMPLETE_FOR_DEPS_STATUSES = frozenset({
+    "done",
+    "awaiting_final_approval",
+    "approved",
+    "finished",
+})
+# Attach only starts lanes with no prior status in this set.
+ATTACH_BLOCKED_STATUSES = frozenset({
+    "running", "held", "stopped", "done", "failed",
+    "awaiting_final_approval", "approved", "finished",
+})
+# Coordinator local map: no more child process for this lane.
+COORD_TERMINAL_STATUSES = frozenset({
+    "done", "failed", "stopped", "held",
+})
 
 HODO_NAMES = frozenset({
     "hodo", "hodo_hdprm", "hodo_t0", "hodo_hdphc", "hodo_hdphc_adopt",
@@ -70,12 +86,31 @@ def split_steps_by_lane(steps: list) -> dict[str, list]:
 
 
 #_____________________________________________________________________________
+def lane_complete_for_deps(status: Optional[str]) -> bool:
+    """True when a lane's work is finished for D5 / attach skip / prior_lanes.
+
+    Includes awaiting_final_approval (worker done, human approval pending).
+    Does not treat held/stopped/failed as complete.
+    """
+    return str(status or "") in COMPLETE_FOR_DEPS_STATUSES
+
+
+#_____________________________________________________________________________
+def normalize_status_for_deps(status: Optional[str]) -> str:
+    """Map disk status to coordinator-facing value used in deps checks."""
+    text = str(status or "")
+    if lane_complete_for_deps(text):
+        return "done"
+    return text
+
+
+#_____________________________________________________________________________
 def d5_ready(lane_status: dict[str, str], lane_steps: dict[str, list]) -> bool:
-    """True when d5 may start: every present DC lane is done."""
+    """True when d5 may start: every present DC lane finished its work."""
     for lane in (LANE_BCOUT, LANE_BCIN):
         if lane not in lane_steps:
             continue
-        if lane_status.get(lane) != "done":
+        if not lane_complete_for_deps(lane_status.get(lane)):
             return False
     return True
 
@@ -151,15 +186,17 @@ def stopped_lanes(status_map: dict[str, str]) -> set[str]:
 def free_requested_lanes(
     want: list[str] | set[str], status_map: dict[str, str],
 ) -> list[str]:
-    """Wanted lanes that are not running/held/stopped/done (attach candidates)."""
+    """Wanted lanes with no prior work (attach candidates).
+
+    Stopped / held / complete / failed lanes need continue/resume, not attach.
+    """
     want_set = {str(x) for x in want}
-    blocked = frozenset({"running", "held", "stopped", "done", "failed"})
     out = []
     for lane in LANE_ORDER:
         if lane not in want_set:
             continue
         status = str((status_map or {}).get(lane) or "")
-        if status in blocked:
+        if status in ATTACH_BLOCKED_STATUSES:
             continue
         out.append(lane)
     return out
