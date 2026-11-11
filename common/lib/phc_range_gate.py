@@ -201,16 +201,42 @@ def _placeholder_range(
 
 
 #_____________________________________________________________________________
-def phc_custom_modal_view(run: int, proposals: list[dict[str, Any]] | None = None) -> dict:
-    """Modal view payload for Custom PHC range (det / first / last)."""
-    run_i = int(run)
-    dets = []
+def _det_select_options(
+    proposals: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Slack static_select options from the ask list (fallback: beam set)."""
+    dets: list[str] = []
     if isinstance(proposals, list):
         for row in proposals:
             if isinstance(row, dict) and row.get("det"):
-                dets.append(str(row["det"]))
-    hint = ", ".join(dets) if dets else "e.g. BHT"
+                det = str(row["det"])
+                if det and det not in dets:
+                    dets.append(det)
+    if not dets:
+        dets = ["BHT", "BH2", "T1", "CVC"]
+    options = []
+    for det in dets:
+        options.append({
+            "text": {"type": "plain_text", "text": det},
+            "value": det,
+        })
+    return options
+
+
+#_____________________________________________________________________________
+def phc_custom_modal_view(run: int, proposals: list[dict[str, Any]] | None = None) -> dict:
+    """Modal view payload for Custom PHC range (det select / first / last)."""
+    run_i = int(run)
+    options = _det_select_options(proposals)
     first_ph, last_ph = _placeholder_range(proposals)
+    det_element: dict[str, Any] = {
+        "type": "static_select",
+        "action_id": "det",
+        "placeholder": {"type": "plain_text", "text": "Select detector"},
+        "options": options,
+    }
+    if options:
+        det_element["initial_option"] = options[0]
     return {
         "type": "modal",
         "callback_id": "calib_phc_custom_modal",
@@ -223,11 +249,7 @@ def phc_custom_modal_view(run: int, proposals: list[dict[str, Any]] | None = Non
                 "type": "input",
                 "block_id": "phc_det",
                 "label": {"type": "plain_text", "text": "Detector"},
-                "element": {
-                    "type": "plain_text_input",
-                    "action_id": "det",
-                    "placeholder": {"type": "plain_text", "text": hint},
-                },
+                "element": det_element,
             },
             {
                 "type": "input",

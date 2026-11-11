@@ -156,6 +156,12 @@ class PhcRangeGateTests(unittest.TestCase):
         view = self.gate.phc_custom_modal_view(9, rows)
         self.assertEqual(view["callback_id"], "calib_phc_custom_modal")
         self.assertEqual(view["private_metadata"], "9")
+        det_el = view["blocks"][0]["element"]
+        self.assertEqual(det_el["type"], "static_select")
+        self.assertEqual(
+            [o["value"] for o in det_el["options"]], ["BHT", "T1"],
+        )
+        self.assertEqual(det_el["initial_option"]["value"], "BHT")
         self.assertEqual(
             view["blocks"][1]["element"]["placeholder"]["text"], "1",
         )

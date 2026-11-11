@@ -85,7 +85,7 @@ def handle_calib_request(bot_cfg, user_id, channel_id, text):
 
 #_____________________________________________________________________________
 def _modal_values(view):
-    """Extract plain_text_input values from a Slack view state."""
+    """Extract plain_text_input / static_select values from a Slack view state."""
     state = (view or {}).get("state") or {}
     values = state.get("values") or {}
     out = {}
@@ -95,8 +95,13 @@ def _modal_values(view):
         for action_id, payload in actions.items():
             if not isinstance(payload, dict):
                 continue
-            out[action_id] = str(payload.get("value") or "").strip()
-            out[block_id] = out[action_id]
+            selected = payload.get("selected_option")
+            if isinstance(selected, dict) and selected.get("value") is not None:
+                text = str(selected.get("value") or "").strip()
+            else:
+                text = str(payload.get("value") or "").strip()
+            out[action_id] = text
+            out[block_id] = text
     return out
 
 
