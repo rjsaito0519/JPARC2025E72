@@ -1579,9 +1579,31 @@ def _ensure_slack_bot_for_gates(cfg, dry_run):
 
 
 #_____________________________________________________________________________
+def lane_session_path(run, lane):
+    return lanes_dir(run) / str(lane) / "session.yml"
+
+
+#_____________________________________________________________________________
+def cfg_for_lane_resume(cfg, lane):
+    """Prefer per-lane session.yml so plan fingerprint matches the worker state.
+
+    Top-level calib_session.yml may list all lanes; lane state.plan is only that
+    lane's steps (and its local/force flags). Resume must use the lane session.
+    """
+    lane = str(lane or "").strip()
+    if not lane:
+        return cfg
+    path = lane_session_path(cfg["run"], lane)
+    if not path.is_file():
+        return cfg
+    _, lane_cfg = load_config(path)
+    return lane_cfg
+
+
+#_____________________________________________________________________________
 def dump_lane_session(cfg, lane, steps) -> Path:
     """Write a minimal session YAML for one lane worker."""
-    path = lanes_dir(cfg["run"]) / lane / "session.yml"
+    path = lane_session_path(cfg["run"], lane)
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = {
         "run": int(cfg["run"]),
@@ -1977,15 +1999,18 @@ def do_resume(cfg, dry_run, *, lane=None):
                 f"run{run:05d}: lane [{lane}] status={st.get('status')!r} "
                 f"(resume requires status=stopped)"
             )
-        require_resume_plan(cfg, st)
-        _ensure_slack_bot_for_gates(cfg, dry_run)
+        lane_cfg = cfg_for_lane_resume(cfg, lane)
+        require_resume_plan(lane_cfg, st)
+        _ensure_slack_bot_for_gates(lane_cfg, dry_run)
         os.environ[calib_lanes.LANE_ENV] = lane
         try:
             start_index = resume_start_index(st)
             hist = st.get("steps")
             if not isinstance(hist, list):
                 hist = []
-            run_steps(cfg, dry_run, start_index, list(hist), f"resume[{lane}]")
+            run_steps(
+                lane_cfg, dry_run, start_index, list(hist), f"resume[{lane}]",
+            )
         finally:
             os.environ.pop(calib_lanes.LANE_ENV, None)
         return

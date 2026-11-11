@@ -193,6 +193,79 @@ class LaneSemanticsTests(unittest.TestCase):
         self.assertEqual(st.get("status"), "approved")
         self.assertIsNone(self.cd.read_state(run, lane=""))
 
+    def test_resume_lane_uses_lane_session_plan(self):
+        """Top session may list all lanes; resume must match lane session plan."""
+        run = 16
+        hodo_steps = [
+            {"name": "hodo_hdprm", "opts": {}},
+            {"name": "hodo_t0", "opts": {}},
+        ]
+        lane_plan = {
+            "calib_particle": "kaon",
+            "force": False,
+            "kaon": True,
+            "local": True,
+            "max_iter": 10,
+            "steps": hodo_steps,
+        }
+        self._write_lane(run, "hodo", {
+            "status": "stopped",
+            "finished": False,
+            "run": run,
+            "index": 0,
+            "step": "hodo_hdprm",
+            "opts": {},
+            "rc": 0,
+            "steps": [{"index": 0, "step": "hodo_hdprm", "opts": {}, "rc": 0}],
+            "plan": lane_plan,
+            "hold": {
+                "source": "step_gate",
+                "step": "hodo_hdprm",
+                "index": 0,
+                "decision": "continue",
+                "id": "hid16",
+            },
+        })
+        # Lane worker session (hodo-only, local).
+        self.cd.dump_lane_session(
+            {
+                "run": run,
+                "kaon": True,
+                "force": False,
+                "local": True,
+                "auto": False,
+                "max_iter": 10,
+                "session": {"calib_particle": "kaon"},
+            },
+            "hodo",
+            ["hodo_hdprm", "hodo_t0"],
+        )
+        # Top-level cfg as calib.py would load (extra DC steps, local false).
+        top_cfg = {
+            "run": run,
+            "kaon": True,
+            "force": False,
+            "local": False,
+            "auto": False,
+            "max_iter": 10,
+            "session": {"calib_particle": "kaon"},
+            "steps": [
+                "hodo_hdprm", "hodo_t0",
+                "dc_t0", "dc_drift",
+            ],
+        }
+        with mock.patch.object(self.cd, "_ensure_slack_bot_for_gates"), \
+             mock.patch.object(self.cd, "run_steps") as run_steps:
+            self.cd.do_resume(top_cfg, dry_run=False, lane="hodo")
+        run_steps.assert_called_once()
+        used_cfg = run_steps.call_args[0][0]
+        self.assertTrue(used_cfg.get("local"))
+        names = []
+        for raw in used_cfg["steps"]:
+            name, _ = self.cd.normalize_step(raw, 0)
+            names.append(name)
+        self.assertEqual(names, ["hodo_hdprm", "hodo_t0"])
+
 
 if __name__ == "__main__":
     unittest.main()

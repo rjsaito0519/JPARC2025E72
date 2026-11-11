@@ -307,6 +307,7 @@ def _resume_held_lane(cfg, lane, dry_run):
     cd.apply_decide(
         run, "continue", note="calib.py continue", hold_id=hold_id,
     )
+    # do_resume loads lanes/<lane>/session.yml for plan match.
     cd.do_resume(cfg, dry_run, lane=lane)
 
 
