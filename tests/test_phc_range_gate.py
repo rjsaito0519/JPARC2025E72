@@ -78,6 +78,22 @@ class PhcRangeGateTests(unittest.TestCase):
         self.assertFalse(self.gate.pending_phc_ask(32))
         self.assertFalse(self.gate.is_range_confirmed(32))
 
+    def test_restart_retires_only_automatic_proposal_markers(self):
+        from common.lib import channel_flags
+        for source, channel, reason in (
+            ("auto", "seg1", "phc_range_proposal:BHT[16,52]"),
+            ("human", "seg2", "phc_range_proposal:manual"),
+            ("auto", "seg3", "bad fit"),
+        ):
+            channel_flags.append_flag(37, family="hodo", mode="hdphc", det="BHT",
+                                      channel=channel, source=source, reason=reason)
+        self.gate.set_range_confirmed(37)
+        self.gate.clear_phc_ask_state(37)
+        self.assertFalse(self.gate.is_range_confirmed(37))
+        self.assertEqual({row["channel"] for row in channel_flags.open_needs_review(37)},
+                         {"seg2", "seg3"})
+        self.assertEqual(self.gate.retire_proposal_flags(37), 0)
+
     def test_apply_phc_go_sets_confirmed(self):
         from common.lib import calib_ops
 

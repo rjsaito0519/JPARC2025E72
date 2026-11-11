@@ -146,10 +146,27 @@ def clear_range_confirmed(run: int) -> bool:
 
 
 #_____________________________________________________________________________
+def retire_proposal_flags(run: int) -> int:
+    """Invalidate automatic markers belonging to the retired range proposal."""
+    from . import channel_flags
+    retired = 0
+    for row in channel_flags.open_needs_review(run, mode="hdphc"):
+        if row.get("source") != "auto" or not str(row.get("reason") or "").startswith("phc_range_proposal:"):
+            continue
+        channel_flags.clear_channel(
+            run, mode="hdphc", det=row["det"], channel=row["channel"],
+            reason="PHC proposal retired by restart; new session requires range confirmation",
+        )
+        retired += 1
+    return retired
+
+
+#_____________________________________________________________________________
 def clear_phc_ask_state(run: int) -> None:
-    """Drop proposal + confirmed (fresh chain / restart)."""
+    """Drop proposal, its automatic review markers, and confirmed on restart."""
     clear_proposal(run)
     clear_range_confirmed(run)
+    retire_proposal_flags(run)
 
 
 #_____________________________________________________________________________
