@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import config, runner
+from . import calib_lanes, config, runner
 
 # Provisional ratios (confirm with data; wiki: 要データ確認).
 HDPRM_SKIP_RATIO = 0.25
@@ -20,10 +20,11 @@ DRIFT_MIN_GRAPHS = 1
 
 #_____________________________________________________________________________
 def last_check_reason_path(run: int) -> Path:
-    return (
-        Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}"
-        / "last_check_reason.txt"
-    )
+    root = Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}"
+    lane = calib_lanes.active_lane()
+    if lane:
+        root = root / "lanes" / lane
+    return root / "last_check_reason.txt"
 
 
 #_____________________________________________________________________________
@@ -133,7 +134,9 @@ def count_drift_graphs(param_root: Path) -> int:
                     obj = f[key]
                 except Exception:
                     continue
-                cls = getattr(obj, "classname", lambda: "")()
+                cls = getattr(obj, "classname", "")
+                if callable(cls):
+                    cls = cls()
                 if "TGraph" in str(cls):
                     n += 1
             return n

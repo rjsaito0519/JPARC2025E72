@@ -304,9 +304,15 @@ def _resume_held_lane(cfg, lane, dry_run):
         f"run{run:05d}: continuing held lane [{lane}] "
         f"(source={hold.get('source')}); decide continue → resume"
     )
+    if dry_run:
+        runner.info(f"[dry-run] would continue held lane [{lane}]")
+        return
     cd.apply_decide(
         run, "continue", note="calib.py continue", hold_id=hold_id,
     )
+    if lane_st.get("gate_waiter"):
+        runner.info(f"lane [{lane}]: in-process waiter will continue")
+        return
     # do_resume loads lanes/<lane>/session.yml for plan match.
     cd.do_resume(cfg, dry_run, lane=lane)
 

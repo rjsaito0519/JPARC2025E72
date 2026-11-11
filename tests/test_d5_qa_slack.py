@@ -25,7 +25,7 @@ class D5QaPathTests(unittest.TestCase):
             f"OUTPUT_DIR = Path({str(self.out)!r})\n"
         )
         for name in ("d5_qa_slack.py", "local_notify_config.py", "slack_notify.py",
-                     "hodo_qa_pdf.py", "qa_session.py"):
+                     "hodo_qa_pdf.py", "qa_session.py", "calib_state_io.py"):
             shutil.copy(REPO / "common/lib" / name, lib)
         self.env = {**os.environ, "PYTHONPATH": str(self.root)}
 
@@ -58,6 +58,14 @@ class D5QaPathTests(unittest.TestCase):
 
 
 class RunD5SlackRcTests(unittest.TestCase):
+    def setUp(self):
+        from common.lib import config
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        output_patch = mock.patch.object(config, "OUTPUT_DIR", Path(self.scratch.name))
+        output_patch.start()
+        self.addCleanup(output_patch.stop)
+
     def test_after_qa_slack_does_not_raise_on_fail(self):
         if str(REPO) not in sys.path:
             sys.path.insert(0, str(REPO))

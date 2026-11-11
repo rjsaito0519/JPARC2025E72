@@ -25,7 +25,7 @@ class DcQaPathTests(unittest.TestCase):
             f"OUTPUT_DIR = Path({str(self.out)!r})\n"
         )
         for name in ("dc_qa_slack.py", "local_notify_config.py", "slack_notify.py",
-                     "hodo_qa_pdf.py", "qa_session.py"):
+                     "hodo_qa_pdf.py", "qa_session.py", "calib_state_io.py"):
             shutil.copy(REPO / "common/lib" / name, lib)
         self.env = {**os.environ, "PYTHONPATH": str(self.root)}
 
@@ -63,7 +63,15 @@ class DcQaPathTests(unittest.TestCase):
 
 
 class RunDcprmSlackRcTests(unittest.TestCase):
-    def test_after_qa_slack_keeps_rc(self):
+    def setUp(self):
+        from common.lib import config
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        output_patch = mock.patch.object(config, "OUTPUT_DIR", Path(self.scratch.name))
+        output_patch.start()
+        self.addCleanup(output_patch.stop)
+
+    def test_after_qa_slack_holds_on_delivery_failure(self):
         if str(REPO) not in sys.path:
             sys.path.insert(0, str(REPO))
         from calibration.scripts import run_dcprm as rd
@@ -81,7 +89,7 @@ class RunDcprmSlackRcTests(unittest.TestCase):
             rd.runner, "warn"
         ) as warn:
             rc = rd.after_qa_slack(1, "t0", Args(), runner.EXIT_OK)
-        self.assertEqual(rc, runner.EXIT_OK)
+        self.assertEqual(rc, runner.EXIT_CHECK)
         warn.assert_called()
         self.assertIn("Slack", warn.call_args[0][0])
 

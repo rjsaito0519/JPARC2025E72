@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import config, hodo_qa_pdf
+from .calib_state_io import locked_path, write_json
 from .local_notify_config import load_slack_config
 
 API_BASE = "https://slack.com/api"
@@ -74,7 +75,7 @@ def save_state(run: int, data: dict[str, Any]) -> bool:
     path = state_path(run)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_json(path, data)
         return True
     except OSError:
         return False
@@ -170,40 +171,41 @@ def ensure_run_thread(
     if dry_run:
         return True, f"dry-run: ensure thread run{run:05d}", "dry-run-ts"
     try:
-        cfg, status = load_slack_config(config_path)
-        if status != "ok" or cfg is None:
-            return False, f"slack config: {status}", None
+        with locked_path(state_path(run)):
+            cfg, status = load_slack_config(config_path)
+            if status != "ok" or cfg is None:
+                return False, f"slack config: {status}", None
 
-        channel_id = cfg["channel_id"]
-        state = load_state(run)
-        existing = state.get("thread_ts")
-        if (
-            isinstance(existing, str)
-            and existing
-            and state.get("channel_id") == channel_id
-        ):
-            return True, f"reuse thread_ts={existing}", existing
+            channel_id = cfg["channel_id"]
+            state = load_state(run)
+            existing = state.get("thread_ts")
+            if (
+                isinstance(existing, str)
+                and existing
+                and state.get("channel_id") == channel_id
+            ):
+                return True, f"reuse thread_ts={existing}", existing
 
-        if isinstance(existing, str) and existing:
-            _archive_active_thread(state)
+            if isinstance(existing, str) and existing:
+                _archive_active_thread(state)
 
-        ok, body, msg = _api(
-            "chat.postMessage",
-            cfg["token"],
-            {"channel": channel_id, "text": text},
-        )
-        if not ok:
-            return False, msg, None
-        ts = body.get("ts")
-        if not isinstance(ts, str) or not ts:
-            return False, "chat.postMessage: no ts", None
-        state["thread_ts"] = ts
-        state["channel_id"] = channel_id
-        state.setdefault("posts", {})
-        state.setdefault("failures", {})
-        if not save_state(run, state):
-            return False, "state save failed", None
-        return True, f"created thread_ts={ts}", ts
+            ok, body, msg = _api(
+                "chat.postMessage",
+                cfg["token"],
+                {"channel": channel_id, "text": text},
+            )
+            if not ok:
+                return False, msg, None
+            ts = body.get("ts")
+            if not isinstance(ts, str) or not ts:
+                return False, "chat.postMessage: no ts", None
+            state["thread_ts"] = ts
+            state["channel_id"] = channel_id
+            state.setdefault("posts", {})
+            state.setdefault("failures", {})
+            if not save_state(run, state):
+                return False, "state save failed", None
+            return True, f"created thread_ts={ts}", ts
     except _NOTIFY_TRANSPORT_ERRORS as exc:
         return False, _exc_message("ensure_run_thread", exc), None
 
@@ -294,37 +296,38 @@ def post_pdf(
         return True, f"dry-run: post {pdf_path.name} key={key}"
 
     try:
-        cfg, status = load_slack_config(config_path)
-        if status != "ok" or cfg is None:
-            return False, f"slack config: {status}"
+        with locked_path(state_path(run)):
+            cfg, status = load_slack_config(config_path)
+            if status != "ok" or cfg is None:
+                return False, f"slack config: {status}"
 
-        ok, msg, thread_ts = ensure_run_thread(
-            run, parent_text, config_path=config_path, dry_run=False,
-        )
-        if not ok or not thread_ts:
-            return False, msg
+            ok, msg, thread_ts = ensure_run_thread(
+                run, parent_text, config_path=config_path, dry_run=False,
+            )
+            if not ok or not thread_ts:
+                return False, msg
 
-        ok, msg = _upload_pdf(
-            cfg["token"], cfg["channel_id"], thread_ts, pdf_path, caption,
-        )
-        if not ok:
-            return False, msg
+            ok, msg = _upload_pdf(
+                cfg["token"], cfg["channel_id"], thread_ts, pdf_path, caption,
+            )
+            if not ok:
+                return False, msg
 
-        state = load_state(run)
-        posts = state.setdefault("posts", {})
-        if not isinstance(posts, dict):
-            posts = {}
-            state["posts"] = posts
-        entry = {"pdf": pdf_path.name, "mode": mode, "particle": particle_suffix}
-        if manifest:
-            from . import qa_session
-            entry.update(qa_session.manifest_post_fields(manifest, pdf_path))
-        posts[key] = entry
-        state["thread_ts"] = thread_ts
-        state["channel_id"] = cfg["channel_id"]
-        if not save_state(run, state):
-            return False, "state save failed"
-        return True, msg
+            state = load_state(run)
+            posts = state.setdefault("posts", {})
+            if not isinstance(posts, dict):
+                posts = {}
+                state["posts"] = posts
+            entry = {"pdf": pdf_path.name, "mode": mode, "particle": particle_suffix}
+            if manifest:
+                from . import qa_session
+                entry.update(qa_session.manifest_post_fields(manifest, pdf_path))
+            posts[key] = entry
+            state["thread_ts"] = thread_ts
+            state["channel_id"] = cfg["channel_id"]
+            if not save_state(run, state):
+                return False, "state save failed"
+            return True, msg
     except _NOTIFY_TRANSPORT_ERRORS as exc:
         return False, _exc_message("post_pdf", exc)
 
@@ -406,53 +409,54 @@ def notify_failure(
         return True, f"dry-run: failure {key}", True
 
     try:
-        cfg, status = load_slack_config(config_path)
-        if status in ("missing", "disabled"):
-            return True, f"slack skip: {status}", False
-        if status != "ok" or cfg is None:
-            return False, f"slack config: {status}", False
+        with locked_path(state_path(run)):
+            cfg, status = load_slack_config(config_path)
+            if status in ("missing", "disabled"):
+                return True, f"slack skip: {status}", False
+            if status != "ok" or cfg is None:
+                return False, f"slack config: {status}", False
 
-        parent = f"calib QA run{run:05d}"
-        ok, msg, thread_ts = ensure_run_thread(
-            run, parent, config_path=config_path, dry_run=False,
-        )
-        if not ok or not thread_ts:
-            return False, msg, False
+            parent = f"calib QA run{run:05d}"
+            ok, msg, thread_ts = ensure_run_thread(
+                run, parent, config_path=config_path, dry_run=False,
+            )
+            if not ok or not thread_ts:
+                return False, msg, False
 
-        # Dedup only against the active channel after ensure_run_thread.
-        state = load_state(run)
-        failures = state.setdefault("failures", {})
-        if not isinstance(failures, dict):
-            failures = {}
-            state["failures"] = failures
-        prev = failures.get(key)
-        if isinstance(prev, dict) and prev.get("text") == text:
-            return True, f"dedup: {key}", False
+            # Dedup only against the active channel after ensure_run_thread.
+            state = load_state(run)
+            failures = state.setdefault("failures", {})
+            if not isinstance(failures, dict):
+                failures = {}
+                state["failures"] = failures
+            prev = failures.get(key)
+            if isinstance(prev, dict) and prev.get("text") == text:
+                return True, f"dedup: {key}", False
 
-        payload = {
-            "channel": cfg["channel_id"],
-            "thread_ts": thread_ts,
-            "text": text,
-        }
-        if blocks:
-            payload["blocks"] = blocks
-        ok, body, msg = _api(
-            "chat.postMessage",
-            cfg["token"],
-            payload,
-        )
-        if not ok:
-            return False, msg, False
+            payload = {
+                "channel": cfg["channel_id"],
+                "thread_ts": thread_ts,
+                "text": text,
+            }
+            if blocks:
+                payload["blocks"] = blocks
+            ok, body, msg = _api(
+                "chat.postMessage",
+                cfg["token"],
+                payload,
+            )
+            if not ok:
+                return False, msg, False
 
-        failures[key] = {
-            "text": text,
-            "ts": body.get("ts") if isinstance(body.get("ts"), str) else None,
-        }
-        state["thread_ts"] = thread_ts
-        state["channel_id"] = cfg["channel_id"]
-        if not save_state(run, state):
-            return False, "state save failed", False
-        return True, f"notified failure {key}", True
+            failures[key] = {
+                "text": text,
+                "ts": body.get("ts") if isinstance(body.get("ts"), str) else None,
+            }
+            state["thread_ts"] = thread_ts
+            state["channel_id"] = cfg["channel_id"]
+            if not save_state(run, state):
+                return False, "state save failed", False
+            return True, f"notified failure {key}", True
     except _NOTIFY_TRANSPORT_ERRORS as exc:
         return False, _exc_message("notify_failure", exc), False
 
@@ -482,38 +486,39 @@ def update_failure_message(
 ) -> tuple[bool, str]:
     """chat.update an earlier failure note (same key) when its ts is known."""
     try:
-        cfg, status = load_slack_config(config_path)
-        if status in ("missing", "disabled"):
-            return True, f"slack skip: {status}"
-        if status != "ok" or cfg is None:
-            return False, f"slack config: {status}"
+        with locked_path(state_path(run)):
+            cfg, status = load_slack_config(config_path)
+            if status in ("missing", "disabled"):
+                return True, f"slack skip: {status}"
+            if status != "ok" or cfg is None:
+                return False, f"slack config: {status}"
 
-        state = load_state(run)
-        failures = state.get("failures")
-        if not isinstance(failures, dict):
-            return False, f"no failure note for key {key}"
-        prev = failures.get(key)
-        if not isinstance(prev, dict):
-            return False, f"no failure note for key {key}"
-        ts = prev.get("ts")
-        if not isinstance(ts, str) or not ts:
-            return False, f"no message ts for key {key}"
+            state = load_state(run)
+            failures = state.get("failures")
+            if not isinstance(failures, dict):
+                return False, f"no failure note for key {key}"
+            prev = failures.get(key)
+            if not isinstance(prev, dict):
+                return False, f"no failure note for key {key}"
+            ts = prev.get("ts")
+            if not isinstance(ts, str) or not ts:
+                return False, f"no message ts for key {key}"
 
-        payload: dict[str, Any] = {
-            "channel": cfg["channel_id"],
-            "ts": ts,
-            "text": text,
-        }
-        if blocks:
-            payload["blocks"] = blocks
-        ok, _body, msg = _api("chat.update", cfg["token"], payload)
-        if not ok:
-            return False, msg
-        failures[key] = {"text": text, "ts": ts}
-        state["failures"] = failures
-        if not save_state(run, state):
-            return False, "state save failed"
-        return True, f"updated failure {key}"
+            payload: dict[str, Any] = {
+                "channel": cfg["channel_id"],
+                "ts": ts,
+                "text": text,
+            }
+            if blocks:
+                payload["blocks"] = blocks
+            ok, _body, msg = _api("chat.update", cfg["token"], payload)
+            if not ok:
+                return False, msg
+            failures[key] = {"text": text, "ts": ts}
+            state["failures"] = failures
+            if not save_state(run, state):
+                return False, "state save failed"
+            return True, f"updated failure {key}"
     except _NOTIFY_TRANSPORT_ERRORS as exc:
         return False, _exc_message("update_failure_message", exc)
 

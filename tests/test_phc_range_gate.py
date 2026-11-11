@@ -103,6 +103,21 @@ class PhcRangeGateTests(unittest.TestCase):
         self.assertFalse(self.gate.pending_phc_ask(33))
         self.assertTrue(self.gate.is_range_confirmed(33))
 
+    def test_failed_phc_go_preserves_pending_proposal(self):
+        from common.lib import calib_ops
+
+        proposal = {
+            "run": 33, "suffix": "Pi",
+            "proposals": [{"det": "BHT", "first": 1, "last": 10}],
+        }
+        self.gate.write_proposal(33, proposal)
+        with mock.patch.object(self.gate, "missing_proposal_dets", return_value=[]), \
+                mock.patch.object(calib_ops, "_phc_refit_after_conf", return_value=(False, "no held PHC")):
+            success, message = calib_ops.apply_phc_go(33, background_resume=False)
+        self.assertFalse(success, message)
+        self.assertTrue(self.gate.pending_phc_ask(33))
+        self.assertFalse(self.gate.is_range_confirmed(33))
+
     def test_clear_rounds_keeps_confirmed_by_default(self):
         from common.lib import hodo_hdphc_rounds
 

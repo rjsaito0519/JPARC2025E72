@@ -44,6 +44,7 @@ import yaml
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from common.lib import calib_approval, calib_lanes, config, runner  # noqa: E402
+from common.lib.calib_state_io import locked_path, write_json  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 KNOWN_STEPS = (
@@ -229,7 +230,7 @@ def broadcast_flag(run, key, value=True, **extra):
             st[ek] = ev
         st["updated_at"] = utc_now()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(st, indent=2, sort_keys=True) + "\n")
+        write_json(path, st)
 
 
 #_____________________________________________________________________________
@@ -533,7 +534,7 @@ def step_cmd(name, opts, cfg, dry_run):
 def write_state(run, payload, *, lane=None):
     path = state_path(run, lane=lane)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    write_json(path, payload)
     return path
 
 
@@ -611,7 +612,7 @@ def clear_dispatch_state(run):
 
 
 #_____________________________________________________________________________
-def apply_decide(run, action, note="", hold_id=None):
+def apply_decide(run, action, note="", hold_id=None, user_id=None):
     """Apply decide without exiting. Returns updated state dict."""
     if action not in DECIDE_ACTIONS:
         runner.fail(f"decide action must be one of {DECIDE_ACTIONS}, got {action!r}")
@@ -639,49 +640,53 @@ def apply_decide(run, action, note="", hold_id=None):
                     f"run{run:05d}: multiple lanes held; "
                     f"pass hold_id from Slack button"
                 )
-    if st is None:
-        runner.fail(f"run{run:05d}: not started; cannot decide")
-    if st.get("status") != "held":
-        runner.fail(
-            f"run{run:05d}: status={st.get('status')!r} "
-            f"(decide requires status=held)"
+    path = path or state_path(run)
+    with locked_path(path):
+        st = read_state_file(path)
+        if st is None:
+            runner.fail(f"run{run:05d}: not started; cannot decide")
+        if st.get("status") != "held":
+            runner.fail(
+                f"run{run:05d}: status={st.get('status')!r} "
+                f"(decide requires status=held)"
+            )
+        hold = st.get("hold")
+        if not isinstance(hold, dict):
+            runner.fail(f"run{run:05d}: held state missing hold object")
+        if hold_id and str(hold.get("id") or "") != str(hold_id):
+            runner.fail(f"run{run:05d}: hold changed before decide")
+        hold = dict(hold)
+        hold["decision"] = action
+        hold["decided_at"] = utc_now()
+        hold["user_id"] = user_id
+        if note:
+            hold["note"] = note
+        st["hold"] = hold
+        st["status"] = "stopped"
+        st["hold_requested"] = False
+        st["stop_requested"] = False
+        st["updated_at"] = utc_now()
+        write_json(path, st)
+        append_hold_journal(run, {
+            "event": "decide",
+            "action": action,
+            "note": note,
+            "source": hold.get("source"),
+            "reason": hold.get("reason"),
+            "step": hold.get("step"),
+            "index": hold.get("index"),
+            "rc": hold.get("rc"),
+            "at": hold["decided_at"],
+            "lane": hold.get("lane") or calib_lanes.active_lane(),
+            "hold_id": hold.get("id"),
+            "user_id": user_id,
+        })
+        append_progress(
+            run, "decide",
+            step=hold.get("step"), index=hold.get("index"),
+            rc=hold.get("rc"), status="stopped", hold_source=hold.get("source"),
         )
-    hold = st.get("hold")
-    if not isinstance(hold, dict):
-        runner.fail(f"run{run:05d}: held state missing hold object")
-    hold = dict(hold)
-    hold["decision"] = action
-    hold["decided_at"] = utc_now()
-    if note:
-        hold["note"] = note
-    st["hold"] = hold
-    st["status"] = "stopped"
-    st["hold_requested"] = False
-    st["stop_requested"] = False
-    st["updated_at"] = utc_now()
-    if path is not None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(st, indent=2, sort_keys=True) + "\n")
-    else:
-        write_state(run, st)
-    append_hold_journal(run, {
-        "event": "decide",
-        "action": action,
-        "note": note,
-        "source": hold.get("source"),
-        "reason": hold.get("reason"),
-        "step": hold.get("step"),
-        "index": hold.get("index"),
-        "rc": hold.get("rc"),
-        "at": hold["decided_at"],
-        "lane": hold.get("lane") or calib_lanes.active_lane(),
-    })
-    append_progress(
-        run, "decide",
-        step=hold.get("step"), index=hold.get("index"),
-        rc=hold.get("rc"), status="stopped", hold_source=hold.get("source"),
-    )
-    return st
+        return st
 
 
 #_____________________________________________________________________________
@@ -708,18 +713,20 @@ GATE_WAIT_POLL_S = 1.0
 #_____________________________________________________________________________
 def mark_gate_waiter(run, *, waiting=True):
     """Set or clear in-process step_gate waiter flags on dispatch state."""
-    st = read_state(run)
-    if st is None:
-        return None
-    if waiting:
-        st["gate_waiter"] = True
-        st["gate_waiter_pid"] = os.getpid()
-    else:
-        st.pop("gate_waiter", None)
-        st.pop("gate_waiter_pid", None)
-    st["updated_at"] = utc_now()
-    write_state(run, st)
-    return st
+    path = state_path(run)
+    with locked_path(path):
+        st = read_state_file(path)
+        if st is None:
+            return None
+        if waiting:
+            st["gate_waiter"] = True
+            st["gate_waiter_pid"] = os.getpid()
+        else:
+            st.pop("gate_waiter", None)
+            st.pop("gate_waiter_pid", None)
+        st["updated_at"] = utc_now()
+        write_json(path, st)
+        return st
 
 
 #_____________________________________________________________________________
@@ -937,6 +944,9 @@ def enter_held(run, payload, hold, event_type, cfg_steps=None):
     payload = dict(payload)
     payload["status"] = "held"
     payload["hold"] = hold
+    if hold.get("source") in ("step_gate", "exit_check"):
+        payload["gate_waiter"] = True
+        payload["gate_waiter_pid"] = os.getpid()
     payload["hold_requested"] = False
     payload["stop_requested"] = False
     if "hold_reason" in payload:
@@ -950,6 +960,8 @@ def enter_held(run, payload, hold, event_type, cfg_steps=None):
     append_hold_journal(run, {
         "event": event_type,
         "source": hold.get("source"),
+        "hold_id": hold.get("id"),
+        "lane": hold.get("lane") or calib_lanes.active_lane(),
         "reason": hold.get("reason"),
         "step": hold.get("step"),
         "index": hold.get("index"),
@@ -1059,9 +1071,9 @@ def do_hold(cfg, reason):
 
 
 #_____________________________________________________________________________
-def do_decide(cfg, action, note, hold_id=None):
+def do_decide(cfg, action, note, hold_id=None, user_id=None):
     st = apply_decide(
-        cfg["run"], action, note=note or "", hold_id=hold_id,
+        cfg["run"], action, note=note or "", hold_id=hold_id, user_id=user_id,
     )
     hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
     runner.info(
@@ -1284,7 +1296,7 @@ def resume_start_index(st):
     unverified = [
         int(i) for i in (st.get("unverified") or []) if isinstance(i, int)
     ]
-    if hold.get("decision") == "refit" and unverified:
+    if hold.get("decision") == "refit":
         return min([index] + unverified)
     if hold.get("decision") == "continue" and not should_continue(rc, opts):
         nxt = index + 1
@@ -1356,7 +1368,10 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
             try:
                 # Let the dispatcher record every child exit, including signals
                 # and shell errors, before stopping the chain.
-                rc, _ = runner.sh(cmd, check=False)
+                rc, _ = runner.sh(
+                    cmd, check=False,
+                    env={**os.environ, "E72_CALIB_DISPATCH": "1"},
+                )
             except (KeyboardInterrupt, OSError) as e:
                 runner.warn(f"step {name} interrupted: {type(e).__name__}")
                 rc = runner.EXIT_FAIL
@@ -2101,6 +2116,8 @@ def parse_args():
                    help="decide/approve: optional note for journal")
     p.add_argument("--via", default="cli", choices=("cli", "slack", "web"),
                    help="approve: how the approval was issued")
+    p.add_argument("--lane", choices=calib_lanes.LANE_ORDER, default=None,
+                   help="resume: target a single lane")
     p.add_argument("--user-id", default=None,
                    help="approve: Slack user id when --via slack")
     p.add_argument("--subject-sha", default=None,
@@ -2148,7 +2165,7 @@ def main():
             runner.warn("--dry-run ignored for decide")
         if not a.action:
             runner.fail("decide requires --action refit|continue")
-        do_decide(cfg, a.action, a.note, hold_id=a.hold_id)
+        do_decide(cfg, a.action, a.note, hold_id=a.hold_id, user_id=a.user_id)
     if a.command == "approve":
         if a.dry_run:
             runner.warn("--dry-run ignored for approve")
@@ -2166,7 +2183,7 @@ def main():
             runner.warn("--dry-run ignored for clear-channel")
         do_clear_channel(cfg, a.mode, a.det, a.channel, a.reason)
     if a.command == "resume":
-        do_resume(cfg, a.dry_run)
+        do_resume(cfg, a.dry_run, lane=a.lane)
     do_start(cfg, a.dry_run)
 
 

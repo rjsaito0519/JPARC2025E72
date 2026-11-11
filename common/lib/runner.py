@@ -9,6 +9,8 @@ one. Exit codes for a driver:
   EXIT_SKIP          finished without applying calibration (no fit results, or --debug)
 """
 import argparse
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -16,7 +18,7 @@ from pathlib import Path
 from termcolor import colored
 
 from . import config
-from .input_check import check_input
+from .input_check import check_input, stale_params
 from .param import backup_file  # noqa: F401  (re-exported for the front ends)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -46,10 +48,10 @@ def fail(msg):
     sys.exit(EXIT_FAIL)
 
 
-def sh(cmd, capture=False, check=True, ok=(EXIT_OK,)):
+def sh(cmd, capture=False, check=True, ok=(EXIT_OK,), env=None):
     """Run a shell command; (return code, output if capture). check=True stops unless the code is in ok."""
     print(colored(f"Running: {cmd}", "cyan"))
-    res = subprocess.run(cmd, shell=True, capture_output=capture, text=True)
+    res = subprocess.run(cmd, shell=True, capture_output=capture, text=True, env=env)
     out = (res.stdout or "") + (res.stderr or "")
     if check and res.returncode not in ok:
         if out:
@@ -98,6 +100,18 @@ def checked_root(path, suffix, force):
     """path if it exists and passes check_input; stops otherwise."""
     if not Path(path).exists():
         fail(f"{path} not found")
+    from . import calib_lanes
+    if not force and (os.environ.get("E72_CALIB_DISPATCH")
+                      or calib_lanes.active_lane()):
+        newer = stale_params(path, suffix)
+        if newer:
+            from . import calib_anomaly
+            reason = "stale_input: decode again before refit; " + "; ".join(newer)
+            run_match = re.match(r"run(\d+)", Path(path).name)
+            if run_match:
+                calib_anomaly.remember_check_reason(int(run_match[1]), reason)
+            warn(reason)
+            sys.exit(EXIT_CHECK)
     if not check_input(path, suffix, force):
         sys.exit(EXIT_FAIL)
     info(f"input: {path}")

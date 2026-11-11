@@ -14,9 +14,11 @@ the exit code is the worst of the runs: 3 check/settled over 2 written (decode a
 (--debug / no results) over 0 converged; 1 failed.
 """
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
+from common.lib.param import exclusive_param_lock  # noqa: E402
 from common.lib import (  # noqa: E402
     calib_approval,
     config,
@@ -66,7 +68,7 @@ def _dc_session(run, suffix, args, mode, input_path):
 
 #_____________________________________________________________________________
 def after_qa_slack(run, mode, args, rc, session=None):
-    """Post chamber QA PDF(s) to Slack; never changes calibration rc."""
+    """Post chamber QA PDFs; failed delivery requires human review."""
     posted, post_msg = dc_qa_slack.try_post_after_dcprm(
         run,
         mode,
@@ -76,7 +78,11 @@ def after_qa_slack(run, mode, args, rc, session=None):
         session=session,
     )
     if not posted:
+        from common.lib import calib_anomaly
+        calib_anomaly.remember_check_reason(run, f"qa_delivery_failed: {post_msg}")
         runner.warn(f"Slack QA post failed: {post_msg}")
+        if rc != runner.EXIT_FAIL:
+            rc = runner.EXIT_CHECK
     elif not post_msg.startswith("slack skip:"):
         runner.info(post_msg)
     if rc == runner.EXIT_CHECK:
@@ -125,23 +131,24 @@ def do_drift(run, suffix, args):
             return after_qa_slack(
                 run, "drift", args, runner.EXIT_CHECK, session=session,
             )
-        runner.backup_file(config.PARAM_DIR / "DCDRFT" / config.SUB_DIR / f"DCDriftParam_run{run:05d}_{suffix}.root")
-    runner.step(f"run{run:05d}: BLC_DRFT ({chamber(args)})")
-    runner.sh(f"{exe} {root} {suffix}" + (" --debug" if args.debug else ""))
-    if args.debug:
-        return after_qa_slack(run, "drift", args, runner.EXIT_SKIP, session=session)
-    from common.lib import calib_anomaly
-    drift_path = (
-        config.PARAM_DIR / "DCDRFT" / config.SUB_DIR
-        / f"DCDriftParam_run{run:05d}_{suffix}.root"
-    )
-    drift_reason = calib_anomaly.drift_graph_anomaly(drift_path)
-    if drift_reason:
-        calib_anomaly.remember_check_reason(run, drift_reason)
-        return after_qa_slack(
-            run, "drift", args, runner.EXIT_CHECK, session=session,
-        )
-    return after_qa_slack(run, "drift", args, runner.EXIT_OK, session=session)
+    drift_path = dc_qa_slack.param_path(run, "drift", kaon=args.kaon)
+    rc = runner.EXIT_SKIP if args.debug else runner.EXIT_OK
+    with (exclusive_param_lock(drift_path) if not args.debug else nullcontext()):
+        if not args.debug:
+            blocked, reason = calib_approval.write_blocked(run)
+            if blocked:
+                runner.warn(f"drift param write blocked: {reason}")
+                return runner.EXIT_CHECK
+            runner.backup_file(drift_path)
+        runner.step(f"run{run:05d}: BLC_DRFT ({chamber(args)})")
+        runner.sh(f"{exe} {root} {suffix}" + (" --debug" if args.debug else ""))
+        if not args.debug:
+            from common.lib import calib_anomaly
+            drift_reason = calib_anomaly.drift_graph_anomaly(drift_path)
+            if drift_reason:
+                calib_anomaly.remember_check_reason(run, drift_reason)
+                rc = runner.EXIT_CHECK
+    return after_qa_slack(run, "drift", args, rc, session=session)
 
 
 def do_reso(run, suffix, args):

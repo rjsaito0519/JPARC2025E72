@@ -94,10 +94,14 @@ def after_qa_merge(run, mode, args, rc, session=None):
             manifest=manifest,
         )
         if not posted:
+            from common.lib import calib_anomaly
+            calib_anomaly.remember_check_reason(run, f"qa_delivery_failed: {post_msg}")
             runner.warn(f"Slack QA post failed: {post_msg}")
+            if rc != runner.EXIT_FAIL:
+                rc = runner.EXIT_CHECK
         elif not post_msg.startswith("slack skip:"):
             runner.info(post_msg)
-        if phc_ask:
+        if phc_ask and posted:
             _notify_phc_ask_after_pdf(run)
         return rc
     runner.warn(f"QA PDF merge failed: {message}")

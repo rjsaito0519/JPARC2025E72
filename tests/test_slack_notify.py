@@ -360,9 +360,18 @@ class SlackNotifyUnitTests(unittest.TestCase):
 
 
 class RunHodoSlackRcTests(unittest.TestCase):
-    """Slack failure must not change calibration rc from after_qa_merge."""
+    """Slack delivery failure raises successful calibration to review."""
 
-    def test_after_qa_merge_keeps_rc_on_slack_fail(self):
+    def setUp(self):
+        from common.lib import config
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        output_patch = mock.patch.object(config, "OUTPUT_DIR", Path(self.scratch.name))
+        output_patch.start()
+        self.addCleanup(output_patch.stop)
+
+
+    def test_after_qa_merge_holds_on_slack_fail(self):
         if str(REPO) not in sys.path:
             sys.path.insert(0, str(REPO))
         from calibration.scripts import run_hodo as rh
@@ -382,11 +391,11 @@ class RunHodoSlackRcTests(unittest.TestCase):
             rh.runner, "warn"
         ) as warn:
             rc = rh.after_qa_merge(1, "hdprm", Args(), runner.EXIT_OK)
-        self.assertEqual(rc, runner.EXIT_OK)
+        self.assertEqual(rc, runner.EXIT_CHECK)
         warn.assert_called()
         self.assertIn("Slack", warn.call_args[0][0])
 
-    def test_after_qa_merge_keeps_rc_when_try_post_times_out(self):
+    def test_after_qa_merge_holds_when_try_post_times_out(self):
         if str(REPO) not in sys.path:
             sys.path.insert(0, str(REPO))
         from calibration.scripts import run_hodo as rh
@@ -417,7 +426,7 @@ class RunHodoSlackRcTests(unittest.TestCase):
             rh.runner, "warn"
         ):
             rc = rh.after_qa_merge(1, "hdprm", Args(), runner.EXIT_OK)
-        self.assertEqual(rc, runner.EXIT_OK)
+        self.assertEqual(rc, runner.EXIT_CHECK)
 
 
 class DiscordConfigNoEnvTests(unittest.TestCase):

@@ -16,6 +16,7 @@ from typing import Any, Optional
 import yaml
 
 from . import config
+from .calib_state_io import locked_path, write_json
 from .slack_bot_ensure import ensure_slack_bot  # noqa: F401  (re-export)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -324,35 +325,21 @@ def _phc_refit_after_conf(
     user_id: Optional[str],
 ) -> tuple[bool, str]:
     """decide refit after phc_conf was updated; resume only if no waiter."""
-    st = _read_dispatch_state(run)
-    waiter = bool(
-        isinstance(st, dict)
-        and st.get("gate_waiter")
-        and isinstance(st.get("hold"), dict)
-    )
-    ok_d, msg_d = run_dispatch(
-        "decide", run,
-        background_resume=False,
-        timeout_s=timeout_s,
-        user_id=user_id,
-        action="refit",
-    )
-    if not ok_d:
-        return False, f"phc conf written; decide refit failed: {msg_d}"
-    if waiter:
-        return True, (
-            f"phc conf written; decide refit; "
-            f"in-process waiter will continue (no resume)"
-        )
-    ok_r, msg_r = run_dispatch(
-        "resume", run,
+    targets = []
+    for path in _dispatch_state_candidates(run):
+        state = _read_state_file(path) or {}
+        hold = state.get("hold") or {}
+        if (state.get("status") == "held"
+                and hold.get("step") in ("hodo", "hodo_hdphc")
+                and hold.get("source") == "exit_check"):
+            targets.append(hold)
+    if len(targets) != 1 or not targets[0].get("id"):
+        return False, "PHC refit requires exactly one held Hodo PHC step"
+    return run_dispatch(
+        "retry", run, hold_id=targets[0]["id"],
         background_resume=background_resume,
-        timeout_s=timeout_s,
-        user_id=user_id,
+        timeout_s=timeout_s, user_id=user_id,
     )
-    if not ok_r:
-        return False, f"phc conf written; decide refit ok; resume failed: {msg_r}"
-    return True, f"phc conf written; decide refit; {msg_r}"
 
 
 #_____________________________________________________________________________
@@ -427,6 +414,7 @@ def apply_phc_go(
         )
     # Clear ask + mark session-confirmed so later iters skip range UI;
     # restart / round1 clear drops confirmed so a re-run asks again.
+    was_confirmed = phc_range_gate.is_range_confirmed(run)
     phc_range_gate.clear_proposal(run)
     phc_range_gate.set_range_confirmed(run)
     ok, msg = _phc_refit_after_conf(
@@ -435,6 +423,10 @@ def apply_phc_go(
         timeout_s=timeout_s,
         user_id=user_id,
     )
+    if not ok:
+        phc_range_gate.write_proposal(run, proposal)
+        if not was_confirmed:
+            phc_range_gate.clear_range_confirmed(run)
     return ok, f"phc-go; {msg}"
 
 
@@ -455,6 +447,7 @@ def run_dispatch(
     first: Optional[int] = None,
     last: Optional[int] = None,
     hold_id: Optional[str] = None,
+    lane: Optional[str] = None,
 ) -> tuple[bool, str]:
     """Run a defined calib op for the run's session YAML (or extra hdphc)."""
     if command not in OPS:
@@ -514,6 +507,10 @@ def run_dispatch(
         "clear": "clear-channel",
     }.get(command, command)
     cmd = [sys.executable, str(DISPATCH_SCRIPT), dispatch_cmd, str(yml)]
+    if command == "resume" and lane:
+        cmd += ["--lane", lane]
+    if command == "decide" and user_id:
+        cmd += ["--user-id", user_id]
     if command == "approve":
         cmd += ["--via", "slack"]
         if user_id:
@@ -564,7 +561,7 @@ def run_dispatch(
             sys.path.insert(0, str(DISPATCH_SCRIPT.parent))
             import calib_dispatch as cd  # noqa: WPS433
             cd.apply_decide(
-                run, action, note="", hold_id=hold_id,
+                run, action, note="", hold_id=hold_id, user_id=user_id,
             )
             ok_d, msg_d = True, f"decide {action}"
         except SystemExit as exc:
@@ -584,6 +581,8 @@ def run_dispatch(
             background_resume=background_resume,
             timeout_s=timeout_s,
             user_id=user_id,
+            lane=(path_h.parent.name if path_h is not None
+                  and path_h.parent.parent.name == "lanes" else None),
         )
         if not ok_r:
             return False, f"{command}: decide {action} ok; resume failed: {msg_r}"
@@ -593,26 +592,32 @@ def run_dispatch(
         path_h, st = _find_held_state(run, hold_id)
         if not isinstance(st, dict) or path_h is None:
             return False, f"no held dispatch state for run{run:05d}"
-        hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
-        source = hold.get("source")
-        if source not in ("step_gate", "exit_check"):
-            return False, (
-                f"gate-stop requires hold.source=step_gate|exit_check, "
-                f"got {source!r}"
+        with locked_path(path_h):
+            st = _read_state_file(path_h) or {}
+            if st.get("status") != "held" or (hold_id and
+                    (st.get("hold") or {}).get("id") != hold_id):
+                return False, "hold changed before gate-stop"
+            hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+            source = hold.get("source")
+            if source not in ("step_gate", "exit_check"):
+                return False, (
+                    f"gate-stop requires hold.source=step_gate|exit_check, "
+                    f"got {source!r}"
+                )
+            hold = dict(hold)
+            hold["decision"] = "stop"
+            hold["decided_at"] = _utc_now()
+            hold["user_id"] = user_id
+            st["hold"] = hold
+            st["updated_at"] = _utc_now()
+            _write_state_file(path_h, st)
+            return True, (
+                f"stopped at {source} "
+                f"(step={hold.get('step')} index={hold.get('index')} "
+                f"lane={hold.get('lane')}). "
+                f"Hand-fix then /calib retry {run} or "
+                f"/calib decide {run} refit|continue"
             )
-        hold = dict(hold)
-        hold["decision"] = "stop"
-        hold["decided_at"] = _utc_now()
-        st["hold"] = hold
-        st["updated_at"] = _utc_now()
-        _write_state_file(path_h, st)
-        return True, (
-            f"stopped at {source} "
-            f"(step={hold.get('step')} index={hold.get('index')} "
-            f"lane={hold.get('lane')}). "
-            f"Hand-fix then /calib retry {run} or "
-            f"/calib decide {run} refit|continue"
-        )
 
     if command == "resume" and background_resume:
         return _spawn_background(cmd, resume_log_path(run), "resume", run)
@@ -709,7 +714,7 @@ def _require_matching_hold(
 #_____________________________________________________________________________
 def _write_state_file(path: Path, st: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(st, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json(path, st)
 
 
 #_____________________________________________________________________________

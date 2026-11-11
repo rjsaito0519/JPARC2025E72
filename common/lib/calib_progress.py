@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from . import config
+from . import calib_lanes, config
 
 
 #_____________________________________________________________________________
@@ -36,6 +36,7 @@ def append_progress(
     path.parent.mkdir(parents=True, exist_ok=True)
     row = {
         "at": _utc_now(),
+        "lane": calib_lanes.active_lane(),
         "event": event,
         "step": step,
         "index": index,

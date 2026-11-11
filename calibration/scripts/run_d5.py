@@ -375,14 +375,16 @@ def make_check_pdf(run, s):
 
 #_____________________________________________________________________________
 def after_qa_slack(run, kind, s, session=None):
-    """Post a D5 QA PDF to Slack; never changes calibration exit codes."""
+    """Post a D5 QA PDF; return whether delivery or configured skip succeeded."""
     posted, post_msg = d5_qa_slack.try_post_after_d5(
         run, kind, kaon=(s == "K"), session=session,
     )
     if not posted:
+        calib_anomaly.remember_check_reason(run, f"qa_delivery_failed: {post_msg}")
         runner.warn(f"Slack QA post failed: {post_msg}")
     elif not post_msg.startswith("slack skip:"):
         runner.info(post_msg)
+    return posted
 
 
 def check_pos_inputs(run, s, force):
@@ -411,15 +413,20 @@ def do_pos(args, s):
         pos_sessions[run] = session
     rows = {run: measure(run, s) for run in args.runs}
     failed = [run for run, r in rows.items() if r is None]
+    delivery_failed = []
     for run, r in rows.items():
         if r is not None:
-            after_qa_slack(run, "pos_review", s, session=pos_sessions.get(run))
+            if not after_qa_slack(run, "pos_review", s, session=pos_sessions.get(run)):
+                delivery_failed.append(run)
     if not (failed or args.debug):
         for run, r in rows.items():
             r["state"] = judge_pos(run, r, s, args.tol)
     write_summary(rows, s, args.tol)
     if failed:
         runner.fail(f"measurement failed for {failed} (n/a); nothing written")
+    if delivery_failed:
+        runner.warn(f"QA delivery failed for {delivery_failed}; nothing written")
+        sys.exit(runner.EXIT_CHECK)
     if args.debug:
         runner.warn("--debug: nothing written")
         sys.exit(runner.EXIT_SKIP)
@@ -508,7 +515,8 @@ def do_pos(args, s):
                 elif nmsg.startswith("notified"):
                     runner.info(nmsg)
             else:
-                after_qa_slack(run, "plane_resi_qa", s, session=check_session)
+                if not after_qa_slack(run, "plane_resi_qa", s, session=check_session):
+                    code = runner.worst([code, runner.EXIT_CHECK])
     sys.exit(code)
 
 
