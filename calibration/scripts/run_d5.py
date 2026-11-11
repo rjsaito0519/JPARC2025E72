@@ -29,6 +29,7 @@ Exit code of pos (lib/runner.py, worst run): 3 some run settled or check PDF fai
 The common x shift of BLC1 is degenerate with delta and is left unchanged.
 """
 
+import math
 import re
 import sys
 from pathlib import Path
@@ -38,6 +39,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from common.lib import (  # noqa: E402
     calib_anomaly,
     config,
+    fit_validity,
     d5_qa_slack,
     qa_session,
     runner,
@@ -225,11 +227,27 @@ def measure(run, s):
         runner.warn(f"{txt}: missing or bad values")
         return None
     r["dy_err"] = max(r.pop("dy_err_a"), r.pop("dy_err_b"))
+    # Low-stats C++ core may emit NaN; do not treat as measured (no converge/update).
+    for key in ("dy_a", "dy_b", "dy_err", "s"):
+        if not fit_validity.is_finite_number(r[key]):
+            runner.warn(
+                f"{txt}: non-finite {key}={r[key]!r}; "
+                f"measurement unusable (human check, not converged)"
+            )
+            calib_anomaly.remember_check_reason(
+                run,
+                f"d5 pos non-finite {key}={r[key]!r} ({s})",
+            )
+            return None
     return r
 
 
 def pos_score(r, tol):
     """Largest of |dy_a|, |dy_b|, |s| in units of their tolerances (< 1 when converged)."""
+    if not fit_validity.all_finite(
+        [r.get("dy_a"), r.get("dy_b"), r.get("dy_err"), r.get("s"), tol]
+    ):
+        return math.inf
     tol_y = max(tol, 2.0 * r["dy_err"])
     return max(abs(r["dy_a"]) / tol_y, abs(r["dy_b"]) / tol_y, abs(r["s"]) / tol)
 
@@ -252,6 +270,21 @@ def pos_apply_key(run, r, s):
 def judge_pos(run, r, s, tol):
     """Decide state; record CONVERGED/SETTLED immediately. WRITTEN is recorded after write_ofs."""
     path = pos_hist_path(run, s)
+    if not fit_validity.all_finite(
+        [r.get("dy_a"), r.get("dy_b"), r.get("dy_err"), r.get("s"), tol]
+    ):
+        extra = f"dy_a={r.get('dy_a')} dy_b={r.get('dy_b')} err={r.get('dy_err')} s={r.get('s')}"
+        calib_anomaly.remember_check_reason(
+            run, f"d5 pos non-finite values ({s}): {extra}",
+        )
+        conv.record(
+            path, "BLC1", 1.0e9, conv.SETTLED,
+            f"non-finite d5 pos measurement; {extra}",
+        )
+        r["score"] = math.inf
+        r["hist_path"] = path
+        r["details_extra"] = extra
+        return conv.SETTLED
     extra = f"dy_a={r['dy_a']:+.5f} dy_b={r['dy_b']:+.5f} err={r['dy_err']:.5f} s={r['s']:+.5f}"
     score = pos_score(r, tol)
     state = conv.decide_at(path, "BLC1", score, score < 1.0,

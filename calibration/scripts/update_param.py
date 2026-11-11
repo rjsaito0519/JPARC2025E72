@@ -457,13 +457,28 @@ def collect_residual(a, pf):
     decode_path = decode(a.run, a.chamber)
     path = fresh_outputs(a.run, [(a.blc, a.blc, "residual", a.suffix)], [decode_path],
                          required=True)[a.blc]
-    fit = update_residual.make_dictdata(str(path))
+    try:
+        fit = update_residual.make_dictdata(str(path))
+    except update_residual.ResidualFitInvalid as exc:
+        hist = conv.history_path(a.run, a.blc, "resi", a.suffix)
+        reason = f"residual invalid {a.blc}: {exc}"
+        calib_anomaly.remember_check_reason(a.run, reason)
+        runner.warn(reason)
+        conv.record(hist, a.blc, RESI_CONV_MM * 10, conv.SETTLED, str(exc))
+        return {}, [conv.SETTLED], []
     current = pf.get_data_dict(key_len=1)
     col = CATEGORIES["residual"]["start_col"] - 1
     missing = sorted(k for k in fit if k not in current)
     if not fit or missing:
         runner.fail(f"{path.name}: no planes, or Ids not in the DCGEO: {missing}")
     corr = {k: float(v[0]) for k, v in fit.items()}
+    if not all(math.isfinite(c) for c in corr.values()):
+        hist = conv.history_path(a.run, a.blc, "resi", a.suffix)
+        reason = f"residual invalid {a.blc}: non-finite corrections"
+        calib_anomaly.remember_check_reason(a.run, reason)
+        runner.warn(reason)
+        conv.record(hist, a.blc, RESI_CONV_MM * 10, conv.SETTLED, reason)
+        return {}, [conv.SETTLED], []
     ok(f"{a.chamber} Residuals", len(corr), " (Additive Update)")
     max_corr = max(abs(c) for c in corr.values())
     hist = conv.history_path(a.run, a.blc, "resi", a.suffix)

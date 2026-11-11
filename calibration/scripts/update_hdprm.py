@@ -10,7 +10,7 @@ from pathlib import Path
 import uproot
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, fit_overrides, runner  # noqa: E402
+from common.lib import config, fit_overrides, fit_validity, runner  # noqa: E402
 
 
 def _drop_locked(run, det, data, mode="hdprm"):
@@ -35,15 +35,34 @@ def read_tree(root_file_path):
     return uproot.open(root_file_path)["tree"].arrays(library="np")
 
 
+#_____________________________________________________________________________
+def _finite_row(values, *, label):
+    """Return values if all finite; else warn and return None (keep current param)."""
+    if fit_validity.all_finite(values):
+        return list(values)
+    runner.warn(f"{label}: non-finite fit value {values}; not written (current value kept)")
+    return None
+
+
 def ud_counter_rows(tree, cid, n_ud):
     """Counters with U/D (or single) ADC and TDC per segment: ADC (pedestal, gain), TDC offset."""
     data = {}
     for i, ch in enumerate(tree["ch"]):
         for ud in range(n_ud):
             if "adc_p0_val" in tree:
-                data[f"{cid}-0-{ch:.0f}-0-{ud}"] = [tree["adc_p0_val"][i][ud], tree["adc_p1_val"][i][ud]]
+                row = _finite_row(
+                    [tree["adc_p0_val"][i][ud], tree["adc_p1_val"][i][ud]],
+                    label=f"cid{cid} seg{int(ch)} ud{ud} ADC",
+                )
+                if row is not None:
+                    data[f"{cid}-0-{ch:.0f}-0-{ud}"] = row
             if "tdc_p0_val" in tree:
-                data[f"{cid}-0-{ch:.0f}-1-{ud}"] = [tree["tdc_p0_val"][i][ud], TDC_GAIN]
+                row = _finite_row(
+                    [tree["tdc_p0_val"][i][ud], TDC_GAIN],
+                    label=f"cid{cid} seg{int(ch)} ud{ud} TDC",
+                )
+                if row is not None:
+                    data[f"{cid}-0-{ch:.0f}-1-{ud}"] = row
     return data
 
 
@@ -109,7 +128,15 @@ def make_dictdata(root_file_path, det, run=None):
 def make_t0_offset_dictdata(root_file_path):
     """BH2 time-zero offset per segment (UorD 2) from the T0_Offset output."""
     tree, cid = read_tree(root_file_path), config.DETECTOR_I_LIST["BH2"]
-    return {f"{cid}-0-{ch:.0f}-1-2": [tree["offset_p0_val"][i][0], 1.0] for i, ch in enumerate(tree["ch"])}
+    data = {}
+    for i, ch in enumerate(tree["ch"]):
+        row = _finite_row(
+            [tree["offset_p0_val"][i][0], 1.0],
+            label=f"BH2 seg{int(ch)} T0 offset",
+        )
+        if row is not None:
+            data[f"{cid}-0-{ch:.0f}-1-2"] = row
+    return data
 
 
 # -- prepare HTOF ADC data (param_type "htofprm") -----------------------------

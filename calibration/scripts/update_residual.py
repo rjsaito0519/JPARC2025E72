@@ -1,14 +1,25 @@
-import uproot
+import math
 import sys
+from pathlib import Path
+
 import numpy as np
+import uproot
 from termcolor import colored
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from common.lib import fit_validity  # noqa: E402
 
 detector_id_list = {
     "BLC1": 1,
     "BLC2": 1001,
 }
 
-# -- prepare HDPRM data  -----------------------------------
+
+class ResidualFitInvalid(ValueError):
+    """Residual means/sigmas are not all finite or the reference plane is bad."""
+
+
+# -- prepare residual correction data  -----------------------------------
 def make_dictdata(root_file_path):
     try:
         file = uproot.open(root_file_path)
@@ -16,11 +27,13 @@ def make_dictdata(root_file_path):
             print(colored(f"  [Warning] 'tree' not found in {root_file_path}. Skipping.", "yellow"))
             return {}
         tree = file["tree"].arrays(library="np")
+    except ResidualFitInvalid:
+        raise
     except Exception as e:
         print(colored(f"  [Error] Opening {root_file_path}: {e}", "red"))
         return {}
     detector_id = -1
-    
+
     if "BLC1" in root_file_path:
         detector_id = detector_id_list["BLC1"]
     elif "BLC2" in root_file_path:
@@ -30,31 +43,41 @@ def make_dictdata(root_file_path):
         print(colored(f"Error: Could not determine detector from path {root_file_path}", "red"))
         sys.exit(1)
 
-    # --- Macro-like relative correction logic ---
-    # We reference the first plane (U1) to avoid overall detector shift/rotation.
-    # mu_value = -1.0 * (current_mu - ref_mu)
-    
-    ref_mu = 0.0
-    if len(tree["residual_p0_val"]) > 0:
-        # Reference is side 0 (a-side), plane 0 (U1)
-        ref_mu = tree["residual_p0_val"][0][0]
-        print(colored(f"  [INFO] Reference Mean (Plane 0): {ref_mu:.4f} mm", "cyan"))
+    # Relative to first plane (U1a) to avoid overall detector shift/rotation.
+    if len(tree["residual_p0_val"]) < 1:
+        raise ResidualFitInvalid(f"{root_file_path}: empty residual_p0_val")
+    ref_mu = float(tree["residual_p0_val"][0][0])
+    if not fit_validity.is_finite_number(ref_mu):
+        raise ResidualFitInvalid(
+            f"{root_file_path}: reference plane mean is not finite ({ref_mu!r})"
+        )
+    print(colored(f"  [INFO] Reference Mean (Plane 0): {ref_mu:.4f} mm", "cyan"))
 
     data = dict()
     has_sigma = "residual_p1_val" in tree
-    
-    for i in range(len(tree["residual_p0_val"])):
-        # BLCa (Planes 1-8 or 1001-1008)
-        mu_a = tree["residual_p0_val"][i][0]
-        sig_a = tree["residual_p1_val"][i][0] if has_sigma else 0.0
-        key_a = f"{detector_id + i}"
-        data[key_a] = [ -1.0 * (mu_a - ref_mu), sig_a ]
-        
-        # BLCb (Planes 9-16 or 1009-1016)
-        mu_b = tree["residual_p0_val"][i][1]
-        sig_b = tree["residual_p1_val"][i][1] if has_sigma else 0.0
-        key_b = f"{detector_id + i + 8}"
-        data[key_b] = [ -1.0 * (mu_b - ref_mu), sig_b ]
+    invalid = []
 
+    for i in range(len(tree["residual_p0_val"])):
+        mu_a = float(tree["residual_p0_val"][i][0])
+        sig_a = float(tree["residual_p1_val"][i][0]) if has_sigma else 0.0
+        mu_b = float(tree["residual_p0_val"][i][1])
+        sig_b = float(tree["residual_p1_val"][i][1]) if has_sigma else 0.0
+        for label, mu, sig in (
+            (f"{detector_id + i}", mu_a, sig_a),
+            (f"{detector_id + i + 8}", mu_b, sig_b),
+        ):
+            if not fit_validity.all_finite([mu, sig]):
+                invalid.append(label)
+                continue
+            corr = -1.0 * (mu - ref_mu)
+            if not math.isfinite(corr):
+                invalid.append(label)
+                continue
+            data[label] = [corr, sig]
+
+    if invalid:
+        raise ResidualFitInvalid(
+            f"{root_file_path}: non-finite residual mean/sigma on plane(s) {invalid}"
+        )
     return data
 # ---------------------------------------------------------------------------
