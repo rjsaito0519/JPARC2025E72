@@ -205,9 +205,17 @@ def choose_action(run, st, *, force, interactive, want_lanes=None):
     """Decide continue / restart / attach given existing state."""
     status = calib_approval.effective_status(st) or st.get("status")
     lane_status = cd.collect_lane_statuses(run)
+    running = calib_lanes.running_lanes(lane_status)
+    held = calib_lanes.held_lanes(lane_status)
+    stopped = calib_lanes.stopped_lanes(lane_status)
     busy = calib_lanes.busy_lanes(lane_status)
     want = list(want_lanes or [])
-    overlap = calib_lanes.overlap_lanes(want, busy) if want else []
+    want_running = calib_lanes.overlap_lanes(want, running) if want else []
+    want_held = calib_lanes.overlap_lanes(want, held) if want else []
+    want_stopped = calib_lanes.overlap_lanes(want, stopped) if want else []
+    want_free = (
+        calib_lanes.free_requested_lanes(want, lane_status) if want else []
+    )
 
     if force:
         if busy:
@@ -217,19 +225,29 @@ def choose_action(run, st, *, force, interactive, want_lanes=None):
             )
         return CHOICE_RESTART
 
-    if want and busy and not overlap:
-        # Complementary lanes: attach without clearing the other process.
+    # True conflict: same lane already executing.
+    if want_running:
+        runner.fail(
+            f"run{run:05d}: lane(s) {want_running} already running; "
+            f"./ops.py stop {run} first"
+        )
+
+    # Unstarted lanes while other work exists → attach (no TTY prompt).
+    if want_free and (running or held or stopped or lane_status):
+        return CHOICE_ATTACH
+    if want_free and (
+        st.get("status") == "running" or status == "running"
+        or st.get("mode") == "lane_coordinator"
+    ):
         return CHOICE_ATTACH
 
-    if overlap or (
-        not want and (st.get("status") == "running" or status == "running")
-    ):
-        detail = (
-            f"lane(s) {overlap}" if overlap
-            else "already running"
-        )
+    # Held / stopped lanes in the request → resume those.
+    if want_held or want_stopped:
+        return CHOICE_CONTINUE
+
+    if not want and (st.get("status") == "running" or status == "running"):
         runner.fail(
-            f"run{run:05d}: {detail}; "
+            f"run{run:05d}: already running; "
             f"./ops.py stop {run} first"
         )
 
@@ -274,23 +292,96 @@ def _maybe_ensure_slack_bot(a, cfg):
 
 
 #_____________________________________________________________________________
-def continue_from_state(cfg, st, dry_run):
-    """Resume from stopped, or decide-continue then resume from held."""
+def _resume_held_lane(cfg, lane, dry_run):
+    """decide continue + resume for one held lane (OK while others run)."""
+    run = int(cfg["run"])
+    lane_st = cd.read_state(run, lane=lane)
+    if not lane_st or lane_st.get("status") != "held":
+        runner.fail(f"run{run:05d}: lane [{lane}] is not held")
+    hold = lane_st.get("hold") if isinstance(lane_st.get("hold"), dict) else {}
+    hold_id = hold.get("id")
+    runner.info(
+        f"run{run:05d}: continuing held lane [{lane}] "
+        f"(source={hold.get('source')}); decide continue → resume"
+    )
+    cd.apply_decide(
+        run, "continue", note="calib.py continue", hold_id=hold_id,
+    )
+    cd.do_resume(cfg, dry_run, lane=lane)
+
+
+#_____________________________________________________________________________
+def continue_from_state(cfg, st, dry_run, want_lanes=None):
+    """Resume stopped/held work; lane-aware when coordinator is running."""
+    run = int(cfg["run"])
+    want = list(want_lanes or [])
+    lane_status = cd.collect_lane_statuses(run)
     status = st.get("status")
+
+    # Coordinator still running other lanes: resume held/stopped want, or attach.
+    if (
+        st.get("mode") == "lane_coordinator"
+        and status == "running"
+    ):
+        held = calib_lanes.held_lanes(lane_status)
+        stopped = calib_lanes.stopped_lanes(lane_status)
+        want_held = calib_lanes.overlap_lanes(want, held) if want else []
+        want_stopped = calib_lanes.overlap_lanes(want, stopped) if want else []
+        want_free = (
+            calib_lanes.free_requested_lanes(want, lane_status) if want else []
+        )
+        if want_held:
+            for lane in want_held:
+                _resume_held_lane(cfg, lane, dry_run)
+            return
+        if want_stopped:
+            for lane in want_stopped:
+                runner.info(f"run{run:05d}: resuming stopped lane [{lane}]")
+                cd.do_resume(cfg, dry_run, lane=lane)
+            return
+        if want_free:
+            runner.info(
+                f"run{run:05d}: coordinator running; "
+                f"attaching free lanes {want_free}"
+            )
+            cd.do_attach(cfg, dry_run)
+            return
+        runner.fail(
+            f"run{run:05d}: coordinator running "
+            f"(lanes={lane_status}); nothing to continue for {want or 'all'}; "
+            f"use ./ops.py status {run}"
+        )
+
+    # Prefer explicit want lanes over top-level state.
+    if want:
+        for lane in want:
+            lane_st = cd.read_state(run, lane=lane)
+            if not lane_st:
+                continue
+            if lane_st.get("status") == "held":
+                _resume_held_lane(cfg, lane, dry_run)
+                return
+            if lane_st.get("status") == "stopped":
+                runner.info(f"run{run:05d}: resuming stopped lane [{lane}]")
+                cd.do_resume(cfg, dry_run, lane=lane)
+                return
+
     if status == "stopped":
-        runner.info(f"run{cfg['run']:05d}: continuing (resume from stopped)")
+        runner.info(f"run{run:05d}: continuing (resume from stopped)")
         cd.do_resume(cfg, dry_run)
+        return
     if status == "held":
         hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
         runner.info(
-            f"run{cfg['run']:05d}: continuing from held "
+            f"run{run:05d}: continuing from held "
             f"(source={hold.get('source')}); decide continue → resume"
         )
-        cd.apply_decide(cfg["run"], "continue", note="calib.py continue")
+        cd.apply_decide(run, "continue", note="calib.py continue")
         cd.do_resume(cfg, dry_run)
+        return
     runner.fail(
-        f"run{cfg['run']:05d}: cannot continue from status={status!r}; "
-        f"use ./ops.py status {cfg['run']}"
+        f"run{run:05d}: cannot continue from status={status!r}; "
+        f"use ./ops.py status {run}"
     )
 
 
@@ -549,7 +640,7 @@ def main():
         # Re-read in case ensure_session side effects (none expected)
         st = cd.read_state(a.run, lane="") or st_eff
         _maybe_ensure_slack_bot(a, cfg)
-        continue_from_state(cfg, st, a.dry_run)
+        continue_from_state(cfg, st, a.dry_run, want_lanes=want_lanes)
         return
 
     # No prior state → fresh start

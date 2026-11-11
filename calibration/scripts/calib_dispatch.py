@@ -1840,39 +1840,68 @@ def do_start(cfg, dry_run):
 
 
 #_____________________________________________________________________________
-def do_resume(cfg, dry_run):
-    st = read_state(cfg["run"], lane="")
-    if st is None and iter_lane_state_paths(cfg["run"]):
+def do_resume(cfg, dry_run, *, lane=None):
+    """Resume stopped dispatch. lane= forces that lane worker state."""
+    run = int(cfg["run"])
+    lane = str(lane or "").strip() or calib_lanes.active_lane()
+    if lane:
+        st = read_state(run, lane=lane)
+        if st is None:
+            runner.fail(f"run{run:05d}: lane [{lane}] not started; cannot resume")
+        if st.get("status") == "held":
+            runner.fail(
+                f"run{run:05d}: lane [{lane}] status=held; "
+                f"decide --action refit|continue before resume"
+            )
+        if st.get("status") != "stopped":
+            runner.fail(
+                f"run{run:05d}: lane [{lane}] status={st.get('status')!r} "
+                f"(resume requires status=stopped)"
+            )
+        require_resume_plan(cfg, st)
+        _ensure_slack_bot_for_gates(cfg, dry_run)
+        os.environ[calib_lanes.LANE_ENV] = lane
+        try:
+            start_index = resume_start_index(st)
+            hist = st.get("steps")
+            if not isinstance(hist, list):
+                hist = []
+            run_steps(cfg, dry_run, start_index, list(hist), f"resume[{lane}]")
+        finally:
+            os.environ.pop(calib_lanes.LANE_ENV, None)
+        return
+
+    st = read_state(run, lane="")
+    if st is None and iter_lane_state_paths(run):
         # Lane-only run (single-lane worker state); resume that lane.
         st = None
-        for path in iter_lane_state_paths(cfg["run"]):
+        for path in iter_lane_state_paths(run):
             cand = read_state_file(path)
             if cand and cand.get("status") == "stopped":
-                st = cand
-                os.environ[calib_lanes.LANE_ENV] = path.parent.name
-                break
+                do_resume(cfg, dry_run, lane=path.parent.name)
+                return
     if st is None:
-        runner.fail(f"run{cfg['run']:05d}: not started; cannot resume")
+        runner.fail(f"run{run:05d}: not started; cannot resume")
     if calib_approval.is_process_complete(st):
         runner.fail(
-            f"run{cfg['run']:05d}: process complete "
+            f"run{run:05d}: process complete "
             f"({calib_approval.effective_status(st)}); cannot resume"
         )
     if st.get("status") == "held":
         runner.fail(
-            f"run{cfg['run']:05d}: status=held; "
+            f"run{run:05d}: status=held; "
             f"decide --action refit|continue before resume"
         )
     if st.get("status") != "stopped":
         runner.fail(
-            f"run{cfg['run']:05d}: status={st.get('status')!r} "
+            f"run{run:05d}: status={st.get('status')!r} "
             f"(resume requires status=stopped)"
         )
     if st.get("mode") == "lane_coordinator" and not calib_lanes.active_lane():
         lane_steps = calib_lanes.split_steps_by_lane(cfg["steps"])
         prior = st.get("lanes") if isinstance(st.get("lanes"), dict) else {}
         if prior and all(prior.get(lane) == "done" for lane in lane_steps):
-            runner.fail(f"run{cfg['run']:05d}: all lanes done; nothing to resume")
+            runner.fail(f"run{run:05d}: all lanes done; nothing to resume")
         _ensure_slack_bot_for_gates(cfg, dry_run)
         run_lane_coordinator(
             cfg, dry_run, lane_steps, prior_lanes=prior,

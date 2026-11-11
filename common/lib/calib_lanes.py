@@ -10,6 +10,10 @@ LANE_BCIN = "bcin"
 LANE_D5 = "d5"
 LANE_ORDER = (LANE_HODO, LANE_BCOUT, LANE_BCIN, LANE_D5)
 LANE_ENV = "E72_CALIB_LANE"
+# Only in-process work conflicts with a new start of the same lane.
+RUNNING_STATUSES = frozenset({"running"})
+HELD_STATUSES = frozenset({"held"})
+# Legacy alias: treat as "blocks --force restart", not attach/resume.
 BUSY_STATUSES = frozenset({"running", "held"})
 
 HODO_NAMES = frozenset({
@@ -95,13 +99,70 @@ def is_busy_status(status: Optional[str]) -> bool:
 
 
 #_____________________________________________________________________________
+def is_running_status(status: Optional[str]) -> bool:
+    return str(status or "") in RUNNING_STATUSES
+
+
+#_____________________________________________________________________________
+def is_held_status(status: Optional[str]) -> bool:
+    return str(status or "") in HELD_STATUSES
+
+
+#_____________________________________________________________________________
 def busy_lanes(status_map: dict[str, str]) -> set[str]:
-    """Lanes that are running or held."""
+    """Lanes that are running or held (blocks full --force restart)."""
     return {
         str(lane)
         for lane, status in (status_map or {}).items()
         if is_busy_status(status)
     }
+
+
+#_____________________________________________________________________________
+def running_lanes(status_map: dict[str, str]) -> set[str]:
+    """Lanes currently executing (cannot start/attach the same lane)."""
+    return {
+        str(lane)
+        for lane, status in (status_map or {}).items()
+        if is_running_status(status)
+    }
+
+
+#_____________________________________________________________________________
+def held_lanes(status_map: dict[str, str]) -> set[str]:
+    """Lanes waiting on decide (resume OK while other lanes run)."""
+    return {
+        str(lane)
+        for lane, status in (status_map or {}).items()
+        if is_held_status(status)
+    }
+
+
+#_____________________________________________________________________________
+def stopped_lanes(status_map: dict[str, str]) -> set[str]:
+    return {
+        str(lane)
+        for lane, status in (status_map or {}).items()
+        if str(status or "") == "stopped"
+    }
+
+
+#_____________________________________________________________________________
+def free_requested_lanes(
+    want: list[str] | set[str], status_map: dict[str, str],
+) -> list[str]:
+    """Wanted lanes that are not running/held/stopped/done (attach candidates)."""
+    want_set = {str(x) for x in want}
+    blocked = frozenset({"running", "held", "stopped", "done", "failed"})
+    out = []
+    for lane in LANE_ORDER:
+        if lane not in want_set:
+            continue
+        status = str((status_map or {}).get(lane) or "")
+        if status in blocked:
+            continue
+        out.append(lane)
+    return out
 
 
 #_____________________________________________________________________________

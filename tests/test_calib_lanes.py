@@ -64,6 +64,31 @@ class CalibLanesTests(unittest.TestCase):
             ["hodo", "bcin"],
         )
 
+    def test_running_held_free_split(self):
+        status = {
+            "hodo": "held",
+            "bcout": "running",
+            "bcin": "running",
+        }
+        self.assertEqual(
+            self.lanes.running_lanes(status), {"bcout", "bcin"},
+        )
+        self.assertEqual(self.lanes.held_lanes(status), {"hodo"})
+        self.assertEqual(
+            self.lanes.free_requested_lanes(["hodo", "d5"], status),
+            ["d5"],
+        )
+        self.assertEqual(
+            self.lanes.free_requested_lanes(["hodo"], status),
+            [],
+        )
+        self.assertEqual(
+            self.lanes.free_requested_lanes(
+                ["hodo"], {"bcout": "running", "bcin": "running"},
+            ),
+            ["hodo"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
