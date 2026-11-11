@@ -15,18 +15,23 @@ If a prior dispatch state exists:
 --init: prepare Hodo.root for TDC window setting (create_runlist hodo 0 +
 decode if missing). Does not start a calib session.
 
---list: run DEFAULT+RUN batch from caliblist YAML (one run at a time;
-Slack gates / PHC modal wait as usual).
+--list: run DEFAULT+RUN batch from caliblist YAML in parallel
+(local: max 5 simultaneous; bsub: uncapped). Each run waits on its
+own Slack gates / PHC modal as usual.
 
 State ops: ./ops.py status|stop|… <run>  (or Slack /calib …).
 Prefer this over calib_session.py / calib_dispatch.py.
 """
+import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+CALIB_SCRIPT = Path(__file__).resolve()
 
 import calib_dispatch as cd  # noqa: E402
 import calib_session as cs  # noqa: E402
@@ -300,6 +305,35 @@ def restart_from_beginning(a, calib_particle, steps, target, *, max_iter=10, hdp
 
 
 #_____________________________________________________________________________
+def opts_to_calib_argv(run, opts, *, cli_local=False) -> list[str]:
+    """Build ./calib.py argv for one caliblist entry (always --force)."""
+    local = bool(opts.get("local")) or bool(cli_local)
+    argv = [sys.executable, str(CALIB_SCRIPT), str(int(run)), "--force"]
+    particle = cs.normalize_calib_particle(opts.get("calib_particle", "pion"))
+    if particle == "kaon":
+        argv.append("--kaon")
+    else:
+        argv.append("--pion")
+    if opts.get("hodo"):
+        argv.append("--hodo")
+    if opts.get("bcout"):
+        argv.append("--bcout")
+    if opts.get("bcin"):
+        argv.append("--bcin")
+    if opts.get("d5"):
+        argv.append("--d5")
+    if local:
+        argv.append("--local")
+    if opts.get("auto"):
+        argv.append("--auto")
+    if opts.get("dry_run"):
+        argv.append("--dry")
+    if opts.get("momentum") is not None:
+        argv.extend(["--momentum", str(opts["momentum"])])
+    return argv
+
+
+#_____________________________________________________________________________
 def run_one_from_opts(run, opts, *, cli_local=False):
     """Start one run from caliblist-normalized opts (always fresh start)."""
     local = bool(opts.get("local")) or bool(cli_local)
@@ -337,14 +371,32 @@ def run_one_from_opts(run, opts, *, cli_local=False):
 
 #_____________________________________________________________________________
 def do_list(path, *, cli_local=False):
-    """Run caliblist entries sequentially (each blocks through gates)."""
+    """Run caliblist entries in parallel (local capped, bsub uncapped)."""
     entries = calib_list.load_caliblist(path)
-    runner.info(f"caliblist {path}: {len(entries)} run(s)")
-    for run, opts in entries:
-        runner.info(f"caliblist next run{run:05d}")
-        run_one_from_opts(run, opts, cli_local=cli_local)
-    runner.info(f"caliblist done: {path}")
-    sys.exit(runner.EXIT_OK)
+    runner.info(
+        f"caliblist {path}: {len(entries)} run(s); "
+        f"parallel local_max={calib_list.MAX_PARALLEL_LOCAL} bsub=unlimited"
+    )
+
+    def spawn(run, opts):
+        argv = opts_to_calib_argv(run, opts, cli_local=cli_local)
+        # Fresh env copy; child is a full calib.py --force for this run.
+        return subprocess.Popen(
+            argv,
+            cwd=str(CALIB_SCRIPT.parents[2]),
+            env=os.environ.copy(),
+        )
+
+    agg_rc, finished = calib_list.run_caliblist_pool(
+        entries,
+        cli_local=cli_local,
+        spawn=spawn,
+    )
+    runner.info(
+        f"caliblist done: {path} "
+        f"({len(finished)} finished, agg_rc={agg_rc})"
+    )
+    sys.exit(int(agg_rc) if agg_rc else runner.EXIT_OK)
 
 
 #_____________________________________________________________________________

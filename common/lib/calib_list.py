@@ -1,12 +1,105 @@
-"""Load calibration/caliblist/*.yml (batch DEFAULT + RUN)."""
+"""Load calibration/caliblist/*.yml (batch DEFAULT + RUN).
+
+Batch launch runs entries in parallel: local capped, bsub uncapped.
+"""
 from __future__ import annotations
 
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 import yaml
 
 from . import runner
+
+# Simultaneous ./calib.py children with local:true (work-server safety).
+MAX_PARALLEL_LOCAL = 5
+
+
+#_____________________________________________________________________________
+def entry_is_local(opts: dict[str, Any], *, cli_local: bool = False) -> bool:
+    return bool(opts.get("local")) or bool(cli_local)
+
+
+#_____________________________________________________________________________
+def run_caliblist_pool(
+    entries: list[tuple[int, dict[str, Any]]],
+    *,
+    cli_local: bool = False,
+    max_parallel_local: int = MAX_PARALLEL_LOCAL,
+    spawn: Callable[[int, dict[str, Any]], Any],
+    poll_s: float = 0.5,
+    is_alive: Optional[Callable[[Any], bool]] = None,
+    wait_rc: Optional[Callable[[Any], int]] = None,
+) -> tuple[int, list[tuple[int, int]]]:
+    """Spawn caliblist runs with a local concurrency cap.
+
+    ``spawn(run, opts)`` returns a handle. Optional ``is_alive`` / ``wait_rc``
+    default to subprocess.Popen semantics (``poll`` / ``wait``).
+
+    Returns (aggregate_rc, [(run, rc), ...] in completion order).
+    """
+    if max_parallel_local < 1:
+        raise ValueError(f"max_parallel_local must be >= 1, got {max_parallel_local}")
+
+    def _alive(handle) -> bool:
+        if is_alive is not None:
+            return bool(is_alive(handle))
+        return handle.poll() is None
+
+    def _rc(handle) -> int:
+        if wait_rc is not None:
+            return int(wait_rc(handle))
+        return int(handle.wait())
+
+    pending = list(entries)
+    active: list[tuple[int, bool, Any]] = []  # run, is_local, handle
+    finished: list[tuple[int, int]] = []
+    first_fail = 0
+
+    while pending or active:
+        # Reap finished children.
+        still = []
+        for run, local, handle in active:
+            if _alive(handle):
+                still.append((run, local, handle))
+                continue
+            rc = _rc(handle)
+            finished.append((run, rc))
+            if rc != 0 and first_fail == 0:
+                first_fail = int(rc)
+            runner.info(f"caliblist finished run{run:05d} rc={rc}")
+        active = still
+
+        n_local = sum(1 for _r, local, _h in active if local)
+        # Start as many as slots allow (bsub unlimited; local capped).
+        launched = False
+        remain = []
+        for run, opts in pending:
+            want_local = entry_is_local(opts, cli_local=cli_local)
+            if want_local and n_local >= int(max_parallel_local):
+                remain.append((run, opts))
+                continue
+            handle = spawn(run, opts)
+            mode = "local" if want_local else "bsub"
+            runner.info(
+                f"caliblist spawn run{run:05d} {mode} "
+                f"(local_slots={n_local + (1 if want_local else 0)}/"
+                f"{max_parallel_local})"
+            )
+            active.append((run, want_local, handle))
+            if want_local:
+                n_local += 1
+            launched = True
+        pending = remain
+
+        if not launched and active:
+            time.sleep(float(poll_s))
+        elif not launched and pending and not active:
+            # Should not happen (local cap with empty active).
+            runner.fail("caliblist pool stalled with pending local runs")
+
+    return first_fail, finished
 
 
 #_____________________________________________________________________________

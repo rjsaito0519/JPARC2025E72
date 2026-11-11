@@ -1,9 +1,10 @@
 # Batch calibration list (DEFAULT + RUN).
 # Launch: ./calib.py --list calibration/caliblist/example.yml
+# Runs in parallel: local max 5 simultaneous; bsub uncapped.
 # Optional CLI override for all runs: ./calib.py --list ... --local
 
 DEFAULT:
-  # --- calib window / stages（複数 true 可） ---
+  # --- calib window / stages（複数 true 可；1 run 内はレーン並列） ---
   calib_particle: pi            # pion|pi / kaon|k（較正窓。ビーム粒子とは別）
   hodo: true
   bcout: false                  # BcOut dc_chamber
@@ -11,7 +12,7 @@ DEFAULT:
   d5: false                     # true なら bcin+bcout を強制 ON のうえ d5_align
 
   # --- run / decode ---
-  local: false                  # true = myrun --local；false = bsub
+  local: false                  # true = myrun --local（並列上限5）；false = bsub（上限なし）
   force: false
   auto: false                   # true = Slack step_gate 省略
   dry_run: false

@@ -542,19 +542,32 @@ def run_dispatch(
 
     if command in ("proceed", "retry"):
         action = "continue" if command == "proceed" else "refit"
-        st = _read_dispatch_state(run)
+        path_h, st = _find_held_state(run, hold_id)
+        if st is None:
+            # Legacy: top-level held without hold_id.
+            st = _read_dispatch_state(run)
+            path_h = (
+                Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}"
+                / "calib_dispatch_state.json"
+            )
         waiter = bool(
             isinstance(st, dict)
             and st.get("gate_waiter")
             and isinstance(st.get("hold"), dict)
         )
-        ok_d, msg_d = run_dispatch(
-            "decide", run,
-            background_resume=False,
-            timeout_s=timeout_s,
-            user_id=user_id,
-            action=action,
-        )
+        # Prefer in-process decide so lane state files are updated by hold_id.
+        try:
+            sys.path.insert(0, str(DISPATCH_SCRIPT.parent))
+            import calib_dispatch as cd  # noqa: WPS433
+            cd.apply_decide(
+                run, action, note="", hold_id=hold_id,
+            )
+            ok_d, msg_d = True, f"decide {action}"
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 1
+            ok_d, msg_d = code == 0, f"decide exited {code}"
+        except Exception as exc:
+            ok_d, msg_d = False, f"{type(exc).__name__}: {exc}"
         if not ok_d:
             return False, f"{command}: decide {action} failed: {msg_d}"
         if waiter:
@@ -573,13 +586,9 @@ def run_dispatch(
         return True, f"{command}: decide {action}; {msg_r}"
 
     if command == "gate-stop":
-        st = _read_dispatch_state(run)
-        if not isinstance(st, dict):
-            return False, f"no dispatch state for run{run:05d}"
-        if st.get("status") != "held":
-            return False, (
-                f"gate-stop requires status=held, got {st.get('status')!r}"
-            )
+        path_h, st = _find_held_state(run, hold_id)
+        if not isinstance(st, dict) or path_h is None:
+            return False, f"no held dispatch state for run{run:05d}"
         hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
         source = hold.get("source")
         if source not in ("step_gate", "exit_check"):
@@ -592,14 +601,11 @@ def run_dispatch(
         hold["decided_at"] = _utc_now()
         st["hold"] = hold
         st["updated_at"] = _utc_now()
-        path = (
-            Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}"
-            / "calib_dispatch_state.json"
-        )
-        path.write_text(json.dumps(st, indent=2, sort_keys=True) + "\n")
+        _write_state_file(path_h, st)
         return True, (
             f"stopped at {source} "
-            f"(step={hold.get('step')} index={hold.get('index')}). "
+            f"(step={hold.get('step')} index={hold.get('index')} "
+            f"lane={hold.get('lane')}). "
             f"Hand-fix then /calib retry {run} or "
             f"/calib decide {run} refit|continue"
         )
@@ -628,11 +634,17 @@ def run_dispatch(
 
 
 #_____________________________________________________________________________
-def _read_dispatch_state(run: int) -> Optional[dict[str, Any]]:
-    path = (
-        Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}"
-        / "calib_dispatch_state.json"
-    )
+def _dispatch_state_candidates(run: int) -> list[Path]:
+    base = Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}"
+    out = [base / "calib_dispatch_state.json"]
+    lanes = base / "lanes"
+    if lanes.is_dir():
+        out.extend(sorted(lanes.glob("*/calib_dispatch_state.json")))
+    return out
+
+
+#_____________________________________________________________________________
+def _read_state_file(path: Path) -> Optional[dict[str, Any]]:
     if not path.is_file():
         return None
     try:
@@ -643,28 +655,57 @@ def _read_dispatch_state(run: int) -> Optional[dict[str, Any]]:
 
 
 #_____________________________________________________________________________
+def _read_dispatch_state(run: int) -> Optional[dict[str, Any]]:
+    return _read_state_file(
+        Path(config.OUTPUT_DIR) / "calib" / f"run{int(run):05d}"
+        / "calib_dispatch_state.json"
+    )
+
+
+#_____________________________________________________________________________
+def _find_held_state(
+    run: int, hold_id: Optional[str] = None,
+) -> tuple[Optional[Path], Optional[dict[str, Any]]]:
+    """Find a held dispatch state (top-level or lane), optionally by hold.id."""
+    hold_id = str(hold_id or "").strip()
+    held: list[tuple[Path, dict[str, Any]]] = []
+    for path in _dispatch_state_candidates(run):
+        st = _read_state_file(path)
+        if not st or st.get("status") != "held":
+            continue
+        hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+        if hold_id and str(hold.get("id") or "") != hold_id:
+            continue
+        if hold_id:
+            return path, st
+        held.append((path, st))
+    if not hold_id and len(held) == 1:
+        return held[0]
+    if not hold_id and len(held) > 1:
+        return None, None
+    return None, None
+
+
+#_____________________________________________________________________________
 def _require_matching_hold(
     run: int, hold_id: Optional[str],
 ) -> tuple[bool, str]:
-    """When hold_id is set, require status=held and matching hold.id."""
+    """When hold_id is set, require a held state (lane or top) with that id."""
     if not hold_id:
         return True, ""
-    st = _read_dispatch_state(run)
-    if not isinstance(st, dict):
-        return False, f"no dispatch state for run{run:05d}"
-    if st.get("status") != "held":
+    path, st = _find_held_state(run, hold_id)
+    if not isinstance(st, dict) or path is None:
         return False, (
-            f"stale step gate (status={st.get('status')!r}); "
-            "use the latest Slack message"
-        )
-    hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
-    current = str(hold.get("id") or "")
-    if not current or current != str(hold_id):
-        return False, (
-            "stale step gate (hold id mismatch); "
+            "stale step gate (hold id mismatch or not held); "
             "use the latest Slack message"
         )
     return True, ""
+
+
+#_____________________________________________________________________________
+def _write_state_file(path: Path, st: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(st, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 #_____________________________________________________________________________

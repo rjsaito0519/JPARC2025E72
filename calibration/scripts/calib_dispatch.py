@@ -33,6 +33,8 @@ Config: unknown top-level / step keys rejected; kaon/force/step flags are YAML b
 import json
 import os
 import secrets
+import shutil
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -41,7 +43,7 @@ from pathlib import Path
 import yaml
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import calib_approval, config, runner  # noqa: E402
+from common.lib import calib_approval, calib_lanes, config, runner  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 KNOWN_STEPS = (
@@ -125,8 +127,84 @@ DC_ONLY = {
 
 
 #_____________________________________________________________________________
-def state_path(run):
-    return config.OUTPUT_DIR / "calib" / f"run{run:05d}" / "calib_dispatch_state.json"
+def run_calib_dir(run):
+    return config.OUTPUT_DIR / "calib" / f"run{int(run):05d}"
+
+
+#_____________________________________________________________________________
+def lanes_dir(run):
+    return run_calib_dir(run) / "lanes"
+
+
+#_____________________________________________________________________________
+def state_path(run, *, lane=None):
+    """Dispatch state JSON.
+
+    lane=None → use E72_CALIB_LANE when set, else top-level.
+    lane='' → force top-level parent/aggregate state.
+    lane='hodo'|… → that lane's state.
+    """
+    base = run_calib_dir(run)
+    if lane is None:
+        lane = calib_lanes.active_lane()
+    if lane:
+        return base / "lanes" / str(lane) / "calib_dispatch_state.json"
+    return base / "calib_dispatch_state.json"
+
+
+#_____________________________________________________________________________
+def iter_lane_state_paths(run):
+    root = lanes_dir(run)
+    if not root.is_dir():
+        return []
+    return sorted(p for p in root.glob("*/calib_dispatch_state.json") if p.is_file())
+
+
+#_____________________________________________________________________________
+def read_state_file(path):
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        runner.warn(f"state file unreadable: {path} ({exc})")
+        return None
+    return data if isinstance(data, dict) else None
+
+
+#_____________________________________________________________________________
+def find_state_path_for_hold(run, hold_id):
+    """Locate top-level or lane state whose hold.id matches."""
+    hold_id = str(hold_id or "").strip()
+    if not hold_id:
+        return None
+    candidates = [state_path(run, lane="")] + iter_lane_state_paths(run)
+    for path in candidates:
+        st = read_state_file(path)
+        if not st or st.get("status") != "held":
+            continue
+        hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
+        if str(hold.get("id") or "") == hold_id:
+            return path
+    return None
+
+
+#_____________________________________________________________________________
+def broadcast_flag(run, key, value=True, **extra):
+    """Set a cooperative flag on top-level and every lane state."""
+    paths = [state_path(run, lane="")] + iter_lane_state_paths(run)
+    for path in paths:
+        st = read_state_file(path)
+        if not st:
+            continue
+        if calib_approval.is_process_complete(st):
+            continue
+        st[key] = value
+        for ek, ev in extra.items():
+            st[ek] = ev
+        st["updated_at"] = utc_now()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(st, indent=2, sort_keys=True) + "\n")
 
 
 #_____________________________________________________________________________
@@ -427,23 +505,16 @@ def step_cmd(name, opts, cfg, dry_run):
 
 
 #_____________________________________________________________________________
-def write_state(run, payload):
-    path = state_path(run)
+def write_state(run, payload, *, lane=None):
+    path = state_path(run, lane=lane)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return path
 
 
 #_____________________________________________________________________________
-def read_state(run):
-    path = state_path(run)
-    if not path.is_file():
-        return None
-    try:
-        return json.loads(path.read_text())
-    except json.JSONDecodeError as e:
-        runner.warn(f"state file unreadable: {path} ({e})")
-        return None
+def read_state(run, *, lane=None):
+    return read_state_file(state_path(run, lane=lane))
 
 
 #_____________________________________________________________________________
@@ -501,19 +572,45 @@ def reset_progress(run):
 
 #_____________________________________________________________________________
 def clear_dispatch_state(run):
-    """Remove calib_dispatch_state.json so the next start is fresh."""
-    path = state_path(run)
+    """Remove top-level and lane dispatch states so the next start is fresh."""
+    path = state_path(run, lane="")
     if path.is_file():
         path.unlink()
+    root = lanes_dir(run)
+    if root.is_dir():
+        shutil.rmtree(root)
     return path
 
 
 #_____________________________________________________________________________
-def apply_decide(run, action, note=""):
+def apply_decide(run, action, note="", hold_id=None):
     """Apply decide without exiting. Returns updated state dict."""
     if action not in DECIDE_ACTIONS:
         runner.fail(f"decide action must be one of {DECIDE_ACTIONS}, got {action!r}")
-    st = read_state(run)
+    path = None
+    if hold_id:
+        path = find_state_path_for_hold(run, hold_id)
+        if path is None:
+            runner.fail(
+                f"run{run:05d}: no held state for hold_id={hold_id!r}"
+            )
+        st = read_state_file(path)
+    else:
+        st = read_state(run)
+        if st is None or st.get("status") != "held":
+            # Fall back to a unique held lane when top-level is not held.
+            held_paths = []
+            for cand in iter_lane_state_paths(run):
+                cand_st = read_state_file(cand)
+                if cand_st and cand_st.get("status") == "held":
+                    held_paths.append((cand, cand_st))
+            if len(held_paths) == 1:
+                path, st = held_paths[0]
+            elif len(held_paths) > 1:
+                runner.fail(
+                    f"run{run:05d}: multiple lanes held; "
+                    f"pass hold_id from Slack button"
+                )
     if st is None:
         runner.fail(f"run{run:05d}: not started; cannot decide")
     if st.get("status") != "held":
@@ -534,7 +631,11 @@ def apply_decide(run, action, note=""):
     st["hold_requested"] = False
     st["stop_requested"] = False
     st["updated_at"] = utc_now()
-    write_state(run, st)
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(st, indent=2, sort_keys=True) + "\n")
+    else:
+        write_state(run, st)
     append_hold_journal(run, {
         "event": "decide",
         "action": action,
@@ -545,6 +646,7 @@ def apply_decide(run, action, note=""):
         "index": hold.get("index"),
         "rc": hold.get("rc"),
         "at": hold["decided_at"],
+        "lane": hold.get("lane") or calib_lanes.active_lane(),
     })
     append_progress(
         run, "decide",
@@ -556,7 +658,7 @@ def apply_decide(run, action, note=""):
 
 #_____________________________________________________________________________
 def make_hold(source, reason, step, index, rc):
-    return {
+    hold = {
         "source": source,
         "reason": reason,
         "step": step,
@@ -566,6 +668,10 @@ def make_hold(source, reason, step, index, rc):
         "decision": None,
         "id": secrets.token_hex(8),
     }
+    lane = calib_lanes.active_lane()
+    if lane:
+        hold["lane"] = lane
+    return hold
 
 
 GATE_WAIT_POLL_S = 1.0
@@ -884,61 +990,43 @@ def do_status(cfg):
 
 #_____________________________________________________________________________
 def do_stop(cfg):
-    st = read_state(cfg["run"])
-    if st is None:
+    st = read_state(cfg["run"], lane="")
+    lane_paths = iter_lane_state_paths(cfg["run"])
+    if st is None and not lane_paths:
         runner.warn(f"run{cfg['run']:05d}: not started; nothing to stop")
         sys.exit(runner.EXIT_OK)
-    if calib_approval.is_process_complete(st):
+    if st and calib_approval.is_process_complete(st) and not lane_paths:
         runner.warn(
             f"run{cfg['run']:05d}: process complete "
             f"({calib_approval.effective_status(st)}); stop ignored"
         )
         sys.exit(runner.EXIT_OK)
-    if st.get("status") == "held":
-        runner.warn(
-            f"run{cfg['run']:05d}: already held; stop ignored "
-            f"(use decide --action refit|continue)"
-        )
-        sys.exit(runner.EXIT_OK)
-    st["stop_requested"] = True
-    st["updated_at"] = utc_now()
-    write_state(cfg["run"], st)
-    runner.info(f"run{cfg['run']:05d}: stop requested (honored between steps)")
+    broadcast_flag(cfg["run"], "stop_requested", True)
+    runner.info(
+        f"run{cfg['run']:05d}: stop requested on parent+lanes "
+        f"(honored between steps)"
+    )
     sys.exit(runner.EXIT_OK)
 
 
 #_____________________________________________________________________________
 def do_hold(cfg, reason):
     reason = (reason or "").strip() or "(unspecified)"
-    st = read_state(cfg["run"])
-    if st is None:
+    st = read_state(cfg["run"], lane="")
+    lane_paths = iter_lane_state_paths(cfg["run"])
+    if st is None and not lane_paths:
         runner.fail(f"run{cfg['run']:05d}: not started; cannot hold")
-    if calib_approval.is_process_complete(st):
+    if st and calib_approval.is_process_complete(st) and not lane_paths:
         runner.fail(
             f"run{cfg['run']:05d}: process complete "
             f"({calib_approval.effective_status(st)}); cannot hold"
         )
-    if st.get("status") == "held":
-        runner.warn(f"run{cfg['run']:05d}: already held; hold ignored")
-        sys.exit(runner.EXIT_OK)
-    if st.get("status") == "running":
-        st["hold_requested"] = True
-        st["hold_reason"] = reason
-        st["updated_at"] = utc_now()
-        write_state(cfg["run"], st)
-        runner.info(
-            f"run{cfg['run']:05d}: hold requested (honored between steps): {reason}"
-        )
-        sys.exit(runner.EXIT_OK)
-    # stopped (or other non-running): enter held immediately
-    hold = make_hold(
-        "manual", reason, st.get("step"), st.get("index"), st.get("rc"),
+    # Prefer cooperative hold on all running lane/parent states.
+    broadcast_flag(cfg["run"], "hold_requested", True, hold_reason=reason)
+    runner.info(
+        f"run{cfg['run']:05d}: hold requested on parent+lanes "
+        f"(honored between steps): {reason}"
     )
-    enter_held(cfg["run"], st, hold, "hold", cfg_steps=cfg["steps"])
-    ok_slack, slack_msg = calib_approval.notify_held_slack(cfg["run"], hold)
-    if not ok_slack:
-        runner.warn(f"held Slack note failed: {slack_msg}")
-    runner.info(f"run{cfg['run']:05d}: held (manual): {reason}")
     sys.exit(runner.EXIT_OK)
 
 
@@ -1424,15 +1512,246 @@ def _ensure_slack_bot_for_gates(cfg, dry_run):
 
 
 #_____________________________________________________________________________
+def dump_lane_session(cfg, lane, steps) -> Path:
+    """Write a minimal session YAML for one lane worker."""
+    path = lanes_dir(cfg["run"]) / lane / "session.yml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "run": int(cfg["run"]),
+        "calib_particle": cfg.get("session", {}).get("calib_particle")
+        or ("kaon" if cfg.get("kaon") else "pion"),
+        "kaon": bool(cfg.get("kaon")),
+        "force": bool(cfg.get("force")),
+        "local": bool(cfg.get("local")),
+        "auto": bool(cfg.get("auto")),
+        "max_iter": int(cfg.get("max_iter") or 10),
+        "steps": list(steps),
+    }
+    for key in SESSION_META_KEYS:
+        if key == "calib_particle":
+            continue
+        val = (cfg.get("session") or {}).get(key)
+        if val is not None:
+            doc[key] = val
+    if cfg.get("momentum_gev_c") is not None and "momentum_gev_c" not in doc:
+        doc["momentum_gev_c"] = cfg["momentum_gev_c"]
+    path.write_text(
+        yaml.safe_dump(doc, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    return path
+
+
+#_____________________________________________________________________________
+def spawn_lane_worker(cfg, lane, steps, dry_run) -> subprocess.Popen:
+    session = dump_lane_session(cfg, lane, steps)
+    cmd = [
+        sys.executable,
+        str(SCRIPT_DIR / "calib_dispatch.py"),
+        "start",
+        str(session),
+    ]
+    if dry_run:
+        cmd.append("--dry-run")
+    env = os.environ.copy()
+    env[calib_lanes.LANE_ENV] = lane
+    runner.info(f"lane spawn [{lane}] steps={len(steps)} session={session}")
+    return subprocess.Popen(
+        cmd,
+        cwd=str(SCRIPT_DIR.parents[1]),
+        env=env,
+    )
+
+
+#_____________________________________________________________________________
+def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
+    """Parent: run hodo/bcout/bcin in parallel; d5 after both DC lanes done."""
+    run = int(cfg["run"])
+    status = {lane: "pending" for lane in lane_steps}
+    if isinstance(prior_lanes, dict):
+        for lane, lane_st in prior_lanes.items():
+            if lane in status and lane_st == "done":
+                status[lane] = "done"
+    procs: dict[str, subprocess.Popen] = {}
+    hist = []
+
+    def write_parent():
+        write_state(
+            run,
+            {
+                "run": run,
+                "status": "running",
+                "finished": False,
+                "lanes": dict(status),
+                "mode": "lane_coordinator",
+                "updated_at": utc_now(),
+                "steps": list(hist),
+                "session": cfg.get("session") or {},
+                "plan": plan_of(cfg),
+            },
+            lane="",
+        )
+
+    def start_lane(lane):
+        procs[lane] = spawn_lane_worker(cfg, lane, lane_steps[lane], dry_run)
+        status[lane] = "running"
+        write_parent()
+
+    for lane in calib_lanes.parallel_ready_lanes(lane_steps):
+        if status.get(lane) == "done":
+            continue
+        start_lane(lane)
+
+    while True:
+        for lane, proc in list(procs.items()):
+            rc = proc.poll()
+            if rc is None:
+                continue
+            del procs[lane]
+            if rc == 0:
+                status[lane] = "done"
+                hist.append({"lane": lane, "rc": rc})
+                runner.info(f"lane done [{lane}] rc={rc}")
+            else:
+                status[lane] = "failed"
+                hist.append({"lane": lane, "rc": rc})
+                write_parent()
+                runner.warn(f"lane failed [{lane}] rc={rc}; stopping coordinator")
+                for other, op in list(procs.items()):
+                    broadcast_flag(run, "stop_requested", True)
+                    try:
+                        op.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        op.terminate()
+                    status[other] = status.get(other) or "stopped"
+                write_state(
+                    run,
+                    {
+                        "run": run,
+                        "status": "stopped",
+                        "finished": False,
+                        "lanes": dict(status),
+                        "mode": "lane_coordinator",
+                        "rc": rc,
+                        "updated_at": utc_now(),
+                        "steps": list(hist),
+                        "session": cfg.get("session") or {},
+                        "plan": plan_of(cfg),
+                    },
+                    lane="",
+                )
+                sys.exit(rc)
+
+        if (
+            calib_lanes.LANE_D5 in lane_steps
+            and status.get(calib_lanes.LANE_D5) == "pending"
+            and calib_lanes.d5_ready(status, lane_steps)
+            and calib_lanes.LANE_D5 not in procs
+        ):
+            if status.get(calib_lanes.LANE_D5) != "done":
+                start_lane(calib_lanes.LANE_D5)
+
+        write_parent()
+        if not procs and all(
+            status.get(lane) in ("done", "failed", "stopped")
+            for lane in lane_steps
+        ):
+            break
+        if not procs and calib_lanes.LANE_D5 in lane_steps \
+                and status.get(calib_lanes.LANE_D5) == "pending" \
+                and not calib_lanes.d5_ready(status, lane_steps):
+            # DC required for d5 but missing/failed — stop.
+            runner.warn(
+                f"run{run:05d}: d5 waiting for DC lanes; "
+                f"status={status}"
+            )
+            # If DC lanes never existed, d5_ready is True — handled above.
+            # If DC failed, we already exited. If still pending somehow, wait.
+            if all(
+                status.get(lane) != "running"
+                for lane in (calib_lanes.LANE_BCOUT, calib_lanes.LANE_BCIN)
+                if lane in lane_steps
+            ):
+                write_state(
+                    run,
+                    {
+                        "run": run,
+                        "status": "stopped",
+                        "finished": False,
+                        "lanes": dict(status),
+                        "mode": "lane_coordinator",
+                        "rc": runner.EXIT_FAIL,
+                        "updated_at": utc_now(),
+                        "steps": list(hist),
+                        "reason": "d5 prerequisites not met",
+                        "session": cfg.get("session") or {},
+                        "plan": plan_of(cfg),
+                    },
+                    lane="",
+                )
+                sys.exit(runner.EXIT_FAIL)
+        time.sleep(0.5)
+
+    worst = runner.worst([e["rc"] for e in hist]) if hist else runner.EXIT_OK
+    base = {
+        "run": run,
+        "index": len(hist) - 1 if hist else -1,
+        "step": "lanes",
+        "opts": {},
+        "rc": worst,
+        "finished": True,
+        "status": calib_approval.STATUS_AWAITING,
+        "lanes": dict(status),
+        "mode": "lane_coordinator",
+        "steps": list(hist),
+        "updated_at": utc_now(),
+        "session": cfg.get("session") or {},
+        "plan": plan_of(cfg),
+    }
+    if not dry_run:
+        mark_awaiting_final(run, base)
+    else:
+        write_state(run, base, lane="")
+    runner.info(f"calib_dispatch lane coordinator complete (awaiting final)")
+    sys.exit(worst)
+
+
+#_____________________________________________________________________________
 def do_start(cfg, dry_run):
     # start always begins at index 0; clear any prior stop/hold/approval via overwrite.
+    lane_steps = calib_lanes.split_steps_by_lane(cfg["steps"])
+    if calib_lanes.active_lane():
+        # Worker process for one lane.
+        _ensure_slack_bot_for_gates(cfg, dry_run)
+        run_steps(cfg, dry_run, 0, [], f"start[{calib_lanes.active_lane()}]")
+        return
+    if len(lane_steps) <= 1:
+        if len(lane_steps) == 1:
+            only = next(iter(lane_steps))
+            os.environ[calib_lanes.LANE_ENV] = only
+        try:
+            _ensure_slack_bot_for_gates(cfg, dry_run)
+            run_steps(cfg, dry_run, 0, [], "start")
+        finally:
+            if len(lane_steps) == 1:
+                os.environ.pop(calib_lanes.LANE_ENV, None)
+        return
     _ensure_slack_bot_for_gates(cfg, dry_run)
-    run_steps(cfg, dry_run, 0, [], "start")
+    run_lane_coordinator(cfg, dry_run, lane_steps)
 
 
 #_____________________________________________________________________________
 def do_resume(cfg, dry_run):
-    st = read_state(cfg["run"])
+    st = read_state(cfg["run"], lane="")
+    if st is None and iter_lane_state_paths(cfg["run"]):
+        # Lane-only run (single-lane worker state); resume that lane.
+        st = None
+        for path in iter_lane_state_paths(cfg["run"]):
+            cand = read_state_file(path)
+            if cand and cand.get("status") == "stopped":
+                st = cand
+                os.environ[calib_lanes.LANE_ENV] = path.parent.name
+                break
     if st is None:
         runner.fail(f"run{cfg['run']:05d}: not started; cannot resume")
     if calib_approval.is_process_complete(st):
@@ -1450,6 +1769,16 @@ def do_resume(cfg, dry_run):
             f"run{cfg['run']:05d}: status={st.get('status')!r} "
             f"(resume requires status=stopped)"
         )
+    if st.get("mode") == "lane_coordinator" and not calib_lanes.active_lane():
+        lane_steps = calib_lanes.split_steps_by_lane(cfg["steps"])
+        prior = st.get("lanes") if isinstance(st.get("lanes"), dict) else {}
+        if prior and all(prior.get(lane) == "done" for lane in lane_steps):
+            runner.fail(f"run{cfg['run']:05d}: all lanes done; nothing to resume")
+        _ensure_slack_bot_for_gates(cfg, dry_run)
+        run_lane_coordinator(
+            cfg, dry_run, lane_steps, prior_lanes=prior,
+        )
+        return
     require_resume_plan(cfg, st)
     _ensure_slack_bot_for_gates(cfg, dry_run)
     start_index = resume_start_index(st)

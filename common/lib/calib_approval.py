@@ -945,16 +945,20 @@ def notify_step_gate_slack(
     run: int, step: str, index: int, *, hold_id: str | None = None,
 ) -> tuple[bool, str]:
     """Thread note with next-step Proceed/Refit/Stop buttons."""
-    from . import slack_notify
+    from . import calib_lanes, slack_notify
 
     step_s = str(step or "?")
     hold_s = str(hold_id or "").strip()
+    lane = calib_lanes.active_lane()
+    lane_bit = f" [{lane}]" if lane else ""
     text = (
-        f"run{int(run):05d}: step {step_s} OK. "
+        f"run{int(run):05d}: step{lane_bit} {step_s} OK. "
         f"Proceed to the next step, refit this step, or stop? "
         f"(QA PDFs above). /calib decide {int(run)} continue|refit"
     )
     key = f"step_gate:{int(index)}:{step_s}"
+    if lane:
+        key = f"{key}:{lane}"
     if hold_s:
         key = f"{key}:{hold_s}"
     else:

@@ -60,6 +60,57 @@ class CalibListTests(unittest.TestCase):
         self.assertTrue(opts1["bcout"])
         self.assertTrue(opts1["local"])
 
+    def test_pool_local_cap(self):
+        alive = set()
+        local_of = {}
+        peak_local = {"n": 0}
+        spawn_order = []
+        age = {}
+
+        class Handle:
+            def __init__(self, run):
+                self.run = run
+
+        def spawn(run, opts):
+            local = bool(opts.get("local"))
+            local_of[run] = local
+            spawn_order.append(run)
+            alive.add(run)
+            age[run] = 0
+            n_local = sum(1 for r in alive if local_of.get(r))
+            peak_local["n"] = max(peak_local["n"], n_local)
+            return Handle(run)
+
+        def is_alive(handle):
+            # Age every alive run once per outer-style sweep: finish bsub
+            # immediately; finish locals after they have been alive one reap.
+            for r in list(alive):
+                age[r] = age.get(r, 0) + 1
+                if not local_of.get(r) or age[r] > 1:
+                    alive.discard(r)
+            return handle.run in alive
+
+        entries = [
+            (1, {"local": True}),
+            (2, {"local": True}),
+            (3, {"local": True}),
+            (4, {"local": False}),
+            (5, {"local": True}),
+        ]
+        agg, finished = self.calib_list.run_caliblist_pool(
+            entries,
+            max_parallel_local=2,
+            spawn=spawn,
+            poll_s=0.0,
+            is_alive=is_alive,
+            wait_rc=lambda h: 0,
+        )
+        self.assertEqual(agg, 0)
+        self.assertEqual(len(finished), 5)
+        self.assertLessEqual(peak_local["n"], 2)
+        self.assertEqual(set(spawn_order), {1, 2, 3, 4, 5})
+        self.assertLess(spawn_order.index(4), spawn_order.index(5))
+
 
 if __name__ == "__main__":
     unittest.main()
