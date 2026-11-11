@@ -13,7 +13,8 @@ Usage: run_d5.py <run...> {ref,pos} [--kaon] [--debug] [--force]
   pos  Measure BLC1a/b dy (BLC2-referenced fit) and the a/b opposite x shift s
        (<delta_x - delta_u>) with d5_pos_review and print the table.
        Not converged: write them into the BLC1a/b Ofs of the DCGEO (backup first).
-       Converged: write nothing and make the check PDF (d5_plane_resi_qa).
+       Every pass: make layer/residual QA (d5_plane_resi_qa) before any writes.
+       Converged: write nothing.
        --debug: measure and print only.
 
 One cycle:
@@ -389,6 +390,58 @@ def after_qa_slack(run, kind, s, session=None):
     return posted
 
 
+#_____________________________________________________________________________
+def layer_qa_input_error(run, s):
+    """Reject blank/missing required layer plots before a PDF can pass QA."""
+    import uproot
+    try:
+        with uproot.open(d5_root(run, s)) as source:
+            for det in ("BLC1a", "BLC1b", "BLC2a", "BLC2b"):
+                for kind in ("D5Fit", "D5Excl", "D5Pull"):
+                    name = f"D5WireResi_{det}_{kind}_vs_plane_{s}"
+                    if name not in source or (source[name].values().sum(axis=1) <= 0).any():
+                        return f"missing/empty layer histogram {name}"
+        for chamber, detectors in (("BcIn", ("BLC1a", "BLC1b")),
+                                   ("BcOut", ("BLC2a", "BLC2b"))):
+            with uproot.open(chamber_root(run, chamber, s)) as source:
+                for det in detectors:
+                    for plane in range(8):
+                        name = f"{det}_Track_Residual_plane{plane}_{s}"
+                        if name not in source or source[name].values().sum() <= 0:
+                            return f"missing/empty chamber histogram {name}"
+    except (OSError, ValueError, KeyError, AttributeError) as exc:
+        return f"cannot read layer QA inputs: {exc}"
+    return ""
+
+
+#_____________________________________________________________________________
+def layer_qa(run, s):
+    """Seal and deliver the current D5/chamber residuals before changing geometry."""
+    session = qa_session.begin(
+        run, "d5_plane_resi_qa",
+        [d5_qa_slack.source_path(run, "plane_resi_qa", kaon=(s == "K"))],
+        input_path=d5_root(run, s),
+        meta={"family": "d5", "mode": "plane_resi_qa",
+              "particle": "kaon" if s == "K" else "pion",
+              **d5_qa_slack.pass_metadata(run)},
+    )
+    qa_session.attach_params(session, [dcgeo_path(run, s)], role="fit_input")
+    missing = layer_qa_input_error(run, s)
+    if missing:
+        calib_anomaly.remember_check_reason(
+            run, f"qa_delivery_failed: {missing}; qa_exec_id={session['exec_id']}",
+        )
+        runner.warn(missing)
+        return False
+    rc = make_check_pdf(run, s)
+    if rc != 0:
+        calib_anomaly.remember_check_reason(
+            run, f"qa_delivery_failed: D5 layer QA failed (exit {rc}); qa_exec_id={session['exec_id']}",
+        )
+        return False
+    return after_qa_slack(run, "plane_resi_qa", s, session=session)
+
+
 def check_pos_inputs(run, s, force):
     if not dcgeo_path(run, s).exists():
         runner.fail(f"{dcgeo_path(run, s)} not found (suffix {s}; --kaon for K)")
@@ -409,7 +462,8 @@ def do_pos(args, s):
             "d5_pos_review",
             [d5_qa_slack.source_path(run, "pos_review", kaon=kaon)],
             input_path=d5_root(run, s),
-            meta={"family": "d5", "mode": "pos_review", "particle": "kaon" if kaon else "pion"},
+            meta={"family": "d5", "mode": "pos_review", "particle": "kaon" if kaon else "pion",
+                  **d5_qa_slack.pass_metadata(run)},
         )
         qa_session.attach_params(session, [dcgeo_path(run, s)], role="fit_input")
         pos_sessions[run] = session
@@ -418,9 +472,11 @@ def do_pos(args, s):
     delivery_failed = []
     for run, r in rows.items():
         if r is not None:
-            if not after_qa_slack(run, "pos_review", s, session=pos_sessions.get(run)):
+            delivered = after_qa_slack(run, "pos_review", s, session=pos_sessions.get(run))
+            layers_delivered = layer_qa(run, s)
+            if not (delivered and layers_delivered):
                 delivery_failed.append(run)
-    if not (failed or args.debug):
+    if not (failed or delivery_failed or args.debug):
         for run, r in rows.items():
             r["state"] = judge_pos(run, r, s, args.tol)
     write_summary(rows, s, args.tol)
@@ -488,38 +544,7 @@ def do_pos(args, s):
         elif r["state"] == conv.SKIPPED:
             runner.info(f"{run_tag(run)} skipped: same D5 inputs already applied")
         elif r["state"] == conv.CONVERGED:
-            runner.info(f"{run_tag(run)} converged: check PDF")
-            check_session = qa_session.begin(
-                run,
-                "d5_plane_resi_qa",
-                [d5_qa_slack.source_path(run, "plane_resi_qa", kaon=kaon)],
-                input_path=d5_root(run, s),
-                meta={
-                    "family": "d5",
-                    "mode": "plane_resi_qa",
-                    "particle": "kaon" if kaon else "pion",
-                },
-            )
-            qa_session.attach_params(
-                check_session, [dcgeo_path(run, s)], role="fit_input",
-            )
-            pdf_rc = make_check_pdf(run, s)
-            if pdf_rc != 0:
-                calib_anomaly.remember_check_reason(run, f"qa_delivery_failed: D5 check PDF failed (exit {pdf_rc})")
-                runner.warn(f"{run_tag(run)}: check PDF failed (exit {pdf_rc}); treating as EXIT_CHECK")
-                code = runner.worst([code, runner.EXIT_CHECK])
-                ok_n, nmsg = slack_notify.try_notify_failure(
-                    run,
-                    f"d5_plane_resi_qa_fail_{s}",
-                    f"[CHECK] {run_tag(run)} d5_plane_resi_qa failed (exit {pdf_rc})",
-                )
-                if not ok_n:
-                    runner.warn(f"Slack failure notify failed: {nmsg}")
-                elif nmsg.startswith("notified"):
-                    runner.info(nmsg)
-            else:
-                if not after_qa_slack(run, "plane_resi_qa", s, session=check_session):
-                    code = runner.worst([code, runner.EXIT_CHECK])
+            runner.info(f"{run_tag(run)} converged; layer QA already delivered")
     sys.exit(code)
 
 

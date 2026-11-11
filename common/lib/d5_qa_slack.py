@@ -41,6 +41,22 @@ def source_path(run: int, kind: str, *, kaon: bool = False) -> Path:
 
 
 #_____________________________________________________________________________
+def pass_metadata(run: int) -> dict[str, int]:
+    """Read the active D5 pass so children of existing dispatchers are labelled."""
+    path = Path(config.OUTPUT_DIR) / "calib" / f"run{run:05d}" / "lanes/d5/calib_dispatch_state.json"
+    try:
+        import json
+        state = json.loads(path.read_text())
+        current = int((state.get("opts") or {}).get("pass", 0))
+        maximum = max(int((step.get("opts") or {}).get("pass", 0))
+                      for step in (state.get("plan") or {}).get("steps", [])
+                      if isinstance(step, dict))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return {"d5_pass": current, "d5_max_passes": maximum} if current > 0 else {}
+
+
+#_____________________________________________________________________________
 def post_d5_qa(
     run: int,
     kind: str,
@@ -60,7 +76,12 @@ def post_d5_qa(
 
     suffix = particle_suffix(kaon)
     mode_key = f"d5_{kind}"
+    metadata = (manifest or {}).get("meta") or pass_metadata(run)
     caption = f"run{run:05d} d5 {kind} ({suffix})"
+    if metadata.get("d5_pass"):
+        caption += f" — 第{metadata['d5_pass']}周回 / 最大{metadata.get('d5_max_passes', '?')}回"
+    if kind == "plane_resi_qa":
+        caption += " — 横軸: layer、縦軸: residual / pull（今回の位置補正前）"
     return slack_notify.post_pdf(
         run,
         mode_key,

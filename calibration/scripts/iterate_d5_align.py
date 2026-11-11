@@ -8,7 +8,7 @@ Usage: iterate_d5_align.py <run> [--kaon] [--max-iter N] [--tol T]
 Order:
   create_runlist --d5 RUN {Pi|K} --mom …
   create_runlist --bcin RUN {Pi|K}_resi   (for BcIn re-decode in the loop)
-  then: ref → D5×2 decode → pos → (exit 2) BcIn decode → resi --bcin → …
+  then: ref → D5×2 decode → pos → (exit 2) BcIn decode → resi/decode until converged → …
 
 D5 scratch runlists are those written by run_d5.py ref under
 runmanager/runlist/scratch/d5/.
@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from common.lib import calib_runlist, config, decode_run, runner  # noqa: E402
+import iterate_dc_resi  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_D5 = SCRIPT_DIR / "run_d5.py"
@@ -158,6 +159,8 @@ def parse_args():
     p.add_argument("--kaon", action="store_true", help="K param suffix")
     p.add_argument("--max-iter", type=int, default=DEFAULT_MAX_ITER,
                    help=f"max outer ref→pos passes (default {DEFAULT_MAX_ITER})")
+    p.add_argument("--bcin-max-iter", type=int, default=10,
+                   help="max BLC1 residual fit/decode iterations within each D5 pass")
     p.add_argument("--tol", type=float, default=DEFAULT_TOL,
                    help=f"passed to run_d5 pos (default {DEFAULT_TOL})")
     p.add_argument("--bcin-runlist", type=Path, default=None,
@@ -177,6 +180,8 @@ def parse_args():
     a = p.parse_args()
     if a.max_iter < 1:
         runner.fail("--max-iter must be >= 1")
+    if a.bcin_max_iter < 1:
+        runner.fail("--bcin-max-iter must be >= 1")
     if a.tol <= 0:
         runner.fail("--tol must be > 0")
     if a.only_pass is not None and a.only_pass < 1:
@@ -219,6 +224,16 @@ def stop_with(action, rc_fallback=None):
     if rc_fallback is not None:
         sys.exit(rc_fallback)
     sys.exit(runner.EXIT_CHECK)
+
+
+#_____________________________________________________________________________
+def refine_bcin(a, runlist, pass_i):
+    """Converge the chamber residuals before the next D5 reference decode."""
+    return iterate_dc_resi.run_fit_loop(
+        a.run, "resi", True, a.kaon, a.force, a.bcin_max_iter,
+        runlist, False, do_preflight=False, local=a.local,
+        label=f"D5 pass {pass_i}: BLC1 residual", dispatch_step="d5_align",
+    )
 
 
 #_____________________________________________________________________________
@@ -266,7 +281,7 @@ def main():
         print("[dry-run] (if pos exit 2)")
         decode_run.run_decode(bcin_runlist, dry_run=True, local=a.local)
         print(f"[dry-run] {resi_cmd(a.run, a.kaon, a.force)}")
-        print("[dry-run] (if resi exit 2)")
+        print(f"[dry-run] repeat BLC1 resi → decode until converged (max {a.bcin_max_iter})")
         decode_run.run_decode(bcin_runlist, dry_run=True, local=a.local)
         print(f"[dry-run] … repeat until pos exit 0/1/3/4 or max-iter={a.max_iter}")
         sys.exit(runner.EXIT_OK)
@@ -320,7 +335,7 @@ def main():
             sys.exit(runner.EXIT_CHECK)
 
         decode_run.run_decode(bcin_runlist, local=a.local)
-        rc_resi, _ = runner.sh(resi_cmd(a.run, a.kaon, a.force), ok=ok_driver)
+        rc_resi = refine_bcin(a, bcin_runlist, i)
         action_resi = next_action(rc_resi)
         runner.info(f"run_dcprm resi --bcin exit={rc_resi} → {action_resi}")
         if action_resi in (STOP_FAIL, STOP_CHECK, STOP_SKIP):
@@ -334,8 +349,6 @@ def main():
             a.run, "d5_align", f"bcin_resi[pass={i}]",
             rc=rc_resi, status=status_resi,
         )
-        if action_resi == DO_NEXT:
-            decode_run.run_decode(bcin_runlist, local=a.local)
 
     if a.only_pass is not None:
         one_pass(a.only_pass, max_pass=max(a.max_iter, a.only_pass))

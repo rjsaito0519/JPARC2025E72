@@ -83,6 +83,8 @@ class RunDcprmSlackRcTests(unittest.TestCase):
             all = False
 
         with mock.patch.object(
+            rd.slack_notify, "try_notify_failure", return_value=(True, "mocked"),
+        ) as notify, mock.patch.object(
             rd.dc_qa_slack, "try_post_after_dcprm",
             return_value=(False, "network down"),
         ), mock.patch.object(rd.runner, "info"), mock.patch.object(
@@ -90,6 +92,7 @@ class RunDcprmSlackRcTests(unittest.TestCase):
         ) as warn:
             rc = rd.after_qa_slack(1, "t0", Args(), runner.EXIT_OK)
         self.assertEqual(rc, runner.EXIT_CHECK)
+        notify.assert_called_once()
         warn.assert_called()
         self.assertIn("Slack", warn.call_args[0][0])
 
