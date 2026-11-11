@@ -781,9 +781,9 @@ def awaiting_action_blocks(
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"*run{int(run):05d}* awaiting final QA approval\n"
+                    f"*run{int(run):05d}* 【最終承認待ち】\n"
                     f"{detail}\n"
-                    f"subject_sha=`{short}…`"
+                    "この対象の較正処理は終了しました。最後のQAを確認して『最終承認』を選んでください。"
                 ),
             },
         },
@@ -794,7 +794,7 @@ def awaiting_action_blocks(
                 {
                     "type": "button",
                     "action_id": "calib_approve_run",
-                    "text": {"type": "plain_text", "text": "Approve"},
+                    "text": {"type": "plain_text", "text": "最終承認"},
                     "style": "primary",
                     # Pin the viewed subject version: run:subject_sha
                     "value": f"{run_s}:{sha}",
@@ -802,12 +802,89 @@ def awaiting_action_blocks(
                 {
                     "type": "button",
                     "action_id": "calib_revoke_run",
-                    "text": {"type": "plain_text", "text": "Revoke"},
+                    "text": {"type": "plain_text", "text": "承認を取り消す"},
                     "value": run_s,
                 },
             ],
         },
     ]
+
+
+#_____________________________________________________________________________
+def stage_title(step: str, opts=None) -> str:
+    opts = opts or {}
+    labels = {"hodo_hdprm": "Hodo ADC/TDC", "hodo_t0": "Hodo 時間オフセット",
+              "hodo_hdphc": "Hodo PHC", "hodo_hdphc_adopt": "PHC 最良ラウンドの採用",
+              "dc_t0": "DC TDC窓", "dc_drift": "DC drift補正",
+              "dc_ch_resi": "DC residual補正", "dc_resi": "DC residual補正",
+              "dc_reso": "DC 分解能補正", "d5_pass": "D5 位置合わせ"}
+    title = labels.get(step, step)
+    if opts.get("hdphc_round"):
+        title += f" 第{opts['hdphc_round']}ラウンド"
+    if step == "d5_pass" and opts.get("pass"):
+        title += f" 第{opts['pass']}周回"
+    return title
+
+
+#_____________________________________________________________________________
+def gate_context(run: int, step: str, index: int, *, lane="") -> str:
+    """Show the stage, matching PDF receipt, and what Proceed will do."""
+    from . import calib_lanes
+    lane = lane or calib_lanes.active_lane()
+    if not lane:
+        lane = "hodo" if step.startswith("hodo") else ("d5" if step.startswith("d5") else "")
+    directory = Path(config.OUTPUT_DIR) / "calib" / f"run{run:05d}"
+    path = directory / "lanes" / lane / "calib_dispatch_state.json" if lane else directory / "calib_dispatch_state.json"
+    try:
+        state = json.loads(path.read_text())
+    except (OSError, ValueError):
+        state = {}
+    matching = state.get("step") == step and state.get("index") == index
+    opts = (state.get("opts") or {}) if matching else {}
+    lines = [f"*run{run:05d}* [{lane or 'calib'}] *{stage_title(step, opts)}*"]
+    plan = (state.get("plan") or {}).get("steps") or []
+    following = plan[index + 1] if matching and index + 1 < len(plan) else None
+    if step == "hodo_hdphc":
+        from . import hodo_hdphc_rounds
+        journal = hodo_hdphc_rounds.load_journal(run)
+        progress = hodo_hdphc_rounds.adaptive_progress(
+            journal, patience=opts.get("hdphc_patience", 3),
+            max_rounds=max((int((item.get("opts") or {}).get("hdphc_round", 0)) for item in plan), default=10) or 10,
+        )
+        if journal and journal[-1].get("ok") and hodo_hdphc_rounds.width_ok(journal[-1].get("width")):
+            lines.append(f"今回の幅: {journal[-1]['width']:.4f}")
+        if progress["best_round"] is not None:
+            lines.append(f"幅の最良値: {progress['best_width']:.4f}（第{progress['best_round']}ラウンド） / 改善なし {progress['without_improvement']}回")
+        if progress["finished"]:
+            following = {"name": "hodo_hdphc_adopt"}
+    if step == "d5_pass" and (directory / "d5_converged.txt").is_file():
+        following = None
+    if isinstance(following, dict):
+        lines.append("次へ進むと: " + stage_title(str(following.get("name") or "?"), following.get("opts")))
+    elif matching:
+        lines.append("次へ進むと: このレーンの処理を終了し、最終QA確認へ進みます。")
+    modes = {"hodo_hdprm": ["hdprm"], "hodo_t0": ["t0"],
+             "hodo_hdphc": ["hdphc"], "hodo_hdphc_adopt": ["hdphc"],
+             "d5_pass": ["d5_pos_review", "d5_plane_resi_qa"]}.get(step, [])
+    if step.startswith("dc_"):
+        suffix = "bcin" if lane == "bcin" else "bcout"
+        mode = {"dc_ch_resi": "resi", "dc_resi": "resi"}.get(step, step.removeprefix("dc_"))
+        modes = [f"dc_{mode}_{suffix}"]
+    try:
+        posts = json.loads((directory / "slack_thread.json").read_text()).get("posts") or {}
+    except (OSError, ValueError):
+        posts = {}
+    receipts = [post for post in posts.values() if isinstance(post, dict) and post.get("mode") in modes]
+    reason = str((state.get("hold") or {}).get("reason") or "")
+    if not matching or any(marker in reason for marker in ("stale_input:", "phc_round_missing:")):
+        receipts = []
+    if "qa_delivery_failed:" in reason:
+        pinned = re.search(r"\bqa_exec_id=([A-Za-z0-9_]+)", reason)
+        receipts = [post for post in receipts if pinned and post.get("exec_id") == pinned[1]]
+    for post in receipts:
+        result = str(post.get("exec_id") or "").split("_")[-1]
+        lines.append(f"対象PDF: `{post.get('pdf', '?')}`" + (f"（結果ID: {result}）" if result else ""))
+    return "\n".join(lines)
 
 
 #_____________________________________________________________________________
@@ -825,8 +902,8 @@ def step_gate_action_blocks(
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"*run{int(run):05d}* step `{step_s}` (index {int(index)}) OK. "
-                    "Next step gate — QA PDFs are above in this thread."
+                    gate_context(int(run), step_s, int(index))
+                    + "\n【確認待ち】更新・評価が完了しました。対象PDFを確認して操作を選んでください。"
                 ),
             },
         },
@@ -933,9 +1010,10 @@ def exit_check_action_blocks(
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"*run{int(run):05d}* {lane_label}step `{step_s}` "
-                    f"(index {int(index)}) needs review (EXIT_CHECK).\n"
-                    f"{detail}"
+                    gate_context(int(run), step_s, int(index), lane=lane)
+                    + f"\n【要確認・停止中】\n{detail}"
+                    + ("\n次へ進む操作はありません。原因を解決して『手直ししてやり直し』を選んでください。"
+                       if continue_block_reason(int(run), {"reason": reason}) else "")
                 ),
             },
         },
@@ -1009,7 +1087,7 @@ def notify_exit_check_slack(
         f"run{int(run):05d}: EXIT_CHECK after {lane_label}step {step_s}.\n"
         f"{exit_check_detail(reason)}\n"
         f"/calib decide {int(run)} refit"
-        + ("" if "stale_input:" in reason else "|continue")
+        + ("" if continue_block_reason(int(run), hold) else "|continue")
     )
     key = f"exit_check:{index_i}:{step_s}"
     key = f"{key}:{hold_s}" if hold_s else f"{key}:noid"
@@ -1089,12 +1167,6 @@ def notify_step_gate_slack(
     step_s = str(step or "?")
     hold_s = str(hold_id or "").strip()
     lane = calib_lanes.active_lane()
-    lane_bit = f" [{lane}]" if lane else ""
-    text = (
-        f"run{int(run):05d}: step{lane_bit} {step_s} OK. "
-        f"Proceed to the next step, refit this step, or stop? "
-        f"(QA PDFs above). /calib decide {int(run)} continue|refit"
-    )
     key = f"step_gate:{int(index)}:{step_s}"
     if lane:
         key = f"{key}:{lane}"
@@ -1103,13 +1175,13 @@ def notify_step_gate_slack(
     else:
         # Without hold_id, repeats of the same step/index can be deduped.
         key = f"{key}:noid"
+    blocks = step_gate_action_blocks(int(run), step_s, int(index), hold_id=hold_s)
+    text = blocks[0]["text"]["text"]
     return slack_notify.try_notify_failure(
         int(run),
         key,
         text,
-        blocks=step_gate_action_blocks(
-            int(run), step_s, int(index), hold_id=hold_s,
-        ),
+        blocks=blocks,
     )
 
 

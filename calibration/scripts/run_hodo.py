@@ -44,8 +44,11 @@ def hodo_param_path(run, mode, suffix):
 
 
 #_____________________________________________________________________________
-def _notify_phc_ask_after_pdf(run):
-    ok_ask, ask_msg = phc_range_gate.notify_pending_phc_ask(run)
+def _notify_phc_ask_after_pdf(run, manifest=None):
+    if manifest and manifest.get("exec_id"):
+        ok_ask, ask_msg = phc_range_gate.notify_pending_phc_ask(run, qa_exec_id=manifest["exec_id"])
+    else:
+        ok_ask, ask_msg = phc_range_gate.notify_pending_phc_ask(run)
     if not ok_ask:
         runner.warn(f"PHC range Slack note failed: {ask_msg}")
     elif ask_msg not in ("no phc ask pending",) and not str(ask_msg).startswith(
@@ -107,7 +110,7 @@ def after_qa_merge(run, mode, args, rc, session=None):
         elif not post_msg.startswith("slack skip:"):
             runner.info(post_msg)
         if phc_ask and posted:
-            _notify_phc_ask_after_pdf(run)
+            _notify_phc_ask_after_pdf(run, manifest)
         return rc
     from common.lib import calib_anomaly
     calib_anomaly.remember_check_reason(run, f"qa_delivery_failed: QA PDF merge failed: {message}")
@@ -122,8 +125,6 @@ def after_qa_merge(run, mode, args, rc, session=None):
         runner.warn(f"Slack failure notify failed: {nmsg}")
     elif nmsg.startswith("notified"):
         runner.info(nmsg)
-    if phc_ask:
-        _notify_phc_ask_after_pdf(run)
     if rc in (runner.EXIT_OK, runner.EXIT_SKIP, runner.EXIT_NOT_CONVERGED):
         return runner.EXIT_CHECK
     return rc

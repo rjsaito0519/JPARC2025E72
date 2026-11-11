@@ -155,10 +155,33 @@ def build_app(bot_cfg):
             ok, message, ephemeral = handle_calib_request(
                 bot_cfg, user_id, channel_id, text,
             )
-            respond(
-                text=message,
-                response_type="ephemeral" if ephemeral else "in_channel",
-            )
+            if ok:
+                labels = {
+                    "proceed": "次へ進む", "retry": "手直ししてやり直し",
+                    "gate-stop": "止める", "phc-go": "範囲を確定して再実行",
+                    "approve": "最終承認", "revoke": "承認を取り消す",
+                }
+                result = f"*run{int(value.split(':')[0]):05d}* 【選択済み】{labels.get(op, op)}"
+                original = body.get("message") or {}
+                original_blocks = original.get("blocks") or []
+                if original_blocks and original_blocks[0].get("type") == "section":
+                    context = str((original_blocks[0].get("text") or {}).get("text") or "").splitlines()
+                    if context:
+                        result += "\n対象: " + context[0]
+                if op in ("proceed", "retry", "phc-go"):
+                    result += "\n操作を受け付けました。次の結果をお待ちください。"
+                elif op == "gate-stop":
+                    result += "\nこの段階で停止します。再開するまで次へ進みません。"
+                blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": result}}]
+                if op == "approve":
+                    blocks.append({"type": "actions", "elements": [{
+                        "type": "button", "action_id": "calib_revoke_run",
+                        "text": {"type": "plain_text", "text": "承認を取り消す"},
+                        "value": value.split(":")[0],
+                    }]})
+                respond(text=result, blocks=blocks, replace_original=True)
+            else:
+                respond(text=message, response_type="ephemeral")
             if not ok and not ephemeral:
                 runner.warn(message)
         return _handler

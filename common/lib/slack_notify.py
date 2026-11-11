@@ -290,8 +290,9 @@ def post_pdf(
     key = post_key(mode, particle_suffix, pdf_path.name)
     parent_text = f"calib QA run{run:05d}"
     if manifest and manifest.get("exec_id"):
-        caption = f"{caption} exec_id={manifest['exec_id']}"
+        caption = f"{caption}\n結果ID: {str(manifest['exec_id']).split('_')[-1]}"
 
+    caption = f"【QA PDF】{caption}"
     if dry_run:
         return True, f"dry-run: post {pdf_path.name} key={key}"
 

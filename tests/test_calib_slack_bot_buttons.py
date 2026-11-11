@@ -96,6 +96,27 @@ class SlackBotButtonTests(unittest.TestCase):
                     f"{action_id} user_id looks like str(dict)",
                 )
 
+    def test_success_replaces_buttons_but_failure_preserves_them(self):
+        import calib_slack_bot as bot
+        with mock.patch.dict(sys.modules, {"slack_bolt": mock.Mock(App=FakeApp)}):
+            app = bot.build_app({"token": "test"})
+        body = {"user": {"id": "U1"}, "channel": {"id": "C1"},
+                "actions": [{"value": "7:hold"}]}
+        for success in (False, True):
+            with self.subTest(success=success), mock.patch.object(
+                bot, "handle_calib_request", return_value=(success, "result", False),
+            ), mock.patch.object(bot.runner, "warn"):
+                respond = mock.Mock()
+                app.actions["calib_step_proceed"](ack=lambda: None, body=body, respond=respond)
+                response = respond.call_args.kwargs
+                if success:
+                    self.assertTrue(response["replace_original"])
+                    self.assertIn("選択済み", response["text"])
+                    self.assertFalse(any(b["type"] == "actions" for b in response["blocks"]))
+                else:
+                    self.assertNotIn("replace_original", response)
+                    self.assertEqual(response["response_type"], "ephemeral")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -265,14 +265,19 @@ def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
     run_s = str(int(run))
     lines = [format_proposal_line(row) for row in proposals if isinstance(row, dict)]
     body = "\n".join(lines) if lines else "(no proposals)"
+    result = str((read_proposal(run) or {}).get("qa_exec_id") or "").split("_")[-1]
+    if result:
+        body += f"\n対象PDFの結果ID: {result}"
     return [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"*run{int(run):05d}* PHC segment range\n"
-                    f"{body}"
+                    f"*run{int(run):05d}* 【確認待ち】PHC 使用範囲\n"
+                    "直前のPHC PDFを確認してください。このラウンドの更新はまだ適用していません。\n"
+                    f"{body}\n"
+                    "範囲を変更する場合は『範囲を編集』、この範囲で再計算する場合は『範囲を確定して再実行』を選んでください。"
                 ),
             },
         },
@@ -283,13 +288,13 @@ def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
                 {
                     "type": "button",
                     "action_id": "calib_phc_custom",
-                    "text": {"type": "plain_text", "text": "Custom range"},
+                    "text": {"type": "plain_text", "text": "範囲を編集"},
                     "value": run_s,
                 },
                 {
                     "type": "button",
                     "action_id": "calib_phc_go",
-                    "text": {"type": "plain_text", "text": "Go（refit）"},
+                    "text": {"type": "plain_text", "text": "範囲を確定して再実行"},
                     "style": "primary",
                     "value": run_s,
                 },
@@ -420,6 +425,13 @@ def sync_proposal_currents(
 
 
 #_____________________________________________________________________________
+def ask_slack_key(run: int) -> str:
+    proposal = read_proposal(run) or {}
+    result = str(proposal.get("qa_exec_id") or "")
+    return f"{SLACK_ASK_KEY}:{result}" if result else SLACK_ASK_KEY
+
+
+#_____________________________________________________________________________
 def notify_phc_range_slack(
     run: int, proposals: list[dict[str, Any]],
 ) -> tuple[bool, str]:
@@ -433,7 +445,7 @@ def notify_phc_range_slack(
     )
     return slack_notify.try_notify_failure(
         int(run),
-        SLACK_ASK_KEY,
+        ask_slack_key(int(run)),
         text,
         blocks=phc_range_action_blocks(int(run), proposals),
     )
@@ -458,18 +470,21 @@ def update_phc_ask_slack(run: int) -> tuple[bool, str]:
     )
     return slack_notify.try_update_failure_message(
         int(run),
-        SLACK_ASK_KEY,
+        ask_slack_key(int(run)),
         text,
         blocks=phc_range_action_blocks(int(run), rows),
     )
 
 
 #_____________________________________________________________________________
-def notify_pending_phc_ask(run: int) -> tuple[bool, str]:
+def notify_pending_phc_ask(run: int, *, qa_exec_id: str | None = None) -> tuple[bool, str]:
     """Post Slack PHC ask from on-disk proposal; no-op if none."""
     data = sync_proposal_currents(run) or read_proposal(run)
     if not data:
         return True, "no phc ask pending"
+    if qa_exec_id:
+        data["qa_exec_id"] = qa_exec_id
+        write_proposal(run, data)
     rows = data.get("proposals")
     if not isinstance(rows, list) or not rows:
         return True, "no phc ask pending"
