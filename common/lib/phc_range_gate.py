@@ -19,6 +19,13 @@ PHC_CONF_PATH = PROJECT_ROOT / "calibration" / "scripts" / "phc_conf.py"
 PROPOSAL_NAME = "phc_range_proposal.json"
 # Stable Slack failure key so chat.update can refresh the same message.
 SLACK_ASK_KEY = "phc_range_ask"
+# Single-segment (etc.): no usable-range ask / Custom choice.
+RANGE_ASK_SKIP = frozenset({"T1"})
+
+
+#_____________________________________________________________________________
+def needs_range_ask(det: str) -> bool:
+    return str(det or "") not in RANGE_ASK_SKIP
 
 #_____________________________________________________________________________
 def proposal_path(run: int) -> Path:
@@ -258,7 +265,7 @@ def _det_select_options(
                 if det and det not in dets:
                     dets.append(det)
     if not dets:
-        dets = ["BHT", "BH2", "T1", "CVC"]
+        dets = ["BHT", "BH2", "CVC"]
     options = []
     for det in dets:
         options.append({

@@ -33,6 +33,14 @@ class PhcRangeGateTests(unittest.TestCase):
         )
         self.assertIsNone(self.gate.propose_from_good([1, 2], [1, 2]))
 
+    def test_needs_range_ask_skips_t1(self):
+        self.assertTrue(self.gate.needs_range_ask("BHT"))
+        self.assertFalse(self.gate.needs_range_ask("T1"))
+        self.assertEqual(
+            [o["value"] for o in self.gate._det_select_options(None)],
+            ["BHT", "BH2", "CVC"],
+        )
+
     def test_upsert_phc_conf(self):
         conf = Path(self.tmp.name) / "phc_conf.py"
         conf.write_text(

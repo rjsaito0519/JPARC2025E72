@@ -277,6 +277,25 @@ def collect_phc(a, dets, inputs):
         if proposed is not None:
             sug_f, sug_l = proposed
         if reason:
+            if not phc_range_gate.needs_range_ask(det):
+                # e.g. T1 (1 seg): unused ratio cannot be fixed by a hand range.
+                data.update(d)
+                by_det[det] = {
+                    "det": det,
+                    "anomaly": False,
+                    "bad": bad,
+                    "total": total,
+                    "labels": labels[:32],
+                    "current_first": cur_f,
+                    "current_last": cur_l,
+                    "first": sug_f,
+                    "last": sug_l,
+                }
+                ok(
+                    f"{det:<6}", len(d),
+                    f" (automatic; range-ask skip; unused {not_used})",
+                )
+                continue
             anomaly_triggered = True
             by_det[det] = {
                 "det": det,
@@ -308,9 +327,10 @@ def collect_phc(a, dets, inputs):
     if not anomaly_triggered:
         return data, []
 
-    # Full-set ask: every detector in the hdphc/htofphc set.
+    # Full-set ask: hdphc/htofphc set minus single-seg skips (T1).
+    ask_dets = [d for d in dets if phc_range_gate.needs_range_ask(d)]
     proposals = []
-    for det in dets:
+    for det in ask_dets:
         if det in by_det:
             proposals.append(by_det[det])
             continue
@@ -331,6 +351,8 @@ def collect_phc(a, dets, inputs):
             "first": cur_f,
             "last": cur_l,
         })
+    if not proposals:
+        return data, []
     payload = {
         "run": int(a.run),
         "suffix": str(a.suffix),
@@ -371,7 +393,7 @@ def collect_phc(a, dets, inputs):
         )
         if not ok_slack:
             runner.warn(f"PHC range Slack note failed: {slack_msg}")
-    # Nothing written until Accept / Custom fills phc_conf and refits.
+    # Nothing written until Custom fills phc_conf and Go refits.
     return {}, [conv.SETTLED]
 
 
