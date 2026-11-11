@@ -103,16 +103,56 @@ class PhcRangeGateTests(unittest.TestCase):
         self.assertFalse(self.gate.pending_phc_ask(33))
         self.assertTrue(self.gate.is_range_confirmed(33))
 
-    def test_clear_rounds_clears_confirmed(self):
+    def test_clear_rounds_keeps_confirmed_by_default(self):
         from common.lib import hodo_hdphc_rounds
 
         self.gate.set_range_confirmed(34)
         with mock.patch.object(hodo_hdphc_rounds.config, "OUTPUT_DIR", self.out):
             hodo_hdphc_rounds.clear_rounds(34)
-        self.assertFalse(self.gate.is_range_confirmed(34))
+        self.assertTrue(self.gate.is_range_confirmed(34))
         self.assertTrue(
             (self.out / "calib" / "run00034" / "hdphc_rounds").is_dir()
         )
+
+    def test_clear_rounds_optional_reset_confirmed(self):
+        from common.lib import hodo_hdphc_rounds
+
+        self.gate.set_range_confirmed(34)
+        with mock.patch.object(hodo_hdphc_rounds.config, "OUTPUT_DIR", self.out):
+            hodo_hdphc_rounds.clear_rounds(34, reset_range_confirmed=True)
+        self.assertFalse(self.gate.is_range_confirmed(34))
+
+    def test_run_hdphc_round1_clear_journal_keeps_confirmed(self):
+        """Go → refit round1 must not drop session range_confirmed (#46)."""
+        scripts = str(REPO / "calibration" / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import iterate_hodo_chain as chain
+        from types import SimpleNamespace
+
+        self.gate.set_range_confirmed(36)
+        args = SimpleNamespace(
+            run=36, kaon=True, local=True, ftof=False, force=False,
+        )
+        with mock.patch.object(
+            chain, "stage_prepare_and_decode", return_value=Path("/dev/null"),
+        ), mock.patch.object(
+            chain, "run_hodo_ok",
+        ), mock.patch.object(
+            chain.decode_run, "run_decode",
+        ), mock.patch.object(
+            chain.hodo_btof_monitor, "hodo_root", return_value=Path("/dev/null"),
+        ), mock.patch.object(
+            chain.hodo_btof_monitor, "score_btof",
+            return_value={"width": 1.0, "n_entries": 1, "ok": True},
+        ), mock.patch.object(
+            chain.hodo_hdphc_rounds, "snapshot_round",
+            return_value={"width": 1.0, "n_entries": 1, "ok": True},
+        ), mock.patch.object(
+            chain.hodo_qa_pdf, "source_paths", return_value=[],
+        ):
+            chain.run_hdphc_one_round(args, 1, clear_journal=True)
+        self.assertTrue(self.gate.is_range_confirmed(36))
 
     def test_clear_dispatch_state_clears_confirmed(self):
         scripts = str(REPO / "calibration" / "scripts")

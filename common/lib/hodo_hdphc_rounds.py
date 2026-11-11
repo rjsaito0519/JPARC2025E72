@@ -47,15 +47,21 @@ def _utc_now() -> str:
 
 
 #_____________________________________________________________________________
-def clear_rounds(run: int) -> None:
+def clear_rounds(run: int, *, reset_range_confirmed: bool = False) -> None:
+    """Reset hdphc round journal/snapshots for a new multi-pass series.
+
+    Keeps session PHC range_confirmed by default so Go → round1 refit does not
+    re-open the range ask. Pass reset_range_confirmed=True only for an explicit
+    fresh start (restart / clear_dispatch already clears via clear_phc_ask_state).
+    """
     path = rounds_dir(run)
     if path.is_dir():
         shutil.rmtree(path)
     path.mkdir(parents=True, exist_ok=True)
-    # Starting hdphc from round 1 again: re-confirm ranges next collect_phc.
-    from . import phc_range_gate
+    if reset_range_confirmed:
+        from . import phc_range_gate
 
-    phc_range_gate.clear_range_confirmed(int(run))
+        phc_range_gate.clear_range_confirmed(int(run))
 
 
 #_____________________________________________________________________________
