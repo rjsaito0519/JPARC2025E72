@@ -1059,8 +1059,10 @@ def do_hold(cfg, reason):
 
 
 #_____________________________________________________________________________
-def do_decide(cfg, action, note):
-    st = apply_decide(cfg["run"], action, note=note or "")
+def do_decide(cfg, action, note, hold_id=None):
+    st = apply_decide(
+        cfg["run"], action, note=note or "", hold_id=hold_id,
+    )
     hold = st.get("hold") if isinstance(st.get("hold"), dict) else {}
     runner.info(
         f"run{cfg['run']:05d}: decided {action} "
@@ -1870,8 +1872,6 @@ def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
     }
     if not dry_run:
         mark_awaiting_final(run, base)
-    else:
-        write_state(run, base, lane="")
     runner.info(f"calib_dispatch lane coordinator complete (awaiting final)")
     sys.exit(worst)
 
@@ -1993,12 +1993,31 @@ def do_resume(cfg, dry_run, *, lane=None):
     st = read_state(run, lane="")
     if st is None and iter_lane_state_paths(run):
         # Lane-only run (single-lane worker state); resume that lane.
-        st = None
+        held_lanes = []
+        stopped_lanes = []
         for path in iter_lane_state_paths(run):
             cand = read_state_file(path)
-            if cand and cand.get("status") == "stopped":
-                do_resume(cfg, dry_run, lane=path.parent.name)
-                return
+            if not cand:
+                continue
+            status = cand.get("status")
+            if status == "held":
+                held_lanes.append(path.parent.name)
+            elif status == "stopped":
+                stopped_lanes.append(path.parent.name)
+        if held_lanes:
+            runner.fail(
+                f"run{run:05d}: status=held "
+                f"(lanes={held_lanes}); "
+                f"decide --action refit|continue before resume"
+            )
+        if len(stopped_lanes) == 1:
+            do_resume(cfg, dry_run, lane=stopped_lanes[0])
+            return
+        if len(stopped_lanes) > 1:
+            runner.fail(
+                f"run{run:05d}: multiple lanes stopped {stopped_lanes}; "
+                f"resume one lane at a time"
+            )
     if st is None:
         runner.fail(f"run{run:05d}: not started; cannot resume")
     if calib_approval.is_process_complete(st):
@@ -2069,6 +2088,10 @@ def parse_args():
                    help="flag-channel/clear-channel: channel id")
     p.add_argument("--family", default="hodo",
                    help="flag-channel: family (default hodo)")
+    p.add_argument(
+        "--hold-id", default=None,
+        help="decide: target hold.id when multiple lanes are held",
+    )
     return p.parse_args()
 
 
@@ -2100,7 +2123,7 @@ def main():
             runner.warn("--dry-run ignored for decide")
         if not a.action:
             runner.fail("decide requires --action refit|continue")
-        do_decide(cfg, a.action, a.note)
+        do_decide(cfg, a.action, a.note, hold_id=a.hold_id)
     if a.command == "approve":
         if a.dry_run:
             runner.warn("--dry-run ignored for approve")

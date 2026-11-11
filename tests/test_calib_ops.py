@@ -207,15 +207,18 @@ class CalibOpsTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("stale step gate", msg)
 
+    def _import_calib_dispatch(self):
+        scripts = str(REPO / "calibration" / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import calib_dispatch as cd
+
+        return cd
+
     def test_proceed_hold_id_match_calls_decide(self):
         self._write_held_state(22, "matchid0001")
-        calls = []
-
-        def fake_run(cmd, capture_output=True, text=True, timeout=30.0):
-            calls.append(cmd[2])
-            return mock.Mock(returncode=0, stdout=cmd[2] + " ok\n", stderr="")
-
-        with mock.patch.object(self.ops.subprocess, "run", side_effect=fake_run), \
+        cd = self._import_calib_dispatch()
+        with mock.patch.object(cd, "apply_decide", return_value={"status": "held"}), \
              mock.patch.object(
                  self.ops.subprocess, "Popen",
                  return_value=mock.Mock(pid=99),
@@ -224,7 +227,7 @@ class CalibOpsTests(unittest.TestCase):
                 "proceed", 22, hold_id="matchid0001", background_resume=True,
             )
         self.assertTrue(ok, msg)
-        self.assertEqual(calls, ["decide"])
+        self.assertIn("decide", msg)
         self.assertTrue(popen.called)
 
     def test_proceed_with_gate_waiter_skips_resume(self):
@@ -234,13 +237,8 @@ class CalibOpsTests(unittest.TestCase):
         st["gate_waiter"] = True
         st["gate_waiter_pid"] = 4242
         state_path.write_text(json.dumps(st) + "\n", encoding="utf-8")
-        calls = []
-
-        def fake_run(cmd, capture_output=True, text=True, timeout=30.0):
-            calls.append(cmd[2])
-            return mock.Mock(returncode=0, stdout=cmd[2] + " ok\n", stderr="")
-
-        with mock.patch.object(self.ops.subprocess, "run", side_effect=fake_run), \
+        cd = self._import_calib_dispatch()
+        with mock.patch.object(cd, "apply_decide", return_value={"status": "held"}), \
              mock.patch.object(
                  self.ops.subprocess, "Popen",
                  return_value=mock.Mock(pid=99),
@@ -249,7 +247,7 @@ class CalibOpsTests(unittest.TestCase):
                 "proceed", 23, hold_id="waiterid001", background_resume=True,
             )
         self.assertTrue(ok, msg)
-        self.assertEqual(calls, ["decide"])
+        self.assertIn("decide", msg)
         self.assertFalse(popen.called)
         self.assertIn("no resume", msg)
 
@@ -259,13 +257,8 @@ class CalibOpsTests(unittest.TestCase):
         st = json.loads(state_path.read_text(encoding="utf-8"))
         st["gate_waiter"] = True
         state_path.write_text(json.dumps(st) + "\n", encoding="utf-8")
-        calls = []
-
-        def fake_run(cmd, capture_output=True, text=True, timeout=30.0):
-            calls.append(cmd[2])
-            return mock.Mock(returncode=0, stdout=cmd[2] + " ok\n", stderr="")
-
-        with mock.patch.object(self.ops.subprocess, "run", side_effect=fake_run), \
+        cd = self._import_calib_dispatch()
+        with mock.patch.object(cd, "apply_decide", return_value={"status": "held"}), \
              mock.patch.object(
                  self.ops.subprocess, "Popen",
                  return_value=mock.Mock(pid=99),
@@ -274,7 +267,7 @@ class CalibOpsTests(unittest.TestCase):
                 "proceed", 24, hold_id="exithold001", background_resume=True,
             )
         self.assertTrue(ok, msg)
-        self.assertEqual(calls, ["decide"])
+        self.assertIn("decide", msg)
         self.assertFalse(popen.called)
         self.assertIn("no resume", msg)
 

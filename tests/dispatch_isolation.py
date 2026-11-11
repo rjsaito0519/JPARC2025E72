@@ -96,8 +96,22 @@ def populate_dispatch_lib(
     for name in (
         "runner.py", "calib_approval.py", "qa_session.py",
         "calib_anomaly.py", "calib_progress.py",
+        "calib_lanes.py", "fit_validity.py", "calib_list.py",
     ):
         shutil.copy(repo / "common" / "lib" / name, lib)
+    # Minimal stubs for ./calib.py imports used by isolated CLI tests.
+    if not (lib / "hodo_btof_monitor.py").is_file():
+        (lib / "hodo_btof_monitor.py").write_text(
+            "from pathlib import Path\n"
+            "from . import config\n"
+            "def hodo_root(run):\n"
+            "    return Path(config.DATA_DIR) / f'run{int(run):05d}_Hodo.root'\n",
+            encoding="utf-8",
+        )
+    if not (lib / "calib_runlist.py").is_file():
+        shutil.copy(repo / "common" / "lib" / "calib_runlist.py", lib)
+    if not (lib / "decode_run.py").is_file():
+        shutil.copy(repo / "common" / "lib" / "decode_run.py", lib)
 
     return {
         "scripts": scripts,

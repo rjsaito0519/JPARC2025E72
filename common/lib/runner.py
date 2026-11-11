@@ -136,6 +136,20 @@ def update_param(run, suffix, ptype, *opts, debug=False):
 
 
 def worst(codes):
-    """Exit code for several groups or runs: CHECK > NOT_CONVERGED > SKIP > OK."""
-    order = (EXIT_OK, EXIT_SKIP, EXIT_NOT_CONVERGED, EXIT_CHECK)
-    return max(codes, key=order.index, default=EXIT_OK)
+    """Exit code for several groups or runs: hard fail > CHECK > NOT_CONVERGED > SKIP > OK."""
+    order = (EXIT_OK, EXIT_SKIP, EXIT_NOT_CONVERGED, EXIT_CHECK, EXIT_FAIL)
+    ranked = []
+    for code in codes:
+        try:
+            code_i = int(code)
+        except (TypeError, ValueError):
+            ranked.append(EXIT_FAIL)
+            continue
+        if code_i in order:
+            ranked.append(code_i)
+        elif code_i != EXIT_OK:
+            # Unknown non-zero (e.g. 127/137): treat as hard fail.
+            ranked.append(EXIT_FAIL)
+        else:
+            ranked.append(EXIT_OK)
+    return max(ranked, key=order.index, default=EXIT_OK)
