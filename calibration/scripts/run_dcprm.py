@@ -69,6 +69,8 @@ def _dc_session(run, suffix, args, mode, input_path):
 #_____________________________________________________________________________
 def after_qa_slack(run, mode, args, rc, session=None):
     """Post chamber QA PDFs; failed delivery requires human review."""
+    if session is not None:
+        session.setdefault("meta", {})["fit_rc"] = rc
     posted, post_msg = dc_qa_slack.try_post_after_dcprm(
         run,
         mode,
