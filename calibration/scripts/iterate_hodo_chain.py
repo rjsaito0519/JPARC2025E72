@@ -191,6 +191,16 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
         prior, patience=getattr(a, "hdphc_patience", 3),
         max_rounds=getattr(a, "hdphc_iter", 10),
     )
+    valid = {int(entry["round"]) for entry in prior
+             if entry.get("ok") and hodo_hdphc_rounds.width_ok(entry.get("width"))}
+    missing = sorted(set(range(1, round_i)) - valid)
+    if missing and not progress["finished"]:
+        from common.lib import calib_anomaly
+        calib_anomaly.remember_check_reason(
+            a.run, f"phc_round_missing: round {missing[0]} has no completed update/score",
+        )
+        runner.warn(f"PHC round {missing[0]} must finish before round {round_i}")
+        sys.exit(runner.EXIT_CHECK)
     if progress["finished"]:
         runner.info(f"PHC series complete ({progress['reason']}); round {round_i} not run")
         return runner.EXIT_SKIP

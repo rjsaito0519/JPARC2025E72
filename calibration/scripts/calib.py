@@ -152,6 +152,9 @@ def format_state_summary(run, st):
         f"  status={status} step={st.get('step')} index={st.get('index')} "
         f"rc={st.get('rc')}",
     ]
+    lanes = st.get("lanes")
+    if isinstance(lanes, dict) and lanes:
+        lines.append(f"  lanes={lanes}")
     if hold:
         lines.append(
             f"  hold.source={hold.get('source')} "
@@ -191,8 +194,7 @@ def prompt_continue_or_restart(run, st):
         try:
             raw = input(f"run{run:05d} choose [1/2]: ").strip().lower()
         except EOFError:
-            runner.warn("EOF on prompt; defaulting to continue")
-            return CHOICE_CONTINUE
+            runner.fail("no selection received; calibration was not started")
         if raw in ("1", "c", "continue", "続き", "続きから"):
             return CHOICE_CONTINUE
         if raw in ("2", "r", "restart", "初め", "初めから"):
@@ -241,8 +243,16 @@ def choose_action(run, st, *, force, interactive, want_lanes=None):
     ):
         return CHOICE_ATTACH
 
-    # Held / stopped lanes in the request → resume those.
+    # Existing requested lanes need the same explicit TTY choice as a full run.
     if want_held or want_stopped:
+        if interactive and sys.stdin.isatty():
+            choice = prompt_continue_or_restart(run, st)
+            if choice == CHOICE_RESTART and busy:
+                runner.fail(
+                    f"run{run:05d}: cannot restart while lane(s) {sorted(busy)} "
+                    f"are running or held; ./ops.py stop {run} first"
+                )
+            return choice
         return CHOICE_CONTINUE
 
     if not want and (st.get("status") == "running" or status == "running"):

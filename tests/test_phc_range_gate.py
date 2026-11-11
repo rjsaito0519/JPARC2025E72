@@ -118,6 +118,28 @@ class PhcRangeGateTests(unittest.TestCase):
         self.assertTrue(self.gate.pending_phc_ask(33))
         self.assertFalse(self.gate.is_range_confirmed(33))
 
+    def test_go_resolves_only_approved_range_flags_and_rolls_back_on_failure(self):
+        from common.lib import calib_ops, channel_flags
+        for run, success in ((35, True), (36, False)):
+            self.gate.write_proposal(run, {"run": run, "suffix": "Pi",
+                                          "proposals": [{"det": "BHT"}]})
+            for source, channel, reason, det in (
+                ("auto", "seg1", "phc_range_proposal:BHT[None,None]", "BHT"),
+                ("human", "seg2", "phc_range_proposal:manual", "BHT"),
+                ("auto", "seg3", "bad fit", "BHT"),
+                ("auto", "seg4", "phc_range_proposal:BH2[None,None]", "BH2"),
+            ):
+                channel_flags.append_flag(run, family="hodo", mode="hdphc", det=det,
+                                          channel=channel, source=source, reason=reason)
+            with mock.patch.object(self.gate, "missing_proposal_dets", return_value=[]), \
+                    mock.patch.object(calib_ops, "_phc_refit_after_conf",
+                                      return_value=(success, "refit")) as refit:
+                result, _ = calib_ops.apply_phc_go(run, background_resume=False)
+            self.assertEqual(result, success)
+            remaining = {row["channel"] for row in channel_flags.open_needs_review(run)}
+            self.assertEqual(remaining, {"seg2", "seg3", "seg4"} if success
+                             else {"seg1", "seg2", "seg3", "seg4"})
+
     def test_clear_rounds_keeps_confirmed_by_default(self):
         from common.lib import hodo_hdphc_rounds
 

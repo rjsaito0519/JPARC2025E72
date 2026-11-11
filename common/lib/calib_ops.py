@@ -417,6 +417,18 @@ def apply_phc_go(
     was_confirmed = phc_range_gate.is_range_confirmed(run)
     phc_range_gate.clear_proposal(run)
     phc_range_gate.set_range_confirmed(run)
+    from . import channel_flags
+    detectors = {str(row.get("det") or "") for row in rows}
+    resolved_flags = [
+        row for row in channel_flags.open_needs_review(run, mode="hdphc")
+        if row.get("source") == "auto" and row.get("det") in detectors
+        and str(row.get("reason") or "").startswith("phc_range_proposal:")
+    ]
+    for row in resolved_flags:
+        channel_flags.clear_channel(
+            run, mode="hdphc", det=row["det"], channel=row["channel"],
+            reason="PHC range confirmed by Go",
+        )
     ok, msg = _phc_refit_after_conf(
         run,
         background_resume=background_resume,
@@ -424,6 +436,12 @@ def apply_phc_go(
         user_id=user_id,
     )
     if not ok:
+        for row in resolved_flags:
+            channel_flags.append_flag(
+                run, family=row["family"], mode=row["mode"], det=row["det"],
+                channel=row["channel"], source=row["source"],
+                reason=row["reason"], status=row["status"],
+            )
         phc_range_gate.write_proposal(run, proposal)
         if not was_confirmed:
             phc_range_gate.clear_range_confirmed(run)

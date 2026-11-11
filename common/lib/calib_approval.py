@@ -863,6 +863,10 @@ def step_gate_action_blocks(
 def continue_block_reason(run: int, hold: dict[str, Any]) -> str:
     """Require a completed fit and the matching sealed PDF delivery before Proceed."""
     reason = str(hold.get("reason") or "")
+    if "write_blocked:" in reason:
+        return "パラメータ更新が保留されています。要確認項目を解決して Refit してください。"
+    if "phc_round_missing:" in reason:
+        return "前ラウンドの更新・幅評価が未完了です。未完了ラウンドから再実行してください。"
     if "phc_no_update:" in reason or "phc_score_invalid:" in reason:
         return "PHC の更新または幅評価が未完了です。設定を確認して Refit してください。"
     if "stale_input:" in reason:
@@ -963,7 +967,7 @@ def exit_check_action_blocks(
         },
     ]
 
-    if any(marker in reason for marker in ("stale_input:", "phc_no_update:", "phc_score_invalid:")):
+    if any(marker in reason for marker in ("stale_input:", "phc_no_update:", "phc_score_invalid:", "write_blocked:", "phc_round_missing:")):
         blocks[1]["elements"].pop(0)
     elif "qa_delivery_failed:" in reason:
         blocks[1]["elements"][0]["text"]["text"] = "再送を確認して次へ"

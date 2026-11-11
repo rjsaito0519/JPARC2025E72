@@ -49,6 +49,14 @@ class PrerequisiteTests(unittest.TestCase):
         self.assertFalse(success)
         self.assertIn("fit 未実行", message)
 
+    def test_unapplied_update_and_missing_round_cannot_be_skipped(self):
+        for reason in ("write_blocked: channel needs_review", "phc_round_missing: round 1"):
+            with self.subTest(reason=reason):
+                hold = self.held(reason)
+                with self.assertRaises(SystemExit):
+                    cd.apply_decide(2977, "continue", hold_id=hold["id"])
+                self.assertEqual(cd.read_state(2977)["status"], "held")
+
     def sealed_qa(self):
         exec_id = "20261111T000000Z_test"
         directory = qa_session.manifest_dir(2977)

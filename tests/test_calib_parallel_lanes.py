@@ -74,6 +74,36 @@ class ChooseActionParallelTests(unittest.TestCase):
             )
         self.assertEqual(choice, self.calib.CHOICE_CONTINUE)
 
+    def test_stopped_requested_lane_prompts_before_resuming(self):
+        st = {"status": "stopped"}
+        for selection in (self.calib.CHOICE_CONTINUE, self.calib.CHOICE_RESTART):
+            with self.subTest(selection=selection), mock.patch.object(
+                self.calib.cd, "collect_lane_statuses", return_value={"hodo": "stopped"},
+            ), mock.patch.object(sys.stdin, "isatty", return_value=True), mock.patch.object(
+                self.calib, "prompt_continue_or_restart", return_value=selection,
+            ) as prompt:
+                choice = self.calib.choose_action(
+                    2847, st, force=False, interactive=True, want_lanes=["hodo"],
+                )
+                self.assertEqual(choice, selection)
+                prompt.assert_called_once()
+
+    def test_restart_selection_cannot_disrupt_other_busy_lanes(self):
+        with mock.patch.object(self.calib.cd, "collect_lane_statuses",
+                               return_value={"hodo": "stopped", "bcin": "running"}), \
+                mock.patch.object(sys.stdin, "isatty", return_value=True), \
+                mock.patch.object(self.calib, "prompt_continue_or_restart",
+                                  return_value=self.calib.CHOICE_RESTART):
+            with self.assertRaises(SystemExit):
+                self.calib.choose_action(2847, {"status": "running"}, force=False,
+                                         interactive=True, want_lanes=["hodo"])
+
+    def test_eof_does_not_implicitly_resume(self):
+        with mock.patch.object(self.calib, "format_state_summary", return_value="prior"), \
+                mock.patch("builtins.input", side_effect=EOFError):
+            with self.assertRaises(SystemExit):
+                self.calib.prompt_continue_or_restart(2847, {"status": "stopped"})
+
     def test_want_running_lane_fails(self):
         st = {
             "status": "running",

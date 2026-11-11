@@ -83,6 +83,14 @@ class AdaptivePhcTests(unittest.TestCase):
         self.assertEqual(chosen, 2)
         self.assertEqual(parameter.read_text(), "round2")
 
+    def test_later_round_requires_completed_predecessor_before_decode(self):
+        args = SimpleNamespace(run=1, kaon=False, hdphc_iter=10, hdphc_patience=3)
+        with mock.patch.object(iterator, "stage_prepare_and_decode") as decode:
+            with self.assertRaises(SystemExit) as stopped:
+                iterator.run_hdphc_one_round(args, 2, clear_journal=False)
+            self.assertEqual(stopped.exception.code, runner.EXIT_CHECK)
+            decode.assert_not_called()
+
     def test_refit_invalidates_later_round_scores(self):
         path = rounds.journal_path(1)
         path.parent.mkdir(parents=True)
