@@ -1,4 +1,4 @@
-"""Draw CBtof0 QA pages via bin/CBtof0_QA (ROOT) for hdphc books."""
+"""Draw CBtof0 QA page via bin/CBtof0_QA (ROOT) for hdphc books."""
 from __future__ import annotations
 
 import subprocess
@@ -8,13 +8,12 @@ from typing import Optional
 from . import hodo_btof_monitor, hodo_qa_pdf, runner
 
 
-#_____________________________________________________________________________
 def btof0_pdf_path(run: int, *, kaon: bool = False) -> Path:
-    suffix = hodo_qa_pdf.particle_suffix(kaon)
-    return hodo_qa_pdf.img_dir(run) / f"run{int(run):05d}_hodo_btof0_{suffix}.pdf"
+    """Canonical btof0 PDF path (all-events CBtof0; kaon unused)."""
+    _ = kaon
+    return hodo_qa_pdf.img_dir(run) / f"run{int(run):05d}_hodo_btof0.pdf"
 
 
-#_____________________________________________________________________________
 def draw_btof0_pdf(
     run: int,
     *,
@@ -23,7 +22,7 @@ def draw_btof0_pdf(
     out_path: Path | None = None,
 ) -> tuple[bool, str, Optional[Path]]:
     """Run CBtof0_QA. Returns (ok, msg, path). out_path is ignored (bin path)."""
-    del out_path  # binary writes the canonical img path from paths.h / run
+    _ = (kaon, out_path)  # always unsuffixed CBtof0; binary writes canonical path
     root = Path(root_path) if root_path is not None else hodo_btof_monitor.hodo_root(run)
     if not root.is_file():
         return False, f"Hodo ROOT missing: {root}", None
@@ -31,8 +30,7 @@ def draw_btof0_pdf(
     if not binary.is_file():
         return False, "CBtof0_QA binary missing (run build.sh)", None
 
-    suffix = hodo_qa_pdf.particle_suffix(kaon)
-    cmd = [str(binary), str(root), suffix, str(int(run))]
+    cmd = [str(binary), str(root), str(int(run))]
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=120, check=False,
@@ -40,7 +38,7 @@ def draw_btof0_pdf(
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, f"CBtof0_QA failed: {type(exc).__name__}: {exc}", None
 
-    out = btof0_pdf_path(run, kaon=kaon)
+    out = btof0_pdf_path(run)
     if result.returncode != 0 or not out.is_file():
         err = (result.stderr or result.stdout or "").strip()
         if len(err) > 400:
@@ -51,7 +49,6 @@ def draw_btof0_pdf(
     return True, msg, out
 
 
-#_____________________________________________________________________________
 def ensure_btof0_pdf(
     run: int,
     *,

@@ -28,8 +28,10 @@ class HodoBtofQaTests(unittest.TestCase):
 
     def test_btof0_pdf_path(self):
         path = self.qa.btof0_pdf_path(12, kaon=False)
-        self.assertEqual(path.name, "run00012_hodo_btof0_Pi.pdf")
-        self.assertTrue(str(path).endswith("img/run00012/run00012_hodo_btof0_Pi.pdf"))
+        self.assertEqual(path.name, "run00012_hodo_btof0.pdf")
+        self.assertTrue(str(path).endswith("img/run00012/run00012_hodo_btof0.pdf"))
+        path_k = self.qa.btof0_pdf_path(12, kaon=True)
+        self.assertEqual(path_k, path)
 
     def test_prepend_puts_btof0_first(self):
         btof = self.qa.btof0_pdf_path(3, kaon=False)
