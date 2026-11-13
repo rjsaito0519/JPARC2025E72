@@ -407,6 +407,37 @@ def try_post_hodo_after_merge(
 
 
 #_____________________________________________________________________________
+def review_blocks(blocks):
+    """Keep the stage prominent, explanations readable, and actions last."""
+    if not blocks or blocks[0].get("type") != "section":
+        return blocks
+    if not any(block.get("type") == "actions" for block in blocks):
+        return blocks
+    source = (blocks[0].get("text") or {}).get("text") or ""
+    lines = source.splitlines()
+    if not lines:
+        return blocks
+    heading = lines[0].replace("*", "")[:150]
+    body, status, references = [], [], []
+    for line in lines[1:]:
+        if line.startswith("対象PDF:") or any(line.startswith(prefix) for prefix in ("step ", "stale_input:", "qa_delivery_failed:", "write_blocked:", "phc_round_missing:")):
+            references.append(line)
+        elif line.startswith("【"):
+            status.append(line)
+        else:
+            body.append(line)
+    rendered = [{"type": "header", "text": {"type": "plain_text", "text": heading}}]
+    detail = "\n\n".join(part for part in ("\n".join(status), "\n".join(body)) if part)
+    if detail:
+        rendered.append({"type": "section", "text": {"type": "mrkdwn", "text": detail}})
+    if references:
+        rendered.append({"type": "context", "elements": [{"type": "mrkdwn", "text": "\n".join(references)}]})
+    rendered.extend(block for block in blocks[1:] if block.get("type") != "actions")
+    rendered.extend(block for block in blocks[1:] if block.get("type") == "actions")
+    return rendered
+
+
+#_____________________________________________________________________________
 def notify_failure(
     run: int,
     key: str,
@@ -456,7 +487,7 @@ def notify_failure(
                 "text": text,
             }
             if blocks:
-                payload["blocks"] = blocks
+                payload["blocks"] = review_blocks(blocks)
             ok, body, msg = _api(
                 "chat.postMessage",
                 cfg["token"],
@@ -527,7 +558,7 @@ def update_failure_message(
                 "text": text,
             }
             if blocks:
-                payload["blocks"] = blocks
+                payload["blocks"] = review_blocks(blocks)
             ok, _body, msg = _api("chat.update", cfg["token"], payload)
             if not ok:
                 return False, msg

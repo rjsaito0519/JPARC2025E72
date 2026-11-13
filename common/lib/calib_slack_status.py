@@ -175,12 +175,47 @@ def summary_text(run):
 
 
 #_____________________________________________________________________________
+def summary_blocks(run, text):
+    """Use Slack's layout blocks instead of a dense paragraph."""
+    lines = text.splitlines()
+    overall = lines[0].split(" — ", 1)[-1] if lines else "状態記録なし"
+    fields = {}
+    context = []
+    for line in lines[1:]:
+        if line.startswith("*") and "*：" in line:
+            name, content = line[1:].split("*：", 1)
+            content, _, reason = content.partition(" — ")
+            phase, _, stage = content.partition("｜")
+            phase = phase.replace("処理完了・最終承認待ち", "最終承認待ち").replace("停止中（ユーザー操作）", "停止（ユーザー）")
+            fields[name] = {"type": "mrkdwn", "text": f"*{name}*\n{phase}" + (f"\n_{stage}_" if stage else "")}
+            if reason:
+                context.append(f"{name}: {reason}")
+        elif line.startswith("状態の最終更新:"):
+            context.append(line.replace("状態の最終更新:", "状態更新:"))
+        elif line.startswith("操作は"):
+            context.append("操作はスレッド内の最新の確認メッセージから。")
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": f"run{run:05d} · 校正状況"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*全体*　{overall}"}},
+        {"type": "divider"},
+    ]
+    if fields:
+        ordered = [fields.pop(name) for name in ("Hodo", "D5", "BcIn / BLC1", "BcOut / BLC2") if name in fields]
+        ordered.extend(fields.values())
+        blocks.append({"type": "section", "fields": ordered})
+    if context:
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": "\n".join(context)}]})
+    return blocks
+
+
+#_____________________________________________________________________________
 def refresh_parent(run, *, config_path=None):
     """Update only the existing parent. Never create a thread or change calibration."""
     path = slack_notify.state_path(run)
     with locked_path(path.with_name("slack_parent_status.json")):
         text = summary_text(run)
-        signature = hashlib.sha256(text.encode()).hexdigest()
+        blocks = summary_blocks(run, text)
+        signature = hashlib.sha256(json.dumps({"text": text, "blocks": blocks}, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         cfg, status = slack_notify.load_slack_config(config_path)
         if status in ("missing", "disabled"):
             return True, f"slack skip: {status}"
@@ -198,7 +233,7 @@ def refresh_parent(run, *, config_path=None):
         # Keep the PDF/notification state lock free while waiting for Slack.
         ok, _, message = slack_notify._api("chat.update", cfg["token"], {
             "channel": channel, "ts": ts, "text": text,
-            "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": text}}],
+            "blocks": blocks,
         })
         if not ok:
             return False, message

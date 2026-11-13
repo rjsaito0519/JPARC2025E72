@@ -164,7 +164,7 @@ def build_app(bot_cfg):
                 result = f"*run{int(value.split(':')[0]):05d}* 【選択済み】{labels.get(op, op)}"
                 original = body.get("message") or {}
                 original_blocks = original.get("blocks") or []
-                if original_blocks and original_blocks[0].get("type") == "section":
+                if original_blocks and original_blocks[0].get("type") in ("section", "header"):
                     context = str((original_blocks[0].get("text") or {}).get("text") or "").splitlines()
                     if context:
                         result += "\n対象: " + context[0]
