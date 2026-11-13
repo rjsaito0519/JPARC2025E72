@@ -187,7 +187,7 @@ def summary_blocks(run, text):
             content, _, reason = content.partition(" — ")
             phase, _, stage = content.partition("｜")
             phase = phase.replace("処理完了・最終承認待ち", "最終承認待ち").replace("停止中（ユーザー操作）", "停止（ユーザー）")
-            fields[name] = {"type": "mrkdwn", "text": f"*{name}*\n{phase}" + (f"\n_{stage}_" if stage else "")}
+            fields[name] = f"*{name}:* {phase}" + (f"｜{stage}" if stage else "")
             if reason:
                 context.append(f"{name}: {reason}")
         elif line.startswith("状態の最終更新:"):
@@ -200,9 +200,9 @@ def summary_blocks(run, text):
         {"type": "divider"},
     ]
     if fields:
-        ordered = [fields.pop(name) for name in ("Hodo", "D5", "BcIn / BLC1", "BcOut / BLC2") if name in fields]
+        ordered = [fields.pop(name) for name in ("Hodo", "BcIn / BLC1", "BcOut / BLC2", "D5") if name in fields]
         ordered.extend(fields.values())
-        blocks.append({"type": "section", "fields": ordered})
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(ordered)}})
     if context:
         blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": "\n".join(context)}]})
     return blocks
