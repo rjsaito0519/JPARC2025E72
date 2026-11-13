@@ -336,6 +336,8 @@ def main():
 
     app = build_app(bot_cfg)
     slack_bot_ensure.start_heartbeat_loop()
+    from common.lib import calib_slack_status
+    calib_slack_status.start_status_loop(config_path=a.config)
     runner.info(
         "calib_slack_bot listening (Socket Mode); "
         f"users={len(bot_cfg['allowed_user_ids'])} "
