@@ -415,7 +415,7 @@ def status_color(text):
         return "#E3A008"
     if any(word in text for word in ("停止", "止める", "stopped", "開始待ち", "状態記録なし")):
         return "#7A869A"
-    if any(word in text for word in ("承認済み", "最終承認", "CONVERGED", "収束")):
+    if any(word in text for word in ("承認済み", "【選択済み】最終承認", "CONVERGED", "収束")):
         return "#2E9D63"
     return "#2F80ED"
 
@@ -425,7 +425,15 @@ def colored_notice(text, blocks=None):
     content = review_blocks(blocks) if blocks else [
         {"type": "section", "text": {"type": "mrkdwn", "text": text}},
     ]
-    return {"blocks": [], "attachments": [{"color": status_color(text), "blocks": content}]}
+    if content and content[0].get("type") == "header":
+        heading, content = content[0], content[1:]
+    else:
+        lines = str((content[0].get("text") or {}).get("text") or text).splitlines()
+        title = lines[0].replace("*", "")[:150] if len(lines) > 1 else "E72 Calibration"
+        heading = {"type": "header", "text": {"type": "plain_text", "text": title}}
+        if len(lines) > 1:
+            content = [{"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines[1:])}}, *content[1:]]
+    return {"blocks": [heading], "attachments": [{"color": status_color(text), "blocks": content}]}
 
 
 #_____________________________________________________________________________
@@ -520,7 +528,7 @@ def notify_failure(
             failures[key] = {
                 "text": text,
                 "ts": body.get("ts") if isinstance(body.get("ts"), str) else None,
-                "color_layout": 1,
+                "color_layout": 2,
             }
             state["thread_ts"] = thread_ts
             state["channel_id"] = cfg["channel_id"]
@@ -583,7 +591,7 @@ def update_failure_message(
             ok, _body, msg = _api("chat.update", cfg["token"], payload)
             if not ok:
                 return False, msg
-            failures[key] = {"text": text, "ts": ts, "color_layout": 1}
+            failures[key] = {"text": text, "ts": ts, "color_layout": 2}
             state["failures"] = failures
             if not save_state(run, state):
                 return False, "state save failed"

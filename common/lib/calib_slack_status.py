@@ -252,7 +252,7 @@ def refresh_review_colors(run):
                 keys = [phc_range_gate.ask_slack_key(run)]
             for key in keys:
                 note = notes.get(key) or {}
-                if not note.get("ts") or note.get("color_layout") == 1:
+                if not note.get("ts") or note.get("color_layout") == 2:
                     continue
                 if key.startswith("phc_range_ask"):
                     proposal = phc_range_gate.read_proposal(run) or {}

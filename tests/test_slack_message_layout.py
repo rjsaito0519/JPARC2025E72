@@ -42,6 +42,16 @@ class MessageLayoutTests(unittest.TestCase):
                          ['#2F80ED','#7A869A','#D64545','#E3A008'])
         self.assertTrue(all(a['blocks'][0]['type']=='section' for a in layout['attachments']))
 
+    def test_colored_stop_does_not_render_the_same_paragraph_twice(self):
+        text="run02977 選択済み\n対象: PHC 第5ラウンド\nこの段階で一時停止します。"
+        payload=slack_notify.colored_notice(text)
+        self.assertTrue(payload['blocks'], 'nonempty root blocks must suppress the full fallback text')
+        visible=[block.get('text',{}).get('text','') for block in payload['blocks']]
+        visible.extend(block.get('text',{}).get('text','') for attachment in payload['attachments'] for block in attachment['blocks'])
+        self.assertEqual('\n'.join(visible).count('この段階で一時停止します。'),1)
+        self.assertEqual(payload['attachments'][0]['color'],'#7A869A')
+        self.assertEqual(slack_notify.status_color("【選択済み】最良値を採用して終了\n採用後QAを作成します。最終承認は別途必要です。"),'#2F80ED')
+
     def test_review_actions_stay_last_with_their_original_hold_id(self):
         actions={'type':'actions','block_id':'original','elements':[
             {'type':'button','action_id':'calib_step_proceed','value':'2977:hold-id'}]}
