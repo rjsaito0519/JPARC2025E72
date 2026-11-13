@@ -182,6 +182,12 @@ class CalibOpsTests(unittest.TestCase):
         dup2, _ = self.ops.check_dedup(3, "status", "U1", window_s=60)
         self.assertFalse(dup2)
 
+    def test_dedup_is_scoped_to_gate_and_user(self):
+        self.ops.record_op(2977, "proceed", "U1", request_key="bcin-gate")
+        self.assertTrue(self.ops.check_dedup(2977, "proceed", "U1", request_key="bcin-gate")[0])
+        self.assertFalse(self.ops.check_dedup(2977, "proceed", "U1", request_key="bcout-gate")[0])
+        self.assertFalse(self.ops.check_dedup(2977, "proceed", "U2", request_key="bcin-gate")[0])
+
     def _write_held_state(self, run, hold_id, source="step_gate"):
         yml = self.ops.session_yml(run)
         yml.parent.mkdir(parents=True, exist_ok=True)

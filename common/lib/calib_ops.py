@@ -236,7 +236,7 @@ def user_channel_allowed(
 
 #_____________________________________________________________________________
 def check_dedup(
-    run: int, op: str, user_id: str, *, window_s: int = DEDUP_SECONDS,
+    run: int, op: str, user_id: str, *, window_s: int = DEDUP_SECONDS, request_key: str = "",
 ) -> tuple[bool, str]:
     """Return (is_duplicate, message)."""
     path = ops_state_path(run)
@@ -248,7 +248,7 @@ def check_dedup(
         return False, ""
     if not isinstance(data, dict):
         return False, ""
-    if data.get("op") != op:
+    if data.get("op") != op or data.get("user_id") != user_id or data.get("request_key", "") != request_key:
         return False, ""
     try:
         last = float(data.get("epoch") or 0)
@@ -260,16 +260,18 @@ def check_dedup(
 
 
 #_____________________________________________________________________________
-def record_op(run: int, op: str, user_id: str) -> None:
+def record_op(run: int, op: str, user_id: str, *, request_key: str = "") -> None:
     path = ops_state_path(run)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "op": op,
         "user_id": user_id,
+        "request_key": request_key,
         "epoch": time.time(),
         "at": _utc_now(),
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    with locked_path(path):
+        write_json(path, payload)
 
 
 #_____________________________________________________________________________

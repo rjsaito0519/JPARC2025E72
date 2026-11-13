@@ -60,7 +60,10 @@ def handle_calib_request(bot_cfg, user_id, channel_id, text):
     if err:
         return False, err, True
 
-    dup, dup_msg = calib_ops.check_dedup(run, op, user_id)
+    import hashlib
+    import json
+    request_key = hashlib.sha256(json.dumps(extras, sort_keys=True).encode()).hexdigest()
+    dup, dup_msg = calib_ops.check_dedup(run, op, user_id, request_key=request_key)
     if dup:
         return True, dup_msg, True
 
@@ -78,7 +81,8 @@ def handle_calib_request(bot_cfg, user_id, channel_id, text):
         last=extras.get("last"),
         hold_id=extras.get("hold_id"),
     )
-    calib_ops.record_op(run, op, user_id)
+    if ok:
+        calib_ops.record_op(run, op, user_id, request_key=request_key)
     prefix = f"run{run:05d} {op}: "
     return ok, prefix + message, False
 
@@ -155,7 +159,7 @@ def build_app(bot_cfg):
             ok, message, ephemeral = handle_calib_request(
                 bot_cfg, user_id, channel_id, text,
             )
-            if ok:
+            if ok and not ephemeral:
                 labels = {
                     "proceed": "次へ進む", "retry": "手直ししてやり直し",
                     "gate-stop": "止める", "phc-go": "範囲を確定して再実行",

@@ -117,6 +117,41 @@ class SlackBotButtonTests(unittest.TestCase):
                     self.assertNotIn("replace_original", response)
                     self.assertEqual(response["response_type"], "ephemeral")
 
+    def test_distinct_lane_clicks_are_both_applied_and_duplicates_do_not_replace_cards(self):
+        import tempfile
+        import calib_slack_bot as bot
+        from common.lib import config
+        with tempfile.TemporaryDirectory() as scratch, mock.patch.object(config, "OUTPUT_DIR", Path(scratch)), \
+                mock.patch.dict(sys.modules, {"slack_bolt": mock.Mock(App=FakeApp)}):
+            cfg = {"token": "test", "allowed_user_ids": ["U1"], "allowed_channel_ids": ["C1"]}
+            app = bot.build_app(cfg)
+            def body(hold):
+                return {"user": {"id": "U1"}, "channel": {"id": "C1"},
+                        "actions": [{"value": f"2977:{hold}"}]}
+            handler = app.actions["calib_step_proceed"]
+            with mock.patch.object(bot.calib_ops, "run_dispatch", return_value=(True, "applied")) as dispatch:
+                for hold in ("bcin-gate", "bcout-gate"):
+                    reply = mock.Mock()
+                    handler(ack=lambda: None, body=body(hold), respond=reply)
+                    self.assertTrue(reply.call_args.kwargs["replace_original"])
+                self.assertEqual(dispatch.call_count, 2)
+                reply = mock.Mock()
+                handler(ack=lambda: None, body=body("bcout-gate"), respond=reply)
+                self.assertEqual(dispatch.call_count, 2)
+                self.assertNotIn("replace_original", reply.call_args.kwargs)
+                self.assertEqual(reply.call_args.kwargs["response_type"], "ephemeral")
+
+    def test_failed_request_does_not_suppress_a_valid_retry(self):
+        import tempfile
+        import calib_slack_bot as bot
+        from common.lib import config
+        cfg = {"allowed_user_ids": ["U1"], "allowed_channel_ids": ["C1"]}
+        with tempfile.TemporaryDirectory() as scratch, mock.patch.object(config, "OUTPUT_DIR", Path(scratch)), \
+                mock.patch.object(bot.calib_ops, "run_dispatch", side_effect=[(False, "failed"), (True, "applied")]) as dispatch:
+            self.assertFalse(bot.handle_calib_request(cfg, "U1", "C1", "proceed 2977:hold")[0])
+            self.assertTrue(bot.handle_calib_request(cfg, "U1", "C1", "proceed 2977:hold")[0])
+            self.assertEqual(dispatch.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
