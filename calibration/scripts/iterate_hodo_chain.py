@@ -187,6 +187,9 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
         hodo_hdphc_rounds.clear_rounds(a.run)
     journal = hodo_hdphc_rounds.load_journal(a.run)
     prior = [entry for entry in journal if int(entry["round"]) < round_i]
+    if hodo_hdphc_rounds.finish_requested(a.run, prior):
+        runner.info(f"PHC iterations finished by user; round {round_i} skipped before best-round adoption")
+        return runner.EXIT_SKIP
     progress = hodo_hdphc_rounds.adaptive_progress(
         prior, patience=getattr(a, "hdphc_patience", 3),
         max_rounds=getattr(a, "hdphc_iter", 10),
@@ -259,7 +262,8 @@ def run_hdphc_adopt_stage(a):
     )
     journal = hodo_hdphc_rounds.load_journal(a.run)
     try:
-        chosen = hodo_hdphc_rounds.pick_round(journal, a.adopt)
+        adopt = "auto" if hodo_hdphc_rounds.finish_requested(a.run, journal) else a.adopt
+        chosen = hodo_hdphc_rounds.pick_round(journal, adopt)
     except ValueError as exc:
         runner.fail(str(exc))
     runner.info(f"adopting hdphc round {chosen}")

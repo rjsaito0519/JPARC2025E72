@@ -64,6 +64,9 @@ class CalibOpsTests(unittest.TestCase):
         self.assertEqual(extras.get("hold_id"), "aa11bb22")
         op, run, err, extras = self.ops.parse_calib_text("hdphc-again 3")
         self.assertEqual((op, run, err, extras), ("hdphc-again", 3, "", {}))
+        op, run, err, extras = self.ops.parse_calib_text("phc-finish 2977:current")
+        self.assertEqual((op, run, err), ("phc-finish", 2977, ""))
+        self.assertEqual(extras.get("hold_id"), "current")
         op, run, err, extras = self.ops.parse_calib_text("phc-go 2977")
         self.assertEqual((op, run, err, extras), ("phc-go", 2977, "", {}))
         op, run, err, extras = self.ops.parse_calib_text(

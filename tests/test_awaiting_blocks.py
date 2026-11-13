@@ -37,6 +37,16 @@ class AwaitingBlocksTests(unittest.TestCase):
         )
         self.assertEqual({e["value"] for e in actions}, {"7:abc12def"})
 
+    def test_only_successful_phc_gates_offer_adopt_and_finish(self):
+        blocks=self.approval.step_gate_action_blocks(7,"hodo_hdphc",0,hold_id="current")
+        actions=blocks[1]["elements"]
+        finish=next(button for button in actions if button["action_id"]=="calib_phc_finish")
+        self.assertEqual(finish["value"],"7:current")
+        stopped=next(button for button in actions if button["action_id"]=="calib_step_stop")
+        self.assertEqual(stopped["text"]["text"],"一時停止")
+        check=self.approval.exit_check_action_blocks(7,"hodo_hdphc",0,reason="phc_no_update: invalid")
+        self.assertNotIn("calib_phc_finish",[button["action_id"] for button in check[1]["elements"]])
+
     def test_notify_step_gate_key_includes_hold_id(self):
         from common.lib import slack_notify
 

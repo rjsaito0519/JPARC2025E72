@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import shutil
 from datetime import datetime, timezone
@@ -143,6 +144,42 @@ def load_journal(run: int) -> list[dict[str, Any]]:
         rows = {index: row for index, row in rows.items() if index < round_i}
         rows[round_i] = entry
     return [rows[index] for index in sorted(rows)]
+
+
+#_____________________________________________________________________________
+def journal_signature(journal):
+    return hashlib.sha256(json.dumps(journal, sort_keys=True).encode()).hexdigest()
+
+
+#_____________________________________________________________________________
+def request_finish(run, *, hold_id, user_id=None):
+    """Pin an operator's decision to finish this exact, successfully scored series."""
+    from .calib_state_io import write_json
+    journal = load_journal(run)
+    if not journal or [int(row["round"]) for row in journal] != list(range(1, len(journal) + 1)):
+        raise ValueError("PHC の連続した評価記録がありません。未完了ラウンドを確認してください。")
+    if any(not row.get("ok") or not width_ok(row.get("width")) for row in journal):
+        raise ValueError("PHC の幅評価が未完了なので、正常終了できません。")
+    chosen = pick_round(journal, "auto")
+    selected = next(row for row in journal if int(row["round"]) == chosen)
+    snapshot = round_dir(run, chosen) / selected["param_file"]
+    if not snapshot.is_file() or qa_session.file_sha256(snapshot) != selected.get("param_sha"):
+        raise ValueError("最良ラウンドのパラメータ保存を確認できません。")
+    record = {"at": _utc_now(), "hold_id": hold_id, "user_id": user_id,
+              "completed_round": int(journal[-1]["round"]), "best_round": chosen,
+              "journal_signature": journal_signature(journal)}
+    write_json(rounds_dir(run) / "finish_request.json", record)
+    return record
+
+
+#_____________________________________________________________________________
+def finish_requested(run, journal):
+    """Refitting or resetting the series invalidates an earlier finish request."""
+    try:
+        record = json.loads((rounds_dir(run) / "finish_request.json").read_text())
+    except (OSError, ValueError):
+        return False
+    return bool(journal) and record.get("journal_signature") == journal_signature(journal)
 
 
 #_____________________________________________________________________________

@@ -14,6 +14,7 @@ BUTTON_ACTION_IDS = (
     "calib_step_refit",
     "calib_step_stop",
     "calib_phc_go",
+    "calib_phc_finish",
 )
 
 

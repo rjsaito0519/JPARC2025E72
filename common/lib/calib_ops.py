@@ -26,14 +26,14 @@ OPS = (
     "status", "stop", "resume", "approve", "revoke",
     "hold", "decide", "hdphc-again", "flag", "clear",
     "proceed", "retry", "gate-stop",
-    "phc-go", "phc-range",
+    "phc-go", "phc-range", "phc-finish",
 )
 DECIDE_ACTIONS = ("refit", "continue")
 DEDUP_SECONDS = 5
 USAGE = (
     "usage: /calib status|stop|resume|approve|revoke|hdphc-again <run> | "
     "hold <run> <reason...> | decide <run> refit|continue | "
-    "proceed|retry|gate-stop <run> | "
+    "proceed|retry|gate-stop|phc-finish <run> | "
     "phc-range <run> <det> <first> <last> | phc-go <run> | "
     "flag <run> <mode> <det> <channel> <reason...> | "
     "clear <run> <mode> <det> <channel>"
@@ -201,7 +201,7 @@ def parse_calib_text(
             return None, None, "approve subject_sha after ':' must be non-empty", {}
         extras["subject_sha"] = sha
         return op, run, "", extras
-    if op in ("proceed", "retry", "gate-stop") and ":" in token:
+    if op in ("proceed", "retry", "gate-stop", "phc-finish") and ":" in token:
         run_s, hold_id = token.split(":", 1)
         try:
             run = int(run_s)
@@ -451,6 +451,42 @@ def apply_phc_go(
 
 
 #_____________________________________________________________________________
+def apply_phc_finish(run, *, hold_id, user_id=None, background_resume=True, timeout_s=30.0):
+    """Finish iterations at a successful PHC gate, then run the existing adopt/QA stage."""
+    from . import hodo_hdphc_rounds
+    if not hold_id:
+        return False, "終了するPHCの確認ボタンを指定してください。"
+    path, state = _find_held_state(run, hold_id)
+    if path is None or state is None:
+        return False, "このPHC確認は既に無効です。最新の確認メッセージを使ってください。"
+    with locked_path(path):
+        state = _read_state_file(path) or {}
+        hold = state.get("hold") or {}
+        if (state.get("status") != "held" or hold.get("id") != hold_id
+                or state.get("step") != "hodo_hdphc" or state.get("rc") != 0
+                or hold.get("source") != "step_gate"):
+            return False, "更新・幅評価が完了したPHCラウンドだけ、採用して終了できます。"
+        try:
+            journal = hodo_hdphc_rounds.load_journal(run)
+            if not journal or int(journal[-1]["round"]) != int((state.get("opts") or {}).get("hdphc_round", 0)):
+                return False, "現在ラウンドの評価記録を確認できません。"
+            record = hodo_hdphc_rounds.request_finish(run, hold_id=hold_id, user_id=user_id)
+        except (ValueError, KeyError, OSError) as exc:
+            return False, str(exc)
+        sys.path.insert(0, str(DISPATCH_SCRIPT.parent))
+        import calib_dispatch as cd
+        cd.apply_decide(run, "continue", hold_id=hold_id, user_id=user_id,
+                        note="User finished PHC iterations; adopt the best scored round and generate QA")
+        cd.append_hold_journal(run, {"event": "phc_finish_requested", "lane": "hodo", **record})
+        waiter = bool(state.get("gate_waiter"))
+    if waiter:
+        return True, f"第{record['completed_round']}回で反復を終了し、第{record['best_round']}回を採用してQAを作成します。"
+    ok, message = run_dispatch("resume", run, lane=(path.parent.name if path.parent.parent.name == "lanes" else None),
+                               background_resume=background_resume, timeout_s=timeout_s, user_id=user_id)
+    return ok, f"最良値の採用・QAへ再開: {message}"
+
+
+#_____________________________________________________________________________
 def run_dispatch(
     command: str,
     run: int,
@@ -478,6 +514,10 @@ def run_dispatch(
             f"no session YAML for run{run:05d}: {yml.name} "
             f"(run calib_session.py init first)"
         )
+
+    if command == "phc-finish":
+        return apply_phc_finish(run, hold_id=hold_id, user_id=user_id,
+                                background_resume=background_resume, timeout_s=timeout_s)
 
     if command == "phc-go":
         return apply_phc_go(

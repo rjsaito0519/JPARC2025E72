@@ -91,6 +91,60 @@ class AdaptivePhcTests(unittest.TestCase):
             self.assertEqual(stopped.exception.code, runner.EXIT_CHECK)
             decode.assert_not_called()
 
+    def completed_series(self):
+        parameter = rounds.hdphc_param_path(1, "Pi")
+        parameter.parent.mkdir(parents=True, exist_ok=True)
+        for index, width in enumerate((2.0, 1.0, 1.2), 1):
+            parameter.write_text(f"round{index}")
+            rounds.snapshot_round(1, index, "Pi", {"width":width,"ok":True,"n_entries":100})
+        return parameter
+
+    def test_manual_finish_skips_remaining_updates_then_restores_best(self):
+        parameter = self.completed_series()
+        record = rounds.request_finish(1, hold_id="gate", user_id="U1")
+        self.assertEqual(record["best_round"], 2)
+        args = SimpleNamespace(run=1, kaon=False, hdphc_iter=10)
+        with mock.patch.object(iterator, "stage_prepare_and_decode") as decode:
+            self.assertEqual(iterator.run_hdphc_one_round(args, 4, clear_journal=False), runner.EXIT_SKIP)
+            self.assertEqual(iterator.run_hdphc_one_round(args, 5, clear_journal=False), runner.EXIT_SKIP)
+        decode.assert_not_called()
+        self.assertEqual(parameter.read_text(), "round3")
+        adopt_args = SimpleNamespace(run=1, kaon=False, ftof=False, force=False, local=True, adopt="1")
+        with mock.patch.object(iterator.config, "ANALYZER_DIR", self.root / "analyzer"), \
+                mock.patch.object(iterator, "stage_prepare_and_decode", return_value=self.root / "runlist.yml"), \
+                mock.patch.object(iterator.decode_run, "run_decode"), \
+                mock.patch.object(iterator, "run_hodo_ok") as qa:
+            iterator.run_hdphc_adopt_stage(adopt_args)
+        self.assertEqual(parameter.read_text(), "round2")
+        self.assertIn("--qa-only", qa.call_args.args[1])
+        self.assertIn("--adopted-round 2", qa.call_args.args[1])
+
+    def test_refit_invalidates_manual_finish_request(self):
+        parameter = self.completed_series()
+        rounds.request_finish(1, hold_id="gate")
+        parameter.write_text("refit3")
+        rounds.snapshot_round(1, 3, "Pi", {"width":.5,"ok":True,"n_entries":100})
+        self.assertFalse(rounds.finish_requested(1, rounds.load_journal(1)))
+
+    def test_finish_operation_requires_successful_current_round_and_preserves_final_approval(self):
+        from common.lib import calib_ops
+        self.completed_series()
+        session = Path(config.OUTPUT_DIR)/"calib/run00001/calib_session.yml"
+        session.write_text("run: 1\nsteps: [hodo_hdphc]\n")
+        hold = cd.make_hold("step_gate", "completed", "hodo_hdphc", 2, 0)
+        state = {"run":1,"status":"held","step":"hodo_hdphc","index":2,"rc":0,
+                 "opts":{"hdphc_round":3},"hold":hold,"gate_waiter":False}
+        with mock.patch.dict(os.environ, {"E72_CALIB_LANE":"hodo"}):
+            cd.write_state(1, state)
+            with mock.patch.object(calib_ops, "run_dispatch", return_value=(True,"resume started")) as resume:
+                ok, message = calib_ops.apply_phc_finish(1, hold_id=hold["id"], user_id="U1")
+            self.assertTrue(ok, message)
+            self.assertEqual(resume.call_args.kwargs["lane"], "hodo")
+            self.assertNotEqual(cd.read_state(1)["status"], "approved")
+            state["rc"]=3
+            cd.write_state(1,state)
+            self.assertFalse(calib_ops.apply_phc_finish(1,hold_id=hold["id"])[0])
+
     def test_refit_invalidates_later_round_scores(self):
         path = rounds.journal_path(1)
         path.parent.mkdir(parents=True)

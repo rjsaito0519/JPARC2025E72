@@ -162,7 +162,8 @@ def build_app(bot_cfg):
             if ok and not ephemeral:
                 labels = {
                     "proceed": "次へ進む", "retry": "手直ししてやり直し",
-                    "gate-stop": "止める", "phc-go": "範囲を確定して再実行",
+                    "gate-stop": "一時停止", "phc-go": "範囲を確定して再実行",
+                    "phc-finish": "最良値を採用して終了",
                     "approve": "最終承認", "revoke": "承認を取り消す",
                 }
                 result = f"*run{int(value.split(':')[0]):05d}* 【選択済み】{labels.get(op, op)}"
@@ -175,10 +176,12 @@ def build_app(bot_cfg):
                     context = str((original_blocks[0].get("text") or {}).get("text") or "").splitlines()
                     if context:
                         result += "\n対象: " + context[0]
-                if op in ("proceed", "retry", "phc-go"):
+                if op == "phc-finish":
+                    result += "\n反復を終了し、最良ラウンドの採用と採用後QAを行います。最終承認はQA確認後に別途行ってください。"
+                elif op in ("proceed", "retry", "phc-go"):
                     result += "\n操作を受け付けました。次の結果をお待ちください。"
                 elif op == "gate-stop":
-                    result += "\nこの段階で停止します。再開するまで次へ進みません。"
+                    result += "\nこの段階で一時停止します。正常完了や最良値の採用は行いません。"
                 blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": result}}]
                 if op == "approve":
                     blocks.append({"type": "actions", "elements": [{
@@ -201,6 +204,7 @@ def build_app(bot_cfg):
     app.action("calib_step_refit")(_button_action("retry"))
     app.action("calib_step_stop")(_button_action("gate-stop"))
     app.action("calib_phc_go")(_button_action("phc-go"))
+    app.action("calib_phc_finish")(_button_action("phc-finish"))
 
     @app.action("calib_phc_custom")
     def phc_custom_open(ack, body, client):

@@ -896,7 +896,7 @@ def step_gate_action_blocks(
     step_s = str(step or "?")
     hold_s = str(hold_id or "").strip()
     value = f"{run_s}:{hold_s}" if hold_s else run_s
-    return [
+    blocks = [
         {
             "type": "section",
             "text": {
@@ -927,13 +927,21 @@ def step_gate_action_blocks(
                 {
                     "type": "button",
                     "action_id": "calib_step_stop",
-                    "text": {"type": "plain_text", "text": "止める"},
+                    "text": {"type": "plain_text", "text": "一時停止"},
                     "style": "danger",
                     "value": value,
                 },
             ],
         },
     ]
+    if step_s == "hodo_hdphc":
+        blocks[1]["elements"].insert(1, {
+            "type": "button", "action_id": "calib_phc_finish",
+            "text": {"type": "plain_text", "text": "最良値を採用して終了"},
+            "value": value,
+        })
+    return blocks
+
 
 
 #_____________________________________________________________________________
@@ -1037,7 +1045,7 @@ def exit_check_action_blocks(
                 {
                     "type": "button",
                     "action_id": "calib_step_stop",
-                    "text": {"type": "plain_text", "text": "止める"},
+                    "text": {"type": "plain_text", "text": "一時停止"},
                     "style": "danger",
                     "value": value,
                 },
