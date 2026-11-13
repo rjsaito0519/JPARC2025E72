@@ -112,7 +112,7 @@ class SlackBotButtonTests(unittest.TestCase):
                 if success:
                     self.assertTrue(response["replace_original"])
                     self.assertIn("選択済み", response["text"])
-                    self.assertFalse(any(b["type"] == "actions" for b in response["blocks"]))
+                    self.assertFalse(any(b["type"] == "actions" for a in response["attachments"] for b in a["blocks"]))
                 else:
                     self.assertNotIn("replace_original", response)
                     self.assertEqual(response["response_type"], "ephemeral")

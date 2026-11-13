@@ -407,6 +407,28 @@ def try_post_hodo_after_merge(
 
 
 #_____________________________________________________________________________
+def status_color(text):
+    """Consistent color bars; labels still carry meaning without color."""
+    if any(word in text for word in ("エラー", "失敗", "failed", "FAIL", "ERROR")):
+        return "#D64545"
+    if any(word in text for word in ("確認待ち", "承認待ち", "要確認", "CHECK", "SETTLED", "held", "取り消")):
+        return "#E3A008"
+    if any(word in text for word in ("停止", "止める", "stopped", "開始待ち", "状態記録なし")):
+        return "#7A869A"
+    if any(word in text for word in ("承認済み", "最終承認", "CONVERGED", "収束")):
+        return "#2E9D63"
+    return "#2F80ED"
+
+
+#_____________________________________________________________________________
+def colored_notice(text, blocks=None):
+    content = review_blocks(blocks) if blocks else [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+    ]
+    return {"blocks": [], "attachments": [{"color": status_color(text), "blocks": content}]}
+
+
+#_____________________________________________________________________________
 def review_blocks(blocks):
     """Keep the stage prominent, explanations readable, and actions last."""
     if not blocks or blocks[0].get("type") != "section":
@@ -486,8 +508,7 @@ def notify_failure(
                 "thread_ts": thread_ts,
                 "text": text,
             }
-            if blocks:
-                payload["blocks"] = review_blocks(blocks)
+            payload.update(colored_notice(text, blocks))
             ok, body, msg = _api(
                 "chat.postMessage",
                 cfg["token"],
@@ -499,6 +520,7 @@ def notify_failure(
             failures[key] = {
                 "text": text,
                 "ts": body.get("ts") if isinstance(body.get("ts"), str) else None,
+                "color_layout": 1,
             }
             state["thread_ts"] = thread_ts
             state["channel_id"] = cfg["channel_id"]
@@ -557,12 +579,11 @@ def update_failure_message(
                 "ts": ts,
                 "text": text,
             }
-            if blocks:
-                payload["blocks"] = review_blocks(blocks)
+            payload.update(colored_notice(text, blocks))
             ok, _body, msg = _api("chat.update", cfg["token"], payload)
             if not ok:
                 return False, msg
-            failures[key] = {"text": text, "ts": ts}
+            failures[key] = {"text": text, "ts": ts, "color_layout": 1}
             state["failures"] = failures
             if not save_state(run, state):
                 return False, "state save failed"

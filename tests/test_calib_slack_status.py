@@ -124,6 +124,30 @@ class ParentStatusTests(unittest.TestCase):
             self.assertTrue(status.refresh_parent(2977)[0])
         self.assertEqual(slack_notify.load_state(2977)['posts']['current']['pdf'],'new.pdf')
 
+    def test_only_the_active_undecided_gate_is_recolored_once(self):
+        hold={'id':'live','source':'step_gate','step':'hodo_hdphc','index':0,'decision':None}
+        self.lane('hodo',status='held',index=0,rc=0,hold=hold)
+        key='step_gate:0:hodo_hdphc:hodo:live'
+        self.thread(failures={key:{'text':'run02977 Hodo\n【確認待ち】完了','ts':'101.2'}})
+        path=self.directory/'lanes/hodo/calib_dispatch_state.json'
+        before=path.read_bytes()
+        with mock.patch.object(slack_notify,'_api',return_value=(True,{},'ok')) as api:
+            status.refresh_review_colors(2977)
+            status.refresh_review_colors(2977)
+        api.assert_called_once()
+        payload=api.call_args.args[2]
+        self.assertEqual(payload['ts'],'101.2')
+        self.assertEqual(payload['attachments'][0]['color'],'#E3A008')
+        actions=next(b for b in payload['attachments'][0]['blocks'] if b['type']=='actions')
+        self.assertTrue(all(e['value']=='2977:live' for e in actions['elements']))
+        self.assertEqual(path.read_bytes(),before)
+        self.thread(failures={key:{'text':'old','ts':'101.2'}})
+        hold['decision']='stop'
+        self.lane('hodo',status='held',index=0,hold=hold)
+        with mock.patch.object(slack_notify,'_api') as api:
+            status.refresh_review_colors(2977)
+        api.assert_not_called()
+
     def test_old_channel_is_never_updated(self):
         self.lane('hodo'); self.thread(channel_id='OLD')
         with mock.patch.object(slack_notify,'_api') as api:

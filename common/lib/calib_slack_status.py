@@ -209,13 +209,75 @@ def summary_blocks(run, text):
 
 
 #_____________________________________________________________________________
+def parent_layout(run, text):
+    blocks = summary_blocks(run, text)
+    heading, attachments, context = [], [], []
+    for block in blocks:
+        body = (block.get("text") or {}).get("text", "")
+        if block.get("type") == "section" and any(body.startswith(f"*{name}:") for name in (*LABELS.values(), "較正")):
+            for row in body.splitlines():
+                attachments.append({"color": slack_notify.status_color(row),
+                                    "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": row}}]})
+        elif block.get("type") == "context":
+            context.append(block)
+        else:
+            heading.append(block)
+    if context:
+        if attachments:
+            attachments[-1]["blocks"].extend(context)
+        else:
+            heading.extend(context)
+    return {"blocks": heading, "attachments": attachments}
+
+
+#_____________________________________________________________________________
+def refresh_review_colors(run):
+    """Restyle only still-active holds, including gates from older workers."""
+    directory = Path(config.OUTPUT_DIR) / "calib" / f"run{run:05d}"
+    for path in [directory / "calib_dispatch_state.json", *sorted(directory.glob("lanes/*/calib_dispatch_state.json"))]:
+        if not path.is_file():
+            continue
+        with locked_path(path):
+            state = read_object(path)
+            hold = state.get("hold") or {}
+            if state.get("status") != "held" or hold.get("decision") is not None:
+                continue
+            source, hold_id = hold.get("source"), hold.get("id")
+            if not hold_id or source not in ("step_gate", "exit_check"):
+                continue
+            notes = slack_notify.load_state(run).get("failures") or {}
+            keys = [key for key in notes if key.endswith(":" + str(hold_id))]
+            if "phc_range_proposal:" in str(hold.get("reason") or ""):
+                from . import phc_range_gate
+                keys = [phc_range_gate.ask_slack_key(run)]
+            for key in keys:
+                note = notes.get(key) or {}
+                if not note.get("ts") or note.get("color_layout") == 1:
+                    continue
+                if key.startswith("phc_range_ask"):
+                    proposal = phc_range_gate.read_proposal(run) or {}
+                    blocks = phc_range_gate.phc_range_action_blocks(run, proposal.get("proposals") or [])
+                elif source == "step_gate":
+                    blocks = calib_approval.step_gate_action_blocks(run, hold["step"], hold["index"], str(hold_id))
+                    blocks[0]["text"]["text"] = note.get("text") or blocks[0]["text"]["text"]
+                else:
+                    blocks = calib_approval.exit_check_action_blocks(
+                        run, hold["step"], hold["index"], str(hold_id),
+                        lane=str(hold.get("lane") or ""), reason=str(hold.get("reason") or ""),
+                    )
+                ok, message = slack_notify.update_failure_message(run, key, note["text"], blocks=blocks)
+                if not ok:
+                    print(f"[Warning] Slack review color run{run:05d}: {message}", flush=True)
+
+
+#_____________________________________________________________________________
 def refresh_parent(run, *, config_path=None):
     """Update only the existing parent. Never create a thread or change calibration."""
     path = slack_notify.state_path(run)
     with locked_path(path.with_name("slack_parent_status.json")):
         text = summary_text(run)
-        blocks = summary_blocks(run, text)
-        signature = hashlib.sha256(json.dumps({"text": text, "blocks": blocks}, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        layout = parent_layout(run, text)
+        signature = hashlib.sha256(json.dumps({"text": text, **layout}, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         cfg, status = slack_notify.load_slack_config(config_path)
         if status in ("missing", "disabled"):
             return True, f"slack skip: {status}"
@@ -233,7 +295,7 @@ def refresh_parent(run, *, config_path=None):
         # Keep the PDF/notification state lock free while waiting for Slack.
         ok, _, message = slack_notify._api("chat.update", cfg["token"], {
             "channel": channel, "ts": ts, "text": text,
-            "blocks": blocks,
+            **layout,
         })
         if not ok:
             return False, message
@@ -266,6 +328,7 @@ def start_status_loop(*, config_path=None, interval_s=POLL_SECONDS):
                 try:
                     run = int(path.parent.name.removeprefix("run"))
                     ok, message = refresh_parent(run, config_path=config_path)
+                    refresh_review_colors(run)
                     if not ok:
                         print(f"[Warning] Slack status run{run:05d}: {message}", flush=True)
                     if message != "unchanged" and not message.startswith(("skip:", "slack skip:")):

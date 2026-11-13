@@ -167,7 +167,10 @@ def build_app(bot_cfg):
                 }
                 result = f"*run{int(value.split(':')[0]):05d}* 【選択済み】{labels.get(op, op)}"
                 original = body.get("message") or {}
-                original_blocks = original.get("blocks") or []
+                original_blocks = original.get("blocks") or [
+                    block for attachment in original.get("attachments") or []
+                    for block in attachment.get("blocks") or []
+                ]
                 if original_blocks and original_blocks[0].get("type") in ("section", "header"):
                     context = str((original_blocks[0].get("text") or {}).get("text") or "").splitlines()
                     if context:
@@ -183,7 +186,9 @@ def build_app(bot_cfg):
                         "text": {"type": "plain_text", "text": "承認を取り消す"},
                         "value": value.split(":")[0],
                     }]})
-                respond(text=result, blocks=blocks, replace_original=True)
+                from common.lib import slack_notify
+                layout = slack_notify.colored_notice(result, blocks)
+                respond(text=result, replace_original=True, **layout)
             else:
                 respond(text=message, response_type="ephemeral")
             if not ok and not ephemeral:

@@ -28,6 +28,20 @@ class MessageLayoutTests(unittest.TestCase):
         self.assertFalse(any('fields' in block for block in blocks))
         self.assertTrue(any(block['type']=='context' for block in blocks))
 
+    def test_status_colors_are_distinct_and_lane_order_stays_vertical(self):
+        labels=['▶ 実行中','⏸ 停止中','❌ エラーで停止','🟡 確認待ち','✅ 承認済み']
+        self.assertEqual(len({slack_notify.status_color(label) for label in labels}),5)
+        text='\n'.join(['run02977 — 実行中',
+                         '*Hodo*：▶ 実行中｜PHC',
+                         '*BcIn / BLC1*：⏸ 停止中｜residual',
+                         '*BcOut / BLC2*：❌ エラーで停止｜TDC',
+                         '*D5*：🟡 確認待ち｜位置合わせ'])
+        layout=calib_slack_status.parent_layout(2977,text)
+        self.assertEqual(len(layout['attachments']),4)
+        self.assertEqual([a['color'] for a in layout['attachments']],
+                         ['#2F80ED','#7A869A','#D64545','#E3A008'])
+        self.assertTrue(all(a['blocks'][0]['type']=='section' for a in layout['attachments']))
+
     def test_review_actions_stay_last_with_their_original_hold_id(self):
         actions={'type':'actions','block_id':'original','elements':[
             {'type':'button','action_id':'calib_step_proceed','value':'2977:hold-id'}]}
