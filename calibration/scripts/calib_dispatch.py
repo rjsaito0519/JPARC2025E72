@@ -1759,6 +1759,22 @@ def _coordinator_outcome_for_lane(run, lane, rc):
 #_____________________________________________________________________________
 def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
     """Parent: run hodo/bcout/bcin in parallel; d5 after both DC lanes done."""
+    if dry_run:
+        codes = []
+        for lane in calib_lanes.LANE_ORDER:
+            if lane not in lane_steps:
+                continue
+            if isinstance(prior_lanes, dict) and calib_lanes.lane_complete_for_deps(prior_lanes.get(lane)):
+                runner.info(f"[dry-run] lane [{lane}] already complete; skip")
+                continue
+            lane_cfg = dict(cfg, steps=list(lane_steps[lane]))
+            runner.info(f"[dry-run] lane [{lane}] plan ({len(lane_steps[lane])} steps)")
+            try:
+                run_steps(lane_cfg, True, 0, [], f"dry-run[{lane}]")
+            except SystemExit as result:
+                codes.append(result.code if isinstance(result.code, int) else runner.EXIT_FAIL)
+        runner.info("calib_dispatch dry-run plan complete (no lane workers started)")
+        sys.exit(runner.worst(codes))
     run = int(cfg["run"])
     status = {lane: "pending" for lane in lane_steps}
     if isinstance(prior_lanes, dict):

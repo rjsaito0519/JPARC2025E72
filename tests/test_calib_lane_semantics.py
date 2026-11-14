@@ -158,7 +158,7 @@ class LaneSemanticsTests(unittest.TestCase):
             self.cd, "spawn_lane_worker", side_effect=fake_spawn,
         ):
             with self.assertRaises(SystemExit) as caught:
-                self.cd.run_lane_coordinator(cfg, dry_run=True, lane_steps=lane_steps)
+                self.cd.run_lane_coordinator(cfg, dry_run=False, lane_steps=lane_steps)
         self.assertNotIn("d5", spawned)
         top = self.cd.read_state(run, lane="")
         self.assertEqual(top.get("status"), "stopped")

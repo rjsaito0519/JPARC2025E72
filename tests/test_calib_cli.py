@@ -147,6 +147,18 @@ class CalibCliHelpersTests(unittest.TestCase):
         self.assertIn("confirmation still pending", result.stdout)
         self.assertEqual(original, {path: path.read_bytes() for path in files})
 
+    def test_list_full_chain_dry_does_not_create_running_state(self):
+        result = self.batch({"hodo": True, "bcout": True, "bcin": True, "d5": True,
+                             "hdphc_iter": 3, "max_iter": 2}, "--local", "--dry")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        directory = self.root / "out/calib/run00105"
+        self.assertTrue((directory / "calib_session.yml").is_file())
+        self.assertFalse(list(directory.rglob("calib_dispatch_state.json")))
+        self.assertFalse(list(directory.rglob("progress.jsonl")))
+        self.assertFalse(list(directory.rglob("hold_journal.jsonl")))
+        self.assertIn("no lane workers started", result.stdout)
+        self.assertIn("iterate_d5_align.py", result.stdout)
+
     def test_steps_from_flags(self):
         result = self.py(
             "from calibration.scripts import calib_session as cs\n"
