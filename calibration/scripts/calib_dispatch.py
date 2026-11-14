@@ -961,9 +961,12 @@ def enter_held(run, payload, hold, event_type, cfg_steps=None):
     payload = dict(payload)
     payload["status"] = "held"
     payload["hold"] = hold
-    if hold.get("source") in ("step_gate", "exit_check"):
+    if hold.get("source") in ("step_gate", "exit_check") and payload.get("approval_mode") != "auto":
         payload["gate_waiter"] = True
         payload["gate_waiter_pid"] = os.getpid()
+    elif payload.get("approval_mode") == "auto":
+        payload["gate_waiter"] = False
+        payload.pop("gate_waiter_pid", None)
     payload["hold_requested"] = False
     payload["stop_requested"] = False
     if "hold_reason" in payload:
@@ -990,10 +993,19 @@ def enter_held(run, payload, hold, event_type, cfg_steps=None):
 
 
 #_____________________________________________________________________________
-def mark_awaiting_final(run, payload):
+def mark_awaiting_final(run, payload, *, automatic=False):
     """Write process-complete state and notify Slack (best-effort)."""
     payload = dict(payload)
     payload["finished"] = True
+    if automatic:
+        from common.lib import calib_auto
+        payload.update(status="done", approval_mode="auto", updated_at=utc_now())
+        payload.pop("approval", None)
+        write_state(run, payload)
+        calib_auto.note(run, "process_complete", lane=calib_lanes.active_lane())
+        calib_approval.append_approval_journal(run, {"event": "auto_complete", "via": "auto"})
+        runner.info(f"run{run:05d}: automatic processing complete; no approval required")
+        return None
     payload["status"] = calib_approval.STATUS_AWAITING
     payload.pop("approval", None)
     payload["updated_at"] = utc_now()
@@ -1349,8 +1361,8 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
             # Carry hold from prior state if present (decide continue path).
             if prev and isinstance(prev.get("hold"), dict):
                 base["hold"] = prev["hold"]
-            mark_awaiting_final(cfg["run"], base)
-        runner.info(f"calib_dispatch {label} process complete (awaiting final approval)")
+            mark_awaiting_final(cfg["run"], base, automatic=bool(cfg.get("auto")))
+        runner.info(f"calib_dispatch {label} process complete " + ("(automatic; no approval required)" if cfg.get("auto") else "(awaiting final approval)"))
         sys.exit(done_rc)
 
     runner.info(
@@ -1390,7 +1402,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 # and shell errors, before stopping the chain.
                 rc, _ = runner.sh(
                     cmd, check=False,
-                    env={**os.environ, "E72_CALIB_DISPATCH": "1"},
+                    env={**os.environ, "E72_CALIB_DISPATCH": "1", "E72_CALIB_AUTO": "1" if cfg.get("auto") else "0"},
                 )
             except (KeyboardInterrupt, OSError) as e:
                 runner.warn(f"step {name} interrupted: {type(e).__name__}")
@@ -1404,7 +1416,7 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
         if not dry_run and rc == runner.EXIT_CHECK:
             detail = calib_anomaly.read_check_reason(cfg["run"])
             # Fine steps regenerate their runlist and decode before fitting.
-            retryable = name not in ("hodo", "dc_chamber", "d5_align")
+            retryable = name not in ("hodo", "dc_chamber", "d5_align") or bool(cfg.get("auto"))
             retries = stale_retries.get(i, 0)
             if (detail.startswith("stale_input:") and retryable and retries < 2
                     and not stop_requested(cfg["run"]) and not hold_requested(cfg["run"])):
@@ -1442,6 +1454,8 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 runner.warn(f"stopping after step {name} (rc={rc})")
                 sys.exit(rc)
 
+            if cfg.get("auto"):
+                base["approval_mode"] = "auto"
             # EXIT_CHECK: hold and wait in-process (Slack / CLI decide).
             from common.lib import calib_anomaly
             detail = calib_anomaly.read_check_reason(cfg["run"])
@@ -1458,6 +1472,9 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 step=name, index=i, rc=rc, status="held",
                 hold_source="exit_check",
             )
+            if cfg.get("auto"):
+                runner.warn(f"auto run{cfg['run']:05d} stopped after {name}: {reason}; no approval wait")
+                sys.exit(rc)
             _ensure_slack_bot_for_gates(cfg, dry_run)
             ok_slack, slack_msg = calib_approval.notify_exit_check_slack(
                 cfg["run"], hold,
@@ -1604,13 +1621,13 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
         prev = read_state(cfg["run"])
         if prev and isinstance(prev.get("hold"), dict):
             base["hold"] = prev["hold"]
-        mark_awaiting_final(cfg["run"], base)
+        mark_awaiting_final(cfg["run"], base, automatic=bool(cfg.get("auto")))
         append_progress(
             cfg["run"], "awaiting_final",
             step=last_name, index=last_index, rc=done_rc,
             status=calib_approval.STATUS_AWAITING,
         )
-    runner.info("calib_dispatch process complete (awaiting final approval)")
+    runner.info("calib_dispatch process complete " + ("(automatic; no approval required)" if cfg.get("auto") else "(awaiting final approval)"))
     sys.exit(done_rc)
 
 
@@ -1958,8 +1975,8 @@ def run_lane_coordinator(cfg, dry_run, lane_steps: dict, *, prior_lanes=None):
         "plan": plan_of(cfg),
     }
     if not dry_run:
-        mark_awaiting_final(run, base)
-    runner.info(f"calib_dispatch lane coordinator complete (awaiting final)")
+        mark_awaiting_final(run, base, automatic=bool(cfg.get("auto")))
+    runner.info("calib_dispatch lane coordinator complete " + ("(automatic; no approval required)" if cfg.get("auto") else "(awaiting final)"))
     sys.exit(worst)
 
 
@@ -2142,7 +2159,7 @@ def do_resume(cfg, dry_run, *, lane=None):
             })
             base.pop("reason", None)
             if not dry_run:
-                mark_awaiting_final(run, base)
+                mark_awaiting_final(run, base, automatic=bool(cfg.get("auto")))
             runner.info(f"run{run:05d}: all lane states complete; awaiting final QA")
             sys.exit(runner.EXIT_OK)
         if prior and all(prior.get(lane) == "done" for lane in lane_steps):

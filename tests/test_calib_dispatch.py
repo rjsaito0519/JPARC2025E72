@@ -463,11 +463,26 @@ class DispatchTests(unittest.TestCase):
         result = self.dispatch("start")
         self.assertEqual(result.returncode, 0, result.stderr)
         state = self.read_primary_state()
-        self.assertEqual(state["status"], "awaiting_final_approval")
+        self.assertEqual(state["status"], "done")
+        self.assertEqual(state["approval_mode"], "auto")
+        self.assertNotIn("approval", state)
         self.assertTrue((self.root / "next").exists())
         prog = self.root / "out/calib/run00001/progress.jsonl"
         rows = [json.loads(line) for line in prog.read_text().splitlines() if line.strip()]
         self.assertFalse(any(r.get("event") == "step_gate" for r in rows))
+
+    def test_auto_check_exits_without_waiting_or_approving(self):
+        (self.scripts / "iterate_hodo_chain.py").write_text(self._hodo_stub("raise SystemExit(3)\n"))
+        (self.scripts / "iterate_dc_resi.py").write_text("raise SystemExit(0)\n")
+        self.cfg.write_text("run: 1\nauto: true\nsteps:\n" + self.SEQ_STEPS)
+        result = self.dispatch("start")
+        self.assertEqual(result.returncode, 3, result.stderr + result.stdout)
+        state = self.read_primary_state()
+        self.assertEqual(state["status"], "held")
+        self.assertEqual(state["approval_mode"], "auto")
+        self.assertFalse(state.get("gate_waiter"))
+        self.assertIsNone(state["hold"]["decision"])
+        self.assertIn("no approval wait", result.stdout)
 
     def test_dry_run_has_no_state(self):
         result = self.run_chain('raise SystemExit(1)\n', dry=True)

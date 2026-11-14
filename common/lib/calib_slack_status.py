@@ -31,6 +31,11 @@ def read_object(path):
 def phase_of(state):
     status = calib_approval.effective_status(state)
     hold = state.get("hold") or {}
+    if state.get("approval_mode") == "auto":
+        if status == "done":
+            return "auto_done", "✅ 自動処理完了（承認不要）"
+        if status in ("held", "stopped", "failed"):
+            return "stopped", "❌ 自動処理失敗（ログ参照）"
     if status == "approved":
         return "approved", "✅ 承認済み"
     if status in ("awaiting_final_approval", "done"):
@@ -58,6 +63,8 @@ def phase_of(state):
 def overall_phase(phases):
     if not phases:
         return "状態記録なし"
+    if "auto_done" in phases and all(p in ("auto_done", "approved") for p in phases):
+        return "✅ 自動処理完了（承認不要）"
     if all(p == "approved" for p in phases):
         return "✅ 承認済み"
     if "check" in phases:

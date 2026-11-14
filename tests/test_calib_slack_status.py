@@ -34,6 +34,14 @@ class ParentStatusTests(unittest.TestCase):
     def thread(self, **fields):
         write_json(slack_notify.state_path(2977), {'thread_ts': '100.001', 'channel_id': 'C1', 'posts': {}, **fields})
 
+    def test_automatic_completion_is_not_human_approval_or_waiting(self):
+        self.lane('hodo', status='done', approval_mode='auto')
+        text = status.summary_text(2977)
+        self.assertIn('自動処理完了（承認不要）', text)
+        self.assertNotIn('承認待ち', text)
+        self.assertNotIn('承認済み', text)
+        self.assertEqual(slack_notify.status_color(text), '#2E9D63')
+
     def test_user_stopped_successful_round_is_not_waiting_or_complete(self):
         self.lane('hodo', status='held', rc=0, hold={'decision': 'stop'})
         text = status.summary_text(2977)

@@ -415,7 +415,7 @@ def status_color(text):
         return "#E3A008"
     if any(word in text for word in ("停止", "止める", "stopped", "開始待ち", "状態記録なし")):
         return "#7A869A"
-    if any(word in text for word in ("承認済み", "【選択済み】最終承認", "CONVERGED", "収束")):
+    if any(word in text for word in ("承認済み", "自動処理完了", "【選択済み】最終承認", "CONVERGED", "収束")):
         return "#2E9D63"
     return "#2F80ED"
 

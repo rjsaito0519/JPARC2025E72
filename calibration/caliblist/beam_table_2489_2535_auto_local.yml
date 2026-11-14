@@ -3,7 +3,7 @@
 # Proton → calib_particle: kaon (same window as kaon).
 # Launch: ./calib.py --list calibration/caliblist/beam_table_2489_2535_auto_local.yml
 # Local pool: up to 5 runs; ordinary step gates are skipped.
-# Errors / CHECK and final QA approval still require human action.
+# Failed/CHECK runs stop without waiting; successful runs need no approval.
 # Unlock the local-mode SSH key on the launching cw node with ~/local/bin/rmssh-start.
 
 DEFAULT:

@@ -434,6 +434,9 @@ def restart_from_beginning(a, calib_particle, steps, target, *, max_iter=10, hdp
         cd.clear_dispatch_state(run)
         cd.reset_progress(run)
         cd.append_progress(run, "restart", status="cleared")
+        if a.auto:
+            from common.lib import calib_auto
+            calib_auto.retire_previous_auto_flags(run)
     path, _doc = cs.ensure_session(
         run,
         calib_particle=calib_particle,

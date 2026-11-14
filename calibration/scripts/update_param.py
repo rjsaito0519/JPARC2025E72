@@ -25,7 +25,7 @@ import numpy as np
 from termcolor import colored
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import calib_anomaly, config, runner  # noqa: E402
+from common.lib import calib_anomaly, calib_auto, config, runner  # noqa: E402
 from common.lib.param import ParamFile, exclusive_param_lock  # noqa: E402
 import calib_convergence as conv  # noqa: E402
 import phc_conf  # noqa: E402
@@ -132,6 +132,10 @@ def _hdprm_skip_anomaly(a, det, path):
     reason = calib_anomaly.decide_ratio(
         family, bad, total, calib_anomaly.HDPRM_SKIP_RATIO, labels,
     )
+    if reason and calib_auto.enabled():
+        calib_auto.note(a.run, "hdprm_skipped_channels", det=det, bad=bad, total=total, labels=labels)
+        runner.warn(f"auto {reason}; valid fits only, skipped channels retain existing parameters")
+        return None
     if reason:
         calib_anomaly.remember_check_reason(a.run, reason)
         calib_anomaly.dump_candidates(
@@ -233,6 +237,7 @@ def collect_phc(a, dets, inputs):
     by_det = {}
     anomaly_triggered = False
     range_confirmed = phc_range_gate.is_range_confirmed(a.run)
+    automatic = calib_auto.enabled()
     for det, path in found.items():
         hand_rng = phc_conf.limits_dict.get(
             f"{a.run:05d}_{a.suffix}_{det.lower()}"
@@ -248,7 +253,9 @@ def collect_phc(a, dets, inputs):
         # Hand range: outside segs are intentional; do not treat as PHC anomaly.
         # Unconfirmed + needs_range_ask → confirm ask (session restart / re-run).
         if hand_rng is not None:
-            if range_confirmed or not phc_range_gate.needs_range_ask(det):
+            if range_confirmed or automatic or not phc_range_gate.needs_range_ask(det):
+                if automatic:
+                    calib_auto.note(a.run, "phc_range", det=det, selection="configured", first=cur_f, last=cur_l)
                 data.update(d)
                 by_det[det] = {
                     "det": det,
@@ -297,6 +304,17 @@ def collect_phc(a, dets, inputs):
         sug_f = sug_l = None
         if proposed is not None:
             sug_f, sug_l = proposed
+        if reason and automatic and phc_range_gate.needs_range_ask(det):
+            if proposed is None:
+                runner.fail(f"auto PHC {det}: no valid segment range; no parameters written")
+            selected, unused = update_phc.make_dictdata(str(path), det, good_ch_range=list(proposed))
+            if not selected or not all(math.isfinite(float(value)) for row in selected.values() for value in row):
+                runner.fail(f"auto PHC {det}: no finite usable fits; no parameters written")
+            data.update(selected)
+            calib_auto.note(a.run, "phc_range", det=det, selection="valid_fit_span",
+                            first=int(proposed[0]), last=int(proposed[1]), skipped=[int(ch) for ch in unused])
+            ok(f"{det:<6}", len(selected), f" (auto range {proposed}; invalid fits excluded)")
+            continue
         if reason:
             if not phc_range_gate.needs_range_ask(det):
                 # e.g. T1 (1 seg): unused ratio cannot be fixed by a hand range.
