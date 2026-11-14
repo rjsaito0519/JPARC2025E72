@@ -940,8 +940,17 @@ def step_gate_action_blocks(
             "text": {"type": "plain_text", "text": "最良値を採用して終了"},
             "value": value,
         })
+    if step_s == "hodo_hdprm":
+        blocks.append(mip_web_link_block(int(run)))
     return blocks
 
+
+#_____________________________________________________________________________
+def mip_web_link_block(run: int) -> dict[str, Any]:
+    return {"type": "context", "elements": [{"type": "mrkdwn", "text": (
+        f"BH2 ADC MIP: <http://localhost:8767/?run={run}|Webで手直し> · "
+        f"PCで先に `~/mip.sh {run}` を起動（Kは `--kaon`）"
+    )}]}
 
 
 #_____________________________________________________________________________
@@ -1057,6 +1066,8 @@ def exit_check_action_blocks(
         blocks[1]["elements"].pop(0)
     elif "qa_delivery_failed:" in reason:
         blocks[1]["elements"][0]["text"]["text"] = "再送を確認して次へ"
+    if step_s == "hodo_hdprm":
+        blocks.append(mip_web_link_block(int(run)))
     return blocks
 
 

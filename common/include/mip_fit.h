@@ -1,0 +1,36 @@
+#ifndef MIP_FIT_H
+#define MIP_FIT_H
+
+#include <array>
+#include <string>
+
+#include <TH1.h>
+#include <TF1.h>
+
+namespace ana_helper {
+struct MipFitSettings {
+    std::array<double, 4> parameters{{0., 0., 1., 0.}};
+    double lower = 0.;
+    double upper = 0.;
+    std::string function = "auto";
+    std::string range_mode = "auto";
+};
+
+struct MipFitState {
+    std::array<double, 4> parameters{{0., 0., 1., 0.}};
+    double lower = 0.;
+    double upper = 0.;
+    double chi_square = 0.;
+    int ndf = 0;
+    int status = -1;
+    int covariance = -1;
+    std::string function = "gaussian";
+    bool success = false;
+};
+
+bool read_mip_settings(const std::string& path, const std::string& key, MipFitSettings& settings);
+bool load_mip_settings(const std::string& key, MipFitSettings& settings);
+MipFitState describe_mip_fit(TF1* function, int status, int covariance);
+TF1* fit_manual_mip(TH1D* histogram, const MipFitSettings& settings, MipFitState& state);
+}
+#endif

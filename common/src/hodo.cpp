@@ -1,7 +1,12 @@
-#include "ana_helper.h"
+#include <stdexcept>
+
 #include <TGraphErrors.h>
 #include <TFile.h>
 #include <TTree.h>
+#include <TFitResult.h>
+#include <TFitResultPtr.h>
+
+#include "ana_helper.h"
 
 namespace ana_helper {
 
@@ -244,7 +249,8 @@ namespace ana_helper {
     }
 
     // ____________________________________________________________________________________________
-    FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin) {
+    FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin,
+                      const MipFitSettings* settings, MipFitState* mip_state) {
         Config& conf = Config::getInstance();
         h = (TH1D*)h->Rebin(n_rebin, h->GetName());
 
@@ -293,7 +299,26 @@ namespace ana_helper {
             h->FindBin(h->GetXaxis()->GetXmax())
         );
         
-        if (evnum_within_range >= adc_mip_min_fit || conf.hdprm_typical_value.par.empty()) {
+        if (settings) {
+            h->GetXaxis()->UnZoom();
+            MipFitState fitted_state;
+            TF1* fitted = fit_manual_mip(h, *settings, fitted_state);
+            if (mip_state) *mip_state = fitted_state;
+            if (!fitted_state.success && !mip_state) {
+                delete fitted;
+                throw std::runtime_error("manual MIP fit failed; calibration constants were not updated");
+            }
+            for (Int_t i = 0; i < 3; ++i) {
+                result.par.push_back(fitted->GetParameter(i));
+                result.err.push_back(fitted->GetParError(i));
+            }
+            if (fitted_state.function == "landau")
+                result.par[4] = fitted->GetMaximumX(fitted_state.lower, fitted_state.upper);
+            result.chi_square = fitted_state.chi_square;
+            h->Draw();
+            fitted->Draw("same");
+            delete f_prefit;
+        } else if (evnum_within_range >= adc_mip_min_fit || conf.hdprm_typical_value.par.empty()) {
             Int_t mip_peak_bin     = h->GetMaximumBin();
             Double_t mip_pos      = h->GetBinCenter(mip_peak_bin);
             Double_t mip_peak_h   = h->GetBinContent(mip_peak_bin);
@@ -354,6 +379,8 @@ namespace ana_helper {
             Double_t chi_square_l = 0.0;
             Double_t p_value_g = 0.0;
             Double_t p_value_l = 0.0;
+            Int_t fit_status_g = -1, fit_status_l = -1;
+            Int_t covariance_g = -1, covariance_l = -1;
 
             for (Int_t iround = 0; iround < 2; ++iround) {
                 fit_range_min = fit_mean - mip_n_sigma.first*fit_sigma;
@@ -367,7 +394,9 @@ namespace ana_helper {
                 f_fit_mip_g->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
                 f_fit_mip_g->SetParameter(3, mip_bg);
                 f_fit_mip_g->SetParLimits(3, 0.0, h->GetMaximum());
-                h->Fit(f_fit_mip_g, "0QEMR", "", fit_range_min, fit_range_max);
+                TFitResultPtr fitted_g = h->Fit(f_fit_mip_g, "0QEMRS", "", fit_range_min, fit_range_max);
+                fit_status_g = int(fitted_g);
+                covariance_g = fitted_g.Get() ? fitted_g->CovMatrixStatus() : -1;
                 chi_square_g = f_fit_mip_g->GetChisquare();
                 p_value_g = TMath::Prob(chi_square_g, f_fit_mip_g->GetNDF());
 
@@ -375,7 +404,9 @@ namespace ana_helper {
                 f_fit_mip_l->SetParLimits(1, mip_range_left, h->GetXaxis()->GetXmax());
                 f_fit_mip_l->SetParameter(3, mip_bg);
                 f_fit_mip_l->SetParLimits(3, 0.0, h->GetMaximum());
-                h->Fit(f_fit_mip_l, "0QEMR", "", fit_range_min, fit_range_max);
+                TFitResultPtr fitted_l = h->Fit(f_fit_mip_l, "0QEMRS", "", fit_range_min, fit_range_max);
+                fit_status_l = int(fitted_l);
+                covariance_l = fitted_l.Get() ? fitted_l->CovMatrixStatus() : -1;
                 chi_square_l = f_fit_mip_l->GetChisquare();
                 p_value_l = TMath::Prob(chi_square_l, f_fit_mip_l->GetNDF());
 
@@ -409,6 +440,7 @@ namespace ana_helper {
                 h->Draw();
                 f_fit_mip_g->SetNpx(1000);
                 f_fit_mip_g->Draw("same");
+                if (mip_state) *mip_state = describe_mip_fit(f_fit_mip_g, fit_status_g, covariance_g);
                 result.chi_square = chi_square_g;
                 delete f_fit_mip_l;
             } else {
@@ -427,6 +459,7 @@ namespace ana_helper {
                 h->Draw();
                 f_fit_mip_l->SetNpx(1000);
                 f_fit_mip_l->Draw("same");
+                if (mip_state) *mip_state = describe_mip_fit(f_fit_mip_l, fit_status_l, covariance_l);
                 result.chi_square = chi_square_l;
                 delete f_fit_mip_g;
             }
@@ -446,6 +479,13 @@ namespace ana_helper {
 
             result.par.push_back(h->GetStdDev());
             result.err.push_back(h->GetStdDevError());
+
+            if (mip_state) {
+                mip_state->parameters = {{std::max(1., evnum_within_range*h->GetBinWidth(1)),
+                    result.par[4], std::max(1., conf.hdprm_typical_value.par[5]), 0.}};
+                mip_state->lower = std::max(mip_range_left, result.par[4] - 1.8*mip_state->parameters[2]);
+                mip_state->upper = std::min(h->GetXaxis()->GetXmax(), result.par[4] + 2.2*mip_state->parameters[2]);
+            }
 
             // -- draw figure -----
             h->GetXaxis()->SetRangeUser(

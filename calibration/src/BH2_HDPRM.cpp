@@ -6,6 +6,7 @@
 #include <random>
 #include <algorithm>
 #include <set>
+#include <stdexcept>
 
 // ROOT
 #include <TFile.h>
@@ -116,6 +117,7 @@ void analyze(TString path, TString particle){
     // -- container -----
     std::vector<FitResult> adc_up;
     std::vector<FitResult> adc_down;
+    ana_helper::MipFitState mip_states[2][15];
     std::vector<FitResult> tdc_up;
     std::vector<FitResult> tdc_down;
 
@@ -143,7 +145,14 @@ void analyze(TString path, TString particle){
         conf.hdprm_mip_range_left = ana_helper::hdprm_mip_left_override(
             key.Data(),
             param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0);
-        result = ana_helper::adc_fit(h_bh2_adc[0][i], c_bh2, nth_pad, n_rebin);
+        {
+            ana_helper::MipFitSettings settings;
+            bool has_settings = ana_helper::load_mip_settings(std::string(key.Data()) + ":" + particle.Data(), settings);
+            result = ana_helper::adc_fit(h_bh2_adc[0][i], c_bh2, nth_pad, n_rebin,
+                has_settings ? &settings : nullptr, &mip_states[0][i]);
+            if (has_settings && !mip_states[0][i].success)
+                throw std::runtime_error("manual MIP fit failed for " + std::string(key.Data()));
+        }
         adc_up.push_back(result);
         nth_pad++;
 
@@ -156,7 +165,14 @@ void analyze(TString path, TString particle){
         conf.hdprm_mip_range_left = ana_helper::hdprm_mip_left_override(
             key.Data(),
             param::hdprm_params.count(key.Data()) ? param::hdprm_params.at(key.Data())[0] : -1.0);
-        result = ana_helper::adc_fit(h_bh2_adc[1][i], c_bh2, nth_pad, n_rebin);
+        {
+            ana_helper::MipFitSettings settings;
+            bool has_settings = ana_helper::load_mip_settings(std::string(key.Data()) + ":" + particle.Data(), settings);
+            result = ana_helper::adc_fit(h_bh2_adc[1][i], c_bh2, nth_pad, n_rebin,
+                has_settings ? &settings : nullptr, &mip_states[1][i]);
+            if (has_settings && !mip_states[1][i].success)
+                throw std::runtime_error("manual MIP fit failed for " + std::string(key.Data()));
+        }
         adc_down.push_back(result);
         nth_pad++;        
     }
@@ -207,6 +223,38 @@ void analyze(TString path, TString particle){
     
     fout->cd();
     tree->Write();
+    TTree mip_tree("mip_fit", "MIP function parameters and final fit range");
+    Int_t mip_seg, mip_side, mip_status, mip_covariance, mip_ndf;
+    Bool_t mip_success;
+    Double_t mip_parameters[4], mip_range[2], mip_chi_square;
+    std::string mip_function;
+    mip_tree.Branch("seg", &mip_seg);
+    mip_tree.Branch("side", &mip_side);
+    mip_tree.Branch("parameters", mip_parameters, "parameters[4]/D");
+    mip_tree.Branch("range", mip_range, "range[2]/D");
+    mip_tree.Branch("function", &mip_function);
+    mip_tree.Branch("status", &mip_status);
+    mip_tree.Branch("covariance", &mip_covariance);
+    mip_tree.Branch("ndf", &mip_ndf);
+    mip_tree.Branch("chi_square", &mip_chi_square);
+    mip_tree.Branch("success", &mip_success);
+    for (mip_seg = 0; mip_seg < conf.num_of_ch.at("bh2"); ++mip_seg) {
+        for (mip_side = 0; mip_side < 2; ++mip_side) {
+            const auto& snapshot = mip_states[mip_side][mip_seg];
+            std::copy(snapshot.parameters.begin(), snapshot.parameters.end(), mip_parameters);
+            mip_range[0] = snapshot.lower;
+            mip_range[1] = snapshot.upper;
+            mip_function = snapshot.function;
+            mip_status = snapshot.status;
+            mip_covariance = snapshot.covariance;
+            mip_ndf = snapshot.ndf;
+            mip_chi_square = snapshot.chi_square;
+            mip_success = snapshot.success;
+            mip_tree.Fill();
+        }
+    }
+    mip_tree.Write();
+    mip_tree.SetDirectory(nullptr);
     fout->Close(); 
 }
 
@@ -225,6 +273,11 @@ Int_t main(int argc, char** argv) {
     }
 
     conf.detector = "bh2";
-    analyze(path, particle);
+    try {
+        analyze(path, particle);
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << std::endl;
+        return 1;
+    }
     return 0;
 }

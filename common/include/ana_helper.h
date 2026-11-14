@@ -32,6 +32,7 @@
 
 #include "config.h"
 #include "params.h"
+#include "mip_fit.h"
 
 // raw と trig をペアで管理する構造体
 struct HistPair {
@@ -84,7 +85,8 @@ namespace ana_helper {
     void set_tdc_search_range(TH1D *h);
     FitResult tdc_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult kvc_tdc_fit(TH1D *h, TCanvas *c, Int_t n_c); // earliest sharp peak only; additional[0] = 1 fitted, 0 low statistics
-    FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin = 1);
+    FitResult adc_fit(TH1D *h, TCanvas *c, Int_t n_c, Int_t n_rebin = 1,
+                      const MipFitSettings* settings = nullptr, MipFitState* mip_state = nullptr);
     FitResult htof_adc_fit(TH1D *h_raw, TH1D *h_selected, TCanvas *c, Int_t n_c, Int_t n_rebin = 0,
                            const std::string& hint_key = "", Int_t run_num = -1); // n_rebin <= 0: automatic; hint_key: param::htof_adc_fit_hint; run_num < 0: conf.run_num
     FitResult htof_adc_fit_weak(TH1D *h_cond, const FitResult& base, Double_t strong_unit,

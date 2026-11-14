@@ -200,6 +200,7 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
     from common.lib import fit_overrides
     flat = fit_overrides.write_flat_mip_left(run)
     os.environ["E72_FIT_OVERRIDE"] = str(flat)
+    os.environ["E72_MIP_FIT_OVERRIDE"] = str(fit_overrides.write_flat_mip_fit(run))
     for b in bins:
         runner.sh(f"{b} {root} {suffix}")
     if qa_only:
