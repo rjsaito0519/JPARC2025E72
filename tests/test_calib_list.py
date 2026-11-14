@@ -112,6 +112,22 @@ class CalibListTests(unittest.TestCase):
         self.assertEqual(set(spawn_order), {1, 2, 3, 4, 5})
         self.assertLess(spawn_order.index(4), spawn_order.index(5))
 
+    def test_beam_caliblist_resolves_without_existing_userparam(self):
+        from common.lib import beam_run_condition
+
+        entries = self.calib_list.load_caliblist(
+            REPO / "calibration/caliblist/beam_table_2489_2535.yml",
+        )
+        _, ranges = beam_run_condition.load_table(
+            REPO / "calibration/config/beam_run_condition.yml",
+        )
+        self.assertEqual(len(entries), 16)
+        for run, _ in entries:
+            condition = beam_run_condition.find_in_ranges(ranges, run)
+            self.assertIsNotNone(condition, f"missing beam condition: run{run:05d}")
+            self.assertGreater(condition["momentum_gev_c"], 0)
+            self.assertEqual(condition["charge"], -1 if run <= 2514 else 1)
+
 
 if __name__ == "__main__":
     unittest.main()

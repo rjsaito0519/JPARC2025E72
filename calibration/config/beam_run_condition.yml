@@ -1,5 +1,5 @@
-# Copy of analyzer src/BeamRunCondition.cc kBeamRunRanges (same content).
-# When analyzer table is regenerated, refresh this file to match.
+# Calibration-side ranges from analyzer src/BeamRunCondition.cc kBeamRunRanges.
+# Keep ranges used by calibration lists in sync with the analyzer table.
 # calib_session --write-table may append single-run rows here only (not the .cc).
 ranges:
   - {first: 1916, last: 1933, particle: pion, momentum_gev_c: 0.735, charge: -1}
@@ -69,6 +69,13 @@ ranges:
   - {first: 2508, last: 2509, particle: pion, momentum_gev_c: 0.645, charge: -1}
   - {first: 2511, last: 2512, particle: pion, momentum_gev_c: 0.400, charge: -1}
   - {first: 2514, last: 2514, particle: pion, momentum_gev_c: 0.300, charge: -1}
+  - {first: 2516, last: 2516, particle: pion, momentum_gev_c: 1.000, charge: 1}
+  - {first: 2518, last: 2518, particle: proton, momentum_gev_c: 1.000, charge: 1}
+  - {first: 2520, last: 2520, particle: pion, momentum_gev_c: 0.814, charge: 1}
+  - {first: 2522, last: 2522, particle: proton, momentum_gev_c: 0.814, charge: 1}
+  - {first: 2524, last: 2524, particle: pion, momentum_gev_c: 0.645, charge: 1}
+  - {first: 2527, last: 2527, particle: proton, momentum_gev_c: 0.645, charge: 1}
+  - {first: 2534, last: 2535, particle: pion, momentum_gev_c: 0.400, charge: 1}
   - {first: 2560, last: 2562, particle: pion, momentum_gev_c: 0.735, charge: -1}
   - {first: 2568, last: 2570, particle: pion, momentum_gev_c: 0.735, charge: -1}
   - {first: 2580, last: 2581, particle: proton, momentum_gev_c: 0.735, charge: -1}
