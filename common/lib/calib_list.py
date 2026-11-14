@@ -158,7 +158,7 @@ def normalize_run_opts(raw: dict[str, Any]) -> dict[str, Any]:
         hodo = bcout = bcin = d5 = True
     particle = opts.get("calib_particle", opts.get("particle", "pion"))
     max_iter = int(opts.get("max_iter", 10))
-    hdphc_iter = int(opts.get("hdphc_iter", 3))
+    hdphc_iter = int(opts.get("hdphc_iter", 10))
     if max_iter < 1 or max_iter > 100:
         raise ValueError(f"max_iter must be in [1, 100], got {max_iter}")
     if hdphc_iter < 1:

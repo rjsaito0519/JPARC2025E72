@@ -64,6 +64,89 @@ class CalibCliHelpersTests(unittest.TestCase):
             cwd=str(self.root),
         )
 
+    def batch(self, default=None, *flags):
+        path = self.root / "batch.yml"
+        path.write_text(yaml.safe_dump({"DEFAULT": default or {"hodo": True}, "RUN": {105: None}}))
+        return subprocess.run(
+            [sys.executable, str(self.scripts / "calib.py"), "--list", str(path), *flags],
+            capture_output=True, text=True, env=self.env, timeout=20, cwd=str(self.root),
+        )
+
+    def test_list_cli_dry_and_all_yaml_options_reach_child(self):
+        result = self.batch({"hodo": True, "local": False, "hdphc_iter": 2,
+                             "max_iter": 5, "beam_particle": "p", "charge": 1,
+                             "momentum": 0.85}, "--dry", "--local")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        doc = yaml.safe_load((self.root / "out/calib/run00105/calib_session.yml").read_text())
+        self.assertTrue(doc["local"])
+        self.assertEqual(doc["max_iter"], 5)
+        self.assertEqual(doc["beam_particle"], "proton")
+        self.assertEqual(doc["charge"], 1)
+        self.assertEqual(doc["momentum_gev_c"], 0.85)
+        phc = [step for step in doc["steps"] if isinstance(step, dict) and "hodo_hdphc" in step]
+        self.assertEqual(len(phc), 2)
+        self.assertIn("dry-run", result.stdout)
+
+    def test_list_does_not_restart_complete_run_unless_forced(self):
+        path = self.root / "out/calib/run00105/calib_dispatch_state.json"
+        path.parent.mkdir(parents=True)
+        original = json.dumps({"status": "awaiting_final_approval", "finished": True})
+        path.write_text(original)
+        result = self.batch({"hodo": True, "force": False})
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("already complete", result.stdout)
+        self.assertEqual(path.read_text(), original)
+        self.assertFalse(path.with_name("calib_session.yml").exists())
+
+    def test_list_keeps_confirmation_pending_without_approving(self):
+        path = self.root / "out/calib/run00105/calib_dispatch_state.json"
+        path.parent.mkdir(parents=True)
+        original = json.dumps({"status": "held", "finished": False, "step": "hodo_hdprm",
+            "hold": {"id": "held-before-list", "step": "hodo_hdprm", "source": "step_gate"}})
+        path.write_text(original)
+        result = self.batch({"hodo": True, "force": False})
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("confirmation still pending", result.stdout)
+        self.assertEqual(path.read_text(), original)
+
+    def test_list_global_force_restarts_when_explicit(self):
+        path = self.root / "out/calib/run00105/calib_dispatch_state.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"status": "awaiting_final_approval", "finished": True}))
+        result = self.batch({"hodo": True, "force": False, "hdphc_iter": 2}, "--force", "--dry")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("restarting from the beginning", result.stdout)
+        self.assertTrue(path.with_name("calib_session.yml").is_file())
+
+    def test_list_yaml_dry_does_not_require_cli_dry(self):
+        result = self.batch({"hodo": True, "dry_run": True, "hdphc_iter": 1})
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("dry-run", result.stdout)
+
+    def test_list_dry_preserves_beam_table_when_write_requested(self):
+        original = self.table.read_bytes()
+        result = self.batch({"hodo": True, "write_table": True, "beam_particle": "p",
+                             "charge": 1, "momentum": 0.85}, "--dry")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(self.table.read_bytes(), original)
+        self.assertIn("table is left unchanged", result.stdout)
+
+    def test_list_preserves_held_lane_while_other_lane_runs(self):
+        directory = self.root / "out/calib/run00105"
+        directory.mkdir(parents=True)
+        parent = directory / "calib_dispatch_state.json"
+        parent.write_text(json.dumps({"status": "running", "mode": "lane_coordinator"}))
+        for lane, status in (("hodo", "held"), ("bcout", "running")):
+            path = directory / "lanes" / lane / "calib_dispatch_state.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({"status": status, "hold": {"id": lane, "step": "hodo_hdprm"}}))
+        files = list(directory.rglob("*.json"))
+        original = {path: path.read_bytes() for path in files}
+        result = self.batch({"hodo": True, "force": False})
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("confirmation still pending", result.stdout)
+        self.assertEqual(original, {path: path.read_bytes() for path in files})
+
     def test_steps_from_flags(self):
         result = self.py(
             "from calibration.scripts import calib_session as cs\n"

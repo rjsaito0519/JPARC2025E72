@@ -52,6 +52,7 @@ class CalibListTests(unittest.TestCase):
         self.assertEqual(opts0["calib_particle"], "pi")
         self.assertTrue(opts0["hodo"])
         self.assertFalse(opts0["d5"])
+        self.assertEqual(opts0["hdphc_iter"], 10)
         run1, opts1 = entries[1]
         self.assertEqual(run1, 11)
         self.assertEqual(opts1["calib_particle"], "k")

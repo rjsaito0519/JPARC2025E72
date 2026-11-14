@@ -5,7 +5,7 @@ Usage:
   ./calib.py <run> [--pion|--kaon] [--hodo] [--bcout] [--bcin] [--d5]
              [--local] [--dry] [--force] [--auto]
   ./calib.py <run> --init [--local] [--dry]
-  ./calib.py --list calibration/caliblist/<name>.yml [--local]
+  ./calib.py --list calibration/caliblist/<name>.yml [--local] [--dry] [--force]
 
 If a prior dispatch state exists:
   - TTY: ask 続きから / 初めから
@@ -22,6 +22,8 @@ own Slack gates / PHC modal as usual.
 State ops: ./ops.py status|stop|… <run>  (or Slack /calib …).
 Prefer this over calib_session.py / calib_dispatch.py.
 """
+import argparse
+import json
 import os
 import subprocess
 import sys
@@ -62,6 +64,7 @@ def parse_args():
         "--list", type=Path, default=None,
         help="caliblist YAML (DEFAULT+RUN batch)",
     )
+    p.add_argument("--list-entry", type=json.loads, default=None, help=argparse.SUPPRESS)
     p.add_argument("--init", action="store_true",
                    help="prepare Hodo.root for TDC windows; no session/chain")
     p.add_argument("--pion", action="store_true", help="calib window pion (default)")
@@ -439,7 +442,7 @@ def restart_from_beginning(a, calib_particle, steps, target, *, max_iter=10, hdp
         momentum=a.momentum,
         beam_particle=getattr(a, "beam_particle", None),
         charge=getattr(a, "charge", None),
-        write_table=bool(getattr(a, "write_table", False)),
+        write_table=bool(getattr(a, "write_table", False)) and not a.dry_run,
         max_iter=max_iter,
         local=a.local,
         auto=a.auto,
@@ -487,7 +490,7 @@ def attach_complementary_lanes(
             momentum=a.momentum,
             beam_particle=getattr(a, "beam_particle", None),
             charge=getattr(a, "charge", None),
-            write_table=bool(getattr(a, "write_table", False)),
+            write_table=bool(getattr(a, "write_table", False)) and not a.dry_run,
             max_iter=max_iter,
             local=a.local,
             auto=a.auto,
@@ -515,32 +518,31 @@ def attach_complementary_lanes(
 
 
 #_____________________________________________________________________________
-def opts_to_calib_argv(run, opts, *, cli_local=False) -> list[str]:
-    """Build ./calib.py argv for one caliblist entry (always --force)."""
-    local = bool(opts.get("local")) or bool(cli_local)
-    argv = [sys.executable, str(CALIB_SCRIPT), str(int(run)), "--force"]
-    particle = cs.normalize_calib_particle(opts.get("calib_particle", "pion"))
-    if particle == "kaon":
-        argv.append("--kaon")
-    else:
-        argv.append("--pion")
-    if opts.get("hodo"):
-        argv.append("--hodo")
-    if opts.get("bcout"):
-        argv.append("--bcout")
-    if opts.get("bcin"):
-        argv.append("--bcin")
-    if opts.get("d5"):
-        argv.append("--d5")
-    if local:
-        argv.append("--local")
-    if opts.get("auto"):
-        argv.append("--auto")
-    if opts.get("dry_run"):
-        argv.append("--dry")
-    if opts.get("momentum") is not None:
-        argv.extend(["--momentum", str(opts["momentum"])])
-    return argv
+def opts_to_calib_argv(run, opts, *, cli_local=False, cli_dry=False, cli_force=False) -> list[str]:
+    """Pass the complete normalized entry through argv without shell interpolation."""
+    entry = dict(opts)
+    for name, enabled in (("local", cli_local), ("dry_run", cli_dry), ("force", cli_force)):
+        if enabled:
+            entry[name] = True
+    return [sys.executable, str(CALIB_SCRIPT), str(int(run)),
+            "--list-entry", json.dumps(entry, allow_nan=False)]
+
+
+#_____________________________________________________________________________
+def apply_list_entry(args):
+    """Use the same single-run launcher while retaining all YAML options."""
+    if not isinstance(args.list_entry, dict):
+        runner.fail("caliblist entry must be a mapping")
+    try:
+        opts = calib_list.normalize_run_opts(args.list_entry)
+        particle = cs.normalize_calib_particle(opts["calib_particle"])
+        if opts.get("beam_particle") is not None:
+            opts["beam_particle"] = cs.normalize_beam_particle(opts["beam_particle"])
+    except (TypeError, ValueError) as error:
+        runner.fail(f"invalid caliblist entry: {error}")
+    for name, value in opts.items():
+        setattr(args, name, value)
+    args.pion, args.kaon = particle == "pion", particle == "kaon"
 
 
 #_____________________________________________________________________________
@@ -580,7 +582,7 @@ def run_one_from_opts(run, opts, *, cli_local=False):
 
 
 #_____________________________________________________________________________
-def do_list(path, *, cli_local=False):
+def do_list(path, *, cli_local=False, cli_dry=False, cli_force=False):
     """Run caliblist entries in parallel (local capped, bsub uncapped)."""
     entries = calib_list.load_caliblist(path)
     runner.info(
@@ -589,12 +591,15 @@ def do_list(path, *, cli_local=False):
     )
 
     def spawn(run, opts):
-        argv = opts_to_calib_argv(run, opts, cli_local=cli_local)
-        # Fresh env copy; child is a full calib.py --force for this run.
+        argv = opts_to_calib_argv(
+            run, opts, cli_local=cli_local, cli_dry=cli_dry, cli_force=cli_force,
+        )
+        # Each child uses the normal launcher; the entry controls restart versus resume.
         return subprocess.Popen(
             argv,
             cwd=str(CALIB_SCRIPT.parents[2]),
             env=os.environ.copy(),
+            stdin=subprocess.DEVNULL,
         )
 
     agg_rc, finished = calib_list.run_caliblist_pool(
@@ -617,8 +622,19 @@ def main():
             runner.fail("--list cannot be combined with --init")
         if a.run is not None:
             runner.fail("--list does not take a run argument")
-        do_list(a.list, cli_local=a.local)
+        if a.list_entry is not None:
+            runner.fail("--list cannot be combined with --list-entry")
+        if a.pion or a.kaon or a.hodo or a.bcout or a.bcin or a.d5 or a.auto or a.momentum is not None:
+            runner.fail("with --list, set particle/stages/auto/momentum in the YAML")
+        do_list(a.list, cli_local=a.local, cli_dry=a.dry_run, cli_force=a.force)
         return
+
+    if a.list_entry is not None:
+        apply_list_entry(a)
+        if a.dry_run and getattr(a, "write_table", False):
+            runner.info("[dry-run] beam table update requested; table is left unchanged")
+    max_iter = int(getattr(a, "max_iter", 10))
+    hdphc_iter = int(getattr(a, "hdphc_iter", 10))
 
     if a.run is None:
         runner.fail("run number required (or pass --list PATH)")
@@ -635,7 +651,7 @@ def main():
     announce_chain(a.run, calib_particle, steps)
     want_lanes = calib_lanes.requested_lanes(
         cs.expand_coarse_steps(
-            steps, auto=a.auto, hdphc_iter=10, max_iter=10,
+            steps, auto=a.auto, hdphc_iter=hdphc_iter, max_iter=max_iter,
         )
     )
 
@@ -650,17 +666,25 @@ def main():
             "lanes": dict(lane_status),
             "mode": "lane_coordinator",
         }
+        if a.list_entry is not None and not a.force and calib_approval.is_process_complete(st_eff) and not calib_lanes.busy_lanes(lane_status):
+            runner.info(f"run{a.run:05d}: already complete; preserving state (set force: true to restart)")
+            return
         choice = choose_action(
             a.run, st_eff,
             force=a.force,
             interactive=interactive and sys.stdin.isatty(),
             want_lanes=want_lanes,
         )
+        if choice == CHOICE_CONTINUE and a.list_entry is not None:
+            held = calib_lanes.overlap_lanes(want_lanes, calib_lanes.held_lanes(lane_status))
+            if held or st_eff.get("status") == "held":
+                runner.info(f"run{a.run:05d}: confirmation still pending; preserving hold (use Slack/ops to decide)")
+                return
         if choice == CHOICE_RESTART:
-            restart_from_beginning(a, calib_particle, steps, target)
+            restart_from_beginning(a, calib_particle, steps, target, max_iter=max_iter, hdphc_iter=hdphc_iter)
             return
         if choice == CHOICE_ATTACH:
-            attach_complementary_lanes(a, calib_particle, steps, target)
+            attach_complementary_lanes(a, calib_particle, steps, target, max_iter=max_iter, hdphc_iter=hdphc_iter)
             return
 
         # continue: keep existing session unless missing
@@ -670,6 +694,11 @@ def main():
             steps=steps,
             target=target,
             momentum=a.momentum,
+            beam_particle=getattr(a, "beam_particle", None),
+            charge=getattr(a, "charge", None),
+            write_table=bool(getattr(a, "write_table", False)) and not a.dry_run,
+            max_iter=max_iter,
+            hdphc_iter=hdphc_iter,
             local=a.local,
             auto=a.auto,
             overwrite=False,
@@ -693,9 +722,14 @@ def main():
         steps=steps,
         target=target,
         momentum=a.momentum,
+        beam_particle=getattr(a, "beam_particle", None),
+        charge=getattr(a, "charge", None),
+        write_table=bool(getattr(a, "write_table", False)) and not a.dry_run,
+        max_iter=max_iter,
+        hdphc_iter=hdphc_iter,
         local=a.local,
         auto=a.auto,
-        overwrite=a.force,
+        overwrite=bool(a.force or a.list_entry is not None),
         prompt_if_missing=True,
     )
     if a.local:
