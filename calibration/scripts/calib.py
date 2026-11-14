@@ -648,6 +648,11 @@ def main():
     steps, target = cs.steps_from_flags(
         hodo=a.hodo, bcout=a.bcout, bcin=a.bcin, d5=a.d5,
     )
+    if a.list_entry is not None and a.auto:
+        steps = [
+            {"hodo": {"hdphc_iter": hdphc_iter}} if step == "hodo" else step
+            for step in steps
+        ]
     announce_chain(a.run, calib_particle, steps)
     want_lanes = calib_lanes.requested_lanes(
         cs.expand_coarse_steps(

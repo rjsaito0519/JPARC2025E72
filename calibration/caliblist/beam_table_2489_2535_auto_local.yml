@@ -1,0 +1,45 @@
+# Beam-table runs (2489–2535). Full chain: hodo + bcout + bcin + d5.
+# Beam particle / momentum come from the run table; only calib window is set here.
+# Proton → calib_particle: kaon (same window as kaon).
+# Launch: ./calib.py --list calibration/caliblist/beam_table_2489_2535_auto_local.yml
+# Local pool: up to 5 runs; ordinary step gates are skipped.
+# Errors / CHECK and final QA approval still require human action.
+# Unlock the local-mode SSH key on the launching cw node with ~/local/bin/rmssh-start.
+
+DEFAULT:
+  calib_particle: pion
+  hodo: true
+  bcout: true
+  bcin: true
+  d5: true
+  local: true
+  force: false
+  auto: true
+  dry_run: false
+  max_iter: 10
+  hdphc_iter: 3
+
+RUN:
+  2489:   # pion 1.000
+  2491:   # proton → kaon window
+    calib_particle: kaon
+  2494:   # proton → kaon window
+    calib_particle: kaon
+  2500:   # kaon 0.814
+    calib_particle: kaon
+  2502:   # pion 0.814
+  2504:   # proton → kaon window
+    calib_particle: kaon
+  2509:   # pion 0.645
+  2512:   # pion 0.400
+  2514:   # pion 0.300
+  2516:   # pion 1.000
+  2518:   # proton → kaon window
+    calib_particle: kaon
+  2520:   # pion 0.814
+  2522:   # proton → kaon window
+    calib_particle: kaon
+  2524:   # pion 0.645
+  2527:   # proton → kaon window
+    calib_particle: kaon
+  2535:   # pion 0.400

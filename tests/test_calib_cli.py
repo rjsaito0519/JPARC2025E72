@@ -123,6 +123,15 @@ class CalibCliHelpersTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("dry-run", result.stdout)
 
+    def test_list_auto_passes_phc_limit_to_coarse_hodo(self):
+        result = self.batch({"hodo": True, "auto": True, "hdphc_iter": 3}, "--dry")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        doc = yaml.safe_load((self.root / "out/calib/run00105/calib_session.yml").read_text())
+        self.assertTrue(doc["auto"])
+        self.assertEqual(doc["steps"], [{"hodo": {"hdphc_iter": 3}}])
+        self.assertIn("--hdphc-iter 3", result.stdout)
+        self.assertNotIn("--only", result.stdout)
+
     def test_list_dry_preserves_beam_table_when_write_requested(self):
         original = self.table.read_bytes()
         result = self.batch({"hodo": True, "write_table": True, "beam_particle": "p",
