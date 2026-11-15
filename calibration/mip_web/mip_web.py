@@ -153,7 +153,7 @@ class App:
         if settings is not None:
             settings_path.write_text(fit_overrides.mip_fit_line(key, self.particle, settings) + "\n")
             # The preview uses the same particle-qualified key as the production reader.
-            if curve_only:
+            if curve_only and settings["function"] != "mean":
                 command = [str(BINARY), "--curve", str(settings_path), f"{key}:{self.particle}", str(output)]
             else:
                 command += [str(settings_path)]
@@ -225,11 +225,19 @@ class App:
                                     snapshot = {"parameters": parameters, "range": bounds, "function": function,
                                                 "success": bool(columns["success"][index]), "status": int(columns["status"][index]),
                                                 "covariance": int(columns["covariance"][index]), "ndf": int(columns["ndf"][index]),
-                                                "origin": "前回実行のFit結果" if int(columns["status"][index]) >= 0 else "Fit未実施（低統計）。推定値は調整の初期値にのみ使用します"}
+                                                "origin": "前回実行の統計値（平均）" if function == "mean" else "前回実行のFit結果"}
+                                    if "statistics" in columns and bool(columns["statistics_valid"][index]):
+                                        values = columns["statistics"][index].tolist()
+                                        snapshot["statistics"] = {"valid": True, "window": values[:2], "range": values[2:4],
+                                            **dict(zip(("mean", "median", "window_median", "entries", "selected_entries", "error"), values[4:]))}
+                                        if function == "mean":
+                                            snapshot["range"] = snapshot["statistics"]["range"]
+                                    elif snapshot["status"] < 0:
+                                        snapshot["origin"] = "Fit未実施（低統計）。詳細な統計値の表示にはHDPRMの再実行が必要です"
                                     curve_settings = {"parameters": parameters, "range": bounds,
                                                       "function": function, "range_mode": "fixed"}
                                     snapshot["curve"] = (self.execute_preview(key, curve_settings, curve_only=True)["curve"]
-                                                         if snapshot["status"] >= 0 else [])
+                                                         if snapshot["status"] >= 0 and function != "mean" else [])
                                 break
             if snapshot is None:
                 raise ValueError("保存済みのMIP Fit結果を読み出せません。HDPRMを再実行してから開いてください")
@@ -245,11 +253,15 @@ class App:
             result = self.automatic(key, doc["fingerprint"])
             entry = fit_overrides.load(self.run).get("fit", {}).get("BH2", {}).get("hdprm", {}).get(key, {})
             committed = entry.get("mip_fit", {}).get(self.particle)
-            automatic = {"parameters": result["parameters"], "range": result["range"],
-                         "function": "auto", "range_mode": "auto"}
+            automatic = self.initial_settings(result)
             initial = doc["staged"].get(key, {}).get("settings") or committed or automatic
             return {**self.public(doc), "automatic": result, "initial": initial,
                     "baseline": committed or automatic, "automatic_note": result["origin"]}
+
+    @staticmethod
+    def initial_settings(result):
+        return {"parameters": result["parameters"], "range": result["range"],
+                "function": "mean" if result["function"] == "mean" else "auto", "range_mode": "auto"}
 
     def fit(self, request, curve_only=False):
         with self.lock, locked_path(self.staging_path):
@@ -265,6 +277,8 @@ class App:
                     effective["function"] = request.get("auto_function", "gaussian")
                 return self.execute_preview(key, effective, curve_only=True)
             result = self.execute_preview(key, settings)
+            if settings["function"] == "mean" and not (result.get("statistics") or {}).get("valid"):
+                result["success"] = False
             self.require_current(request, self.document())
             if result["success"]:
                 settings["parameters"] = result["parameters"]
@@ -290,7 +304,7 @@ class App:
             else:
                 receipt = doc["receipts"].get(request.get("receipt"))
                 if not receipt or receipt["key"] != key:
-                    raise ValueError("成功したFitを実行してから仮保存してください")
+                    raise ValueError("成功したFitまたは有効な集計を実行してから仮保存してください")
                 doc["staged"][key] = copy.deepcopy(receipt)
             doc["revision"] += 1
             write_json(self.staging_path, doc)
@@ -306,8 +320,7 @@ class App:
                 before = entry.get("mip_fit", {}).get(self.particle)
                 if before is None:
                     automatic = self.automatic(key, doc["fingerprint"])
-                    before = {"parameters": automatic["parameters"], "range": automatic["range"],
-                              "function": "auto", "range_mode": "auto"}
+                    before = self.initial_settings(automatic)
                 after = row["settings"]
                 changes = []
                 for field in ("function", "range_mode", "range", "parameters"):
@@ -319,7 +332,7 @@ class App:
                                     changes.append([label, old, new])
                         else:
                             changes.append([field, before[field], after[field]])
-                rows.append({"key": key, "changes": changes})
+                rows.append({"key": key, "changes": changes, "statistics": row["result"].get("statistics")})
             return {**self.public(doc), "rows": rows}
 
     def write(self, request):

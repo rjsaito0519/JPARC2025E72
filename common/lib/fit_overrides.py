@@ -149,7 +149,7 @@ def validate_mip_fit(settings):
         raise ValueError("MIP normalization/width must be positive; background must be nonnegative")
     if fit_range[0] >= fit_range[1]:
         raise ValueError("fit lower bound must be below upper bound")
-    if settings.get("function") not in ("auto", "gaussian", "landau"):
+    if settings.get("function") not in ("auto", "gaussian", "landau", "mean"):
         raise ValueError("unknown MIP function")
     if settings.get("range_mode") not in ("auto", "fixed"):
         raise ValueError("unknown MIP range mode")

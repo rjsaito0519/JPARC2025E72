@@ -236,6 +236,8 @@ void analyze(TString path, TString particle){
     Bool_t mip_success;
     Double_t mip_parameters[4], mip_range[2], mip_chi_square;
     std::string mip_function;
+    Double_t mip_statistics[10];
+    Bool_t mip_statistics_valid;
     mip_tree.Branch("seg", &mip_seg);
     mip_tree.Branch("side", &mip_side);
     mip_tree.Branch("parameters", mip_parameters, "parameters[4]/D");
@@ -246,6 +248,8 @@ void analyze(TString path, TString particle){
     mip_tree.Branch("ndf", &mip_ndf);
     mip_tree.Branch("chi_square", &mip_chi_square);
     mip_tree.Branch("success", &mip_success);
+    mip_tree.Branch("statistics", mip_statistics, "statistics[10]/D");
+    mip_tree.Branch("statistics_valid", &mip_statistics_valid);
     for (mip_seg = 0; mip_seg < conf.num_of_ch.at("bh2"); ++mip_seg) {
         for (mip_side = 0; mip_side < 2; ++mip_side) {
             const auto& snapshot = mip_states[mip_side][mip_seg];
@@ -258,6 +262,12 @@ void analyze(TString path, TString particle){
             mip_ndf = snapshot.ndf;
             mip_chi_square = snapshot.chi_square;
             mip_success = snapshot.success;
+            const auto& summary = snapshot.statistics;
+            const std::array<double, 10> values{{summary.window_lower, summary.window_upper,
+                summary.lower, summary.upper, summary.mean, summary.median, summary.window_median,
+                summary.entries, summary.selected_entries, summary.error}};
+            std::copy(values.begin(), values.end(), mip_statistics);
+            mip_statistics_valid = summary.valid;
             mip_tree.Fill();
         }
     }

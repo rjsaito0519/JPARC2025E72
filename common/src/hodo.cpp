@@ -232,20 +232,8 @@ namespace ana_helper {
     static const Double_t adc_mip_qhi     = 0.5;
 
     static Double_t quantile_mean(TH1D *h, Double_t lo, Double_t hi, Double_t qlo, Double_t qhi, Double_t empty_value) {
-        Int_t b_lo = h->FindBin(lo), b_hi = h->FindBin(hi);
-        Double_t n = h->Integral(b_lo, b_hi);
-        if (n <= 0.0) return empty_value;
-        Double_t cum = 0.0, sum = 0.0, w = 0.0;
-        for (Int_t b = b_lo; b <= b_hi; ++b) {
-            Double_t v = h->GetBinContent(b);
-            Double_t q_in = cum/n, q_out = (cum + v)/n;
-            cum += v;
-            Double_t part = std::min(q_out, qhi) - std::max(q_in, qlo); // fraction of this bin inside [qlo, qhi]
-            if (part <= 0.0) continue;
-            sum += part*n*h->GetBinCenter(b);
-            w   += part*n;
-        }
-        return w > 0.0 ? sum/w : empty_value;
+        const auto summary = summarize_mip_statistics(h, lo, hi, qlo, qhi);
+        return summary.valid ? summary.mean : empty_value;
     }
 
     // ____________________________________________________________________________________________
@@ -299,7 +287,48 @@ namespace ana_helper {
             h->FindBin(h->GetXaxis()->GetXmax())
         );
         
-        if (settings) {
+        const double ped_to_mip = conf.hdprm_typical_value.par.empty() ? 0.
+            : conf.hdprm_typical_value.par[4]-conf.hdprm_typical_value.par[1];
+        const double statistics_right = conf.hdprm_typical_value.par.empty() ? h->GetXaxis()->GetXmax()
+            : result.par[1]+ped_to_mip+10.*conf.hdprm_typical_value.par[5];
+        if (settings && settings->function == "mean") {
+            const bool automatic_range = settings->range_mode == "auto";
+            const auto summary = summarize_mip_statistics(h,
+                automatic_range ? mip_range_left : settings->lower,
+                automatic_range ? statistics_right : settings->upper,
+                automatic_range ? adc_mip_qlo : 0., automatic_range ? adc_mip_qhi : 1.);
+            if (!summary.valid && !mip_state)
+                throw std::runtime_error("MIP statistics range is empty; calibration constants were not updated");
+            result.par.push_back(summary.selected_entries);
+            result.err.push_back(0.);
+            result.par.push_back(summary.mean);
+            result.err.push_back(summary.error);
+            result.par.push_back(std::max(1., summary.error*std::sqrt(summary.selected_entries)));
+            result.err.push_back(0.);
+            if (mip_state) {
+                mip_state->parameters = settings->parameters;
+                mip_state->lower = summary.lower;
+                mip_state->upper = summary.upper;
+                mip_state->function = "mean";
+                mip_state->statistics = summary;
+                mip_state->status = summary.valid ? 0 : -1;
+                mip_state->success = summary.valid;
+            }
+            h->GetXaxis()->SetRangeUser(mip_range_left, statistics_right);
+            h->Draw();
+            for (double position : {summary.lower, summary.upper, summary.mean, summary.median}) {
+                auto* line = new TLine(position, 0., position, h->GetMaximum());
+                line->SetLineColor(position == summary.mean ? kOrange : kGreen+2);
+                line->SetLineStyle(position == summary.mean ? 1 : 2);
+                line->Draw("same");
+            }
+            auto* note = new TLatex();
+            note->SetNDC();
+            note->SetTextSize(.035);
+            note->DrawLatex(.45, .85, Form("Mean %.2f, median %.2f", summary.mean, summary.median));
+            note->DrawLatex(.45, .79, Form("ADC range [%.2f, %.2f]", summary.lower, summary.upper));
+            delete f_prefit;
+        } else if (settings) {
             h->GetXaxis()->UnZoom();
             MipFitState fitted_state;
             TF1* fitted = fit_manual_mip(h, *settings, fitted_state);
@@ -485,6 +514,8 @@ namespace ana_helper {
                     result.par[4], std::max(1., conf.hdprm_typical_value.par[5]), 0.}};
                 mip_state->lower = std::max(mip_range_left, result.par[4] - 1.8*mip_state->parameters[2]);
                 mip_state->upper = std::min(h->GetXaxis()->GetXmax(), result.par[4] + 2.2*mip_state->parameters[2]);
+                mip_state->function = "mean";
+                mip_state->statistics = summarize_mip_statistics(h, mip_range_left, window_right, adc_mip_qlo, adc_mip_qhi);
             }
 
             // -- draw figure -----
@@ -497,6 +528,11 @@ namespace ana_helper {
             commnet->SetNDC();  // NDC座標（0〜1の正規化）を使う
             commnet->SetTextSize(0.04);
             commnet->DrawLatex(0.55, 0.85, Form("quantile mean %.0f-%.0f%%", 100*adc_mip_qlo, 100*adc_mip_qhi));
+            const auto summary = summarize_mip_statistics(h, mip_range_left, window_right, adc_mip_qlo, adc_mip_qhi);
+            if (summary.valid) {
+                commnet->DrawLatex(.45, .79, Form("ADC range [%.2f, %.2f]", summary.lower, summary.upper));
+                commnet->DrawLatex(.45, .73, Form("Mean %.2f, median %.2f", summary.mean, summary.median));
+            }
         }
 
         f_fit_ped->Draw("same");

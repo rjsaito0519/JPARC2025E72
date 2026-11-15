@@ -62,7 +62,7 @@ main(
             throw std::runtime_error("missing preview settings");
         ana_helper::MipFitState state;
         TCanvas canvas("mip_canvas", "", 800, 600);
-        if (argc == 6) {
+        if (argc == 6 || (settings.function == "mean" && settings.range_mode == "auto")) {
             const std::string typical_name = "BH2_ADC_seg6U_" + particle;
             auto* typical_source = dynamic_cast<TH1D*>(input.Get(typical_name.c_str()));
             if (!typical_source) throw std::runtime_error("missing typical BH2 histogram");
@@ -88,13 +88,19 @@ main(
         output << "],\"range\":[" << state.lower << ',' << state.upper << "],\"curve\":[";
         TF1 curve("preview_curve", state.function == "landau" ? "landaun(0)+pol0(3)" : "gausn(0)+pol0(3)", state.lower, state.upper);
         curve.SetParameters(state.parameters.data());
-        for (int i = 0; i <= 300; ++i) {
+        for (int i = 0; state.function != "mean" && i <= 300; ++i) {
             const double x = state.lower + (state.upper-state.lower)*i/300.;
             const double y = curve.Eval(x);
             if (i) output << ',';
             output << '[' << x << ',' << (std::isfinite(y) ? y : 0.) << ']';
         }
-        output << "]}";
+        const auto& summary = state.statistics;
+        output << "],\"statistics\":{\"valid\":" << (summary.valid ? "true" : "false")
+            << ",\"window\":[" << summary.window_lower << ',' << summary.window_upper
+            << "],\"range\":[" << summary.lower << ',' << summary.upper
+            << "],\"mean\":" << summary.mean << ",\"median\":" << summary.median
+            << ",\"window_median\":" << summary.window_median << ",\"entries\":" << summary.entries
+            << ",\"selected_entries\":" << summary.selected_entries << ",\"error\":" << summary.error << "}}";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;

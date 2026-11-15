@@ -227,6 +227,28 @@ class MipWebTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "元のADC"):
             self.app.fit_input()
 
+    def test_statistics_mode_stages_and_replays_mean_method(self):
+        self.request["settings"] = {**self.settings, "function": "mean", "range_mode": "fixed"}
+        self.result.update(function="mean", covariance=-1, ndf=0,
+                           statistics={"valid": True, "mean": 255., "median": 253.})
+        staged = self.staged()
+        self.assertEqual("mean", staged["staged"]["bh2-3-u"]["settings"]["function"])
+        self.install_gate()
+        with patch("common.lib.calib_ops.run_dispatch", return_value=(True, "accepted")):
+            self.app.write({**self.request, "revision": staged["revision"], "hold_id": "hold-1"})
+        line = web.fit_overrides.flat_mip_fit_path(12).read_text()
+        self.assertIn("bh2-3-u:Pi mean fixed", line)
+
+    def test_empty_statistics_cannot_be_staged(self):
+        self.result.update(function="mean", statistics={"valid": False})
+        response = self.app.fit({**self.request, "settings": {**self.settings, "function": "mean"}})
+        self.assertFalse(response["success"])
+        self.assertNotIn("receipt", response)
+
+    def test_mean_initial_method_is_preserved(self):
+        result = {**self.result, "function": "mean"}
+        self.assertEqual("mean", self.app.initial_settings(result)["function"])
+
     def test_unacknowledged_replay_does_not_wait_forever(self):
         self.staged()
         path, _ = self.install_gate()

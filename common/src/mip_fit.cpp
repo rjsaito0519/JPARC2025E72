@@ -31,7 +31,8 @@ read_mip_settings(
         for (auto& parameter : settings.parameters) row >> parameter;
         if (!row || settings.lower >= settings.upper || settings.parameters[0] <= 0.
             || settings.parameters[2] <= 0. || settings.parameters[3] < 0.
-            || (settings.function != "auto" && settings.function != "gaussian" && settings.function != "landau")
+            || (settings.function != "auto" && settings.function != "gaussian" && settings.function != "landau"
+                && settings.function != "mean")
             || (settings.range_mode != "auto" && settings.range_mode != "fixed"))
             throw std::runtime_error("invalid MIP fit override: " + key);
         for (auto parameter : settings.parameters)
@@ -41,6 +42,64 @@ read_mip_settings(
         return true;
     }
     return false;
+}
+
+//_____________________________________________________________________________
+MipStatistics
+summarize_mip_statistics(
+    TH1D* histogram,
+    double lower,
+    double upper,
+    double qlo,
+    double qhi
+)
+{
+    MipStatistics summary;
+    summary.window_lower = lower;
+    summary.window_upper = upper;
+    if (!(std::isfinite(lower) && std::isfinite(upper) && lower < upper
+          && 0. <= qlo && qlo < qhi && qhi <= 1.)) return summary;
+    const int first = std::max(1, histogram->FindBin(lower));
+    const int last = std::min(histogram->GetNbinsX(), histogram->FindBin(upper));
+    if (first > last) return summary;
+    summary.entries = histogram->Integral(first, last);
+    if (!(summary.entries > 0.) || !std::isfinite(summary.entries)) return summary;
+    auto quantile = [&](double probability) {
+        double cumulative = 0.;
+        for (int bin = first; bin <= last; ++bin) {
+            const double count = histogram->GetBinContent(bin);
+            if (count > 0. && cumulative + count >= probability*summary.entries)
+                return histogram->GetBinLowEdge(bin)
+                    + histogram->GetBinWidth(bin)*(probability*summary.entries-cumulative)/count;
+            cumulative += count;
+        }
+        return histogram->GetBinLowEdge(last+1);
+    };
+    summary.lower = qlo == 0. ? lower : quantile(qlo);
+    summary.upper = qhi == 1. ? upper : quantile(qhi);
+    summary.window_median = quantile(.5);
+    double cumulative = 0., sum = 0., squares = 0.;
+    summary.median = quantile(.5*(qlo+qhi));
+    for (int bin = first; bin <= last; ++bin) {
+        const double count = histogram->GetBinContent(bin);
+        const double q_in = cumulative/summary.entries;
+        const double q_out = (cumulative+count)/summary.entries;
+        cumulative += count;
+        const double fraction = std::min(q_out, qhi)-std::max(q_in, qlo);
+        if (fraction <= 0.) continue;
+        const double weight = fraction*summary.entries;
+        const double center = histogram->GetBinCenter(bin);
+        sum += weight*center;
+        squares += weight*center*center;
+        summary.selected_entries += weight;
+    }
+    if (summary.selected_entries > 0.) {
+        summary.mean = sum/summary.selected_entries;
+        const double variance = std::max(0., squares/summary.selected_entries-summary.mean*summary.mean);
+        summary.error = std::sqrt(variance/summary.selected_entries);
+        summary.valid = std::isfinite(summary.mean) && std::isfinite(summary.median);
+    }
+    return summary;
 }
 
 //_____________________________________________________________________________
