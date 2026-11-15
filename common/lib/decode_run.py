@@ -6,6 +6,7 @@ without polling (callers wait for myrun to finish, then verify).
 
 Default is bsub (no --local). Pass local=True for work-server --local mode.
 """
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -143,6 +144,45 @@ def verify_decode(yml, t0, myrun_rc=0):
 
 
 #_____________________________________________________________________________
+def calibration_inputs(yml):
+    """Hash the runlist, confs and mutable calibration files used by this decode."""
+    yml = Path(yml)
+    doc = yaml.safe_load(yml.read_text())
+    if not isinstance(doc, dict) or not isinstance(doc.get("RUN"), dict):
+        runner.fail(f"runlist has no RUN map: {yml}")
+    wd = _workdir(doc)
+    paths = {yml}
+    keys = {"USER", "HDPRM", "HDPHC", "DCGEO", "DCTDC", "DCDRFT", "D5MTX", "TPCPRM"}
+    defaults = doc.get("DEFAULT") or {}
+    if not isinstance(defaults, dict):
+        runner.fail(f"runlist DEFAULT must be a mapping: {yml}")
+    for entry in (doc.get("RUN") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("conf", defaults.get("conf"))
+        if not name:
+            continue
+        conf = Path(str(name)).expanduser()
+        if not conf.is_absolute():
+            conf = wd / conf
+        paths.add(conf)
+        if not conf.is_file():
+            continue
+        for line in conf.read_text().splitlines():
+            fields = line.split()
+            if len(fields) >= 2 and fields[0].rstrip(":") in keys:
+                parameter = Path(fields[1]).expanduser()
+                paths.add(parameter if parameter.is_absolute() else wd / parameter)
+    snapshot = {}
+    for path in paths:
+        try:
+            snapshot[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except FileNotFoundError:
+            snapshot[str(path)] = None
+    return snapshot
+
+
+#_____________________________________________________________________________
 def run_decode(runlist, *, dry_run=False, local=False):
     """Run myrun and verify stat DONE + fresh roots. dry_run: print only."""
     yml = Path(runlist).expanduser().resolve()
@@ -152,7 +192,17 @@ def run_decode(runlist, *, dry_run=False, local=False):
         return runner.EXIT_OK
     if not yml.is_file():
         runner.fail(f"runlist not found: {yml}")
-    t0 = time.time()
-    rc, _ = runner.sh(cmd, ok=(runner.EXIT_OK, runner.EXIT_FAIL))
-    verify_decode(yml, t0, myrun_rc=rc)
-    return runner.EXIT_OK
+    for attempt in range(3):
+        before = calibration_inputs(yml)
+        t0 = time.time()
+        rc, _ = runner.sh(cmd, ok=(runner.EXIT_OK, runner.EXIT_FAIL))
+        verify_decode(yml, t0, myrun_rc=rc)
+        after = calibration_inputs(yml)
+        changed = sorted(path for path in before.keys() | after.keys()
+                         if before.get(path) != after.get(path))
+        if not changed:
+            return runner.EXIT_OK
+        reason = "calibration inputs changed during decode: " + ", ".join(changed)
+        if attempt == 2:
+            runner.fail(reason + "; stop without fitting this ROOT")
+        runner.warn(reason + f"; decode again ({attempt + 1}/2)")
