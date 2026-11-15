@@ -1504,7 +1504,8 @@ namespace ana_helper {
     }
 
     // ____________________________________________________________________________________________
-    FitResult t0_offset_fit(TH1D *h, TCanvas *c, Int_t n_c) {
+    FitResult t0_offset_fit(TH1D *h, TCanvas *c, Int_t n_c,
+                            const MipFitSettings* settings, MipFitState* fit_state) {
         Config& conf = Config::getInstance();
 
         h = (TH1D*)h->Rebin(3, h->GetName());
@@ -1519,7 +1520,23 @@ namespace ana_helper {
         TString fit_option = max_bin_content > 50.0 ? "0QEMR" : "0QEMRL";
         FitResult result;
 
-        if (max_bin_content > 10.0) {
+        if (settings) {
+            MipFitState state;
+            TF1* fitted = fit_manual_t0(h, *settings, state);
+            if (fit_state) *fit_state = state;
+            if (!state.success && !fit_state) {
+                delete fitted;
+                throw std::runtime_error("manual T0 fit failed; calibration constants were not updated");
+            }
+            for (int parameter = 0; parameter < 3; ++parameter) {
+                result.par.push_back(fitted->GetParameter(parameter));
+                result.err.push_back(fitted->GetParError(parameter));
+            }
+            result.chi_square = state.chi_square;
+            h->GetXaxis()->SetRangeUser(state.lower, state.upper);
+            h->Draw();
+            fitted->Draw("same");
+        } else if (max_bin_content > 10.0) {
 
             Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
             Double_t width    = h->GetStdDev();
@@ -1545,7 +1562,8 @@ namespace ana_helper {
             f_fit->SetLineColor(kOrange);
             f_fit->SetLineWidth(2);
             f_fit->SetNpx(1000);
-            h->Fit(f_fit, fit_option.Data(), "", lower, upper);
+            TFitResultPtr fitted = h->Fit(f_fit, fit_option+"S", "", lower, upper);
+            if (fit_state) *fit_state = describe_mip_fit(f_fit, int(fitted), fitted.Get() ? fitted->CovMatrixStatus() : -1);
 
             // -- fill result -----
             for (Int_t i = 0, n_par = f_fit->GetNpar(); i < n_par; i++) {
@@ -1592,6 +1610,12 @@ namespace ana_helper {
             commnet->SetNDC();  // NDC座標（0〜1の正規化）を使う
             commnet->SetTextSize(0.04);
             commnet->DrawLatex(0.7, 0.85, "not fitting");
+            if (fit_state) {
+                fit_state->parameters = {{std::max(1., evnum_within_range*h->GetBinWidth(1)),
+                    result.par[1], std::max(h->GetBinWidth(1), result.par[2]), 0.}};
+                fit_state->lower = std::max(h->GetXaxis()->GetXmin(), center-half_width);
+                fit_state->upper = std::min(h->GetXaxis()->GetXmax(), center+half_width);
+            }
         }
 
         TLine *line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());

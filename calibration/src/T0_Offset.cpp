@@ -1,4 +1,6 @@
 // c++
+#include <cstdlib>
+#include <stdexcept>
 #include <iostream>
 #include <sys/stat.h>
 #include <fstream>
@@ -76,6 +78,10 @@ void analyze(TString path, TString particle){
     TH1D *h_t0_offset[conf.num_of_ch.at("bh2")];
     for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_t0_offset[i] = (TH1D*)f->Get(Form("T0_seg%d_TimeOffset_%s", i, particle.Data()));
 
+    fout->cd();
+    for (Int_t segment = 0; segment < conf.num_of_ch.at("bh2"); ++segment)
+        h_t0_offset[segment]->Write();
+
     // -- set tdc range ----------
     TH1D *h_sum_tdc = (TH1D*)h_t0_offset[0]->Clone("h_sum_tdc");
     h_sum_tdc->Reset(); 
@@ -94,6 +100,7 @@ void analyze(TString path, TString particle){
 
     // -- container -----
     std::vector<FitResult> t0_offset;
+    std::vector<ana_helper::MipFitState> snapshots;
 
     auto c_t0 = new TCanvas("t0", "", 1500, 1200);
     c_t0->Divide(cols, rows);
@@ -107,7 +114,16 @@ void analyze(TString path, TString particle){
             nth_pad = 1;
         }
 
-        FitResult result = ana_helper::t0_offset_fit(h_t0_offset[i], c_t0, nth_pad);
+        ana_helper::MipFitSettings settings;
+        const char* override_path = std::getenv("E72_T0_FIT_OVERRIDE");
+        const std::string key = "bh2-"+std::to_string(i)+"-t0:"+particle.Data();
+        const bool manual = override_path && ana_helper::read_mip_settings(override_path, key, settings);
+        ana_helper::MipFitState snapshot;
+        FitResult result = ana_helper::t0_offset_fit(h_t0_offset[i], c_t0, nth_pad,
+            manual ? &settings : nullptr, &snapshot);
+        if (manual && !snapshot.success)
+            throw std::runtime_error("manual T0 fit failed for "+key);
+        snapshots.push_back(snapshot);
         t0_offset.push_back(result);
         nth_pad++;
     }
@@ -139,6 +155,32 @@ void analyze(TString path, TString particle){
     
     fout->cd();
     tree->Write();
+    TTree fit_tree("t0_fit", "Saved T0 Gaussian and fit range");
+    Int_t segment, status, covariance, ndf;
+    Bool_t success;
+    Double_t parameters[3], range[2], chi_square;
+    fit_tree.Branch("seg", &segment);
+    fit_tree.Branch("parameters", parameters, "parameters[3]/D");
+    fit_tree.Branch("range", range, "range[2]/D");
+    fit_tree.Branch("status", &status);
+    fit_tree.Branch("covariance", &covariance);
+    fit_tree.Branch("ndf", &ndf);
+    fit_tree.Branch("success", &success);
+    fit_tree.Branch("chi_square", &chi_square);
+    for (segment = 0; segment < conf.num_of_ch.at("bh2"); ++segment) {
+        const auto& snapshot = snapshots[segment];
+        std::copy_n(snapshot.parameters.begin(), 3, parameters);
+        range[0] = snapshot.lower;
+        range[1] = snapshot.upper;
+        status = snapshot.status;
+        covariance = snapshot.covariance;
+        ndf = snapshot.ndf;
+        success = snapshot.success;
+        chi_square = snapshot.chi_square;
+        fit_tree.Fill();
+    }
+    fit_tree.Write();
+    fit_tree.SetDirectory(nullptr);
     fout->Close(); 
 }
 
@@ -157,6 +199,11 @@ Int_t main(int argc, char** argv) {
     }
 
     conf.detector = "bh2";
-    analyze(path, particle);
+    try {
+        analyze(path, particle);
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << std::endl;
+        return 1;
+    }
     return 0;
 }

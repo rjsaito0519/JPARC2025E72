@@ -249,7 +249,10 @@ def do_t0(run, suffix, args):
         session, [hodo_param_path(run, "t0", suffix)], role="fit_input",
     )
     runner.step(f"run{run:05d}: T0_Offset")
-    runner.sh(f"{exe} {root} {suffix}")
+    import os
+    from common.lib import fit_overrides
+    overrides = fit_overrides.write_flat_t0_fit(run)
+    runner.sh(f"{exe} {root} {suffix}", env={**os.environ, "E72_T0_FIT_OVERRIDE": str(overrides)})
     rc = runner.update_param(run, suffix, "t0", debug=args.debug)
     return after_qa_merge(run, "t0", args, rc, session=session)
 

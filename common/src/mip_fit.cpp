@@ -122,7 +122,7 @@ describe_mip_fit(
 )
 {
     MipFitState state;
-    for (int i = 0; i < 4; ++i) state.parameters[i] = function->GetParameter(i);
+    for (int i = 0; i < std::min(4, function->GetNpar()); ++i) state.parameters[i] = function->GetParameter(i);
     state.lower = function->GetXmin();
     state.upper = function->GetXmax();
     state.chi_square = function->GetChisquare();
@@ -137,6 +137,44 @@ describe_mip_fit(
         && state.parameters[1] <= state.upper;
     for (auto parameter : state.parameters) state.success = state.success && std::isfinite(parameter);
     return state;
+}
+
+//_____________________________________________________________________________
+TF1*
+fit_manual_t0(
+    TH1D* histogram,
+    const MipFitSettings& settings,
+    MipFitState& state
+)
+{
+    if (settings.function != "gaussian" || settings.parameters[3] != 0.)
+        throw std::runtime_error("T0 uses a three-parameter Gaussian");
+    const double minimum = histogram->GetXaxis()->GetXmin();
+    const double maximum = histogram->GetXaxis()->GetXmax();
+    if (settings.lower < minimum || settings.upper > maximum)
+        throw std::runtime_error("T0 fit range is outside the histogram");
+    auto function = std::make_unique<TF1>(Form("manual_t0_gauss_%s", histogram->GetName()),
+        "gausn", settings.lower, settings.upper);
+    function->SetParameters(settings.parameters.data());
+    function->SetParLimits(1, settings.lower, settings.upper);
+    function->SetParLimits(2, histogram->GetBinWidth(1)*.01, maximum-minimum);
+    double lower = settings.lower, upper = settings.upper;
+    histogram->GetXaxis()->UnZoom();
+    for (int round = 0; round < 2; ++round) {
+        if (lower >= upper) throw std::runtime_error("invalid T0 adaptive fit range");
+        function->SetRange(lower, upper);
+        const TString option = histogram->GetMaximum() > 50. ? "0QEMRSN" : "0QEMRLSN";
+        TFitResultPtr fitted = histogram->Fit(function.get(), option, "", lower, upper);
+        state = describe_mip_fit(function.get(), int(fitted), fitted.Get() ? fitted->CovMatrixStatus() : -1);
+        if (round == 0 && settings.range_mode == "auto") {
+            lower = std::max(settings.lower, state.parameters[1]-2.*state.parameters[2]);
+            upper = std::min(settings.upper, state.parameters[1]+2.*state.parameters[2]);
+        }
+    }
+    function->SetLineColor(kOrange);
+    function->SetLineWidth(2);
+    function->SetNpx(1000);
+    return function.release();
 }
 
 //_____________________________________________________________________________

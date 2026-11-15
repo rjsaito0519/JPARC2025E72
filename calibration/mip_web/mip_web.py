@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""BH2 MIP tuning over the same localhost SSH tunnel as the TDC window editor."""
+"""BH2 ADC MIP and T0 tuning over a localhost SSH tunnel."""
 from __future__ import annotations
 
 import argparse
@@ -16,7 +16,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 import uproot
@@ -28,6 +28,7 @@ from common.lib.calib_state_io import locked_path, write_json  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 BINARY = PROJECT / "bin" / "BH2_MIP_PREVIEW"
+T0_BINARY = PROJECT / "bin" / "T0_OFFSET_PREVIEW"
 PLOTLY = Path(np.__file__).parents[1] / "plotly/package_data/plotly.min.js"
 
 
@@ -42,12 +43,21 @@ def digest(path):
 
 
 class App:
-    def __init__(self, run, particle="Pi"):
-        self.run, self.particle = int(run), particle
+    def __init__(self, run, particle="Pi", mode="hdprm"):
+        if mode not in ("hdprm", "t0"):
+            raise ValueError("unknown Hodo tuning mode")
+        self.run, self.particle, self.mode = int(run), particle, mode
+        self.expected_step = "hodo_t0" if mode == "t0" else "hodo_hdprm"
+        self.stage_label = "T0 offset" if mode == "t0" else "HDPRM"
+        self.binary = T0_BINARY if mode == "t0" else BINARY
+        self.override_key = "gaussian_fit" if mode == "t0" else "mip_fit"
+        self.validate_settings = fit_overrides.validate_t0_fit if mode == "t0" else fit_overrides.validate_mip_fit
         self.base = Path(config.OUTPUT_DIR) / "calib" / f"run{run:05d}"
         self.work = Path(config.WORK_DIR) / "mip_web" / f"run{run:05d}" / particle
+        if mode == "t0":
+            self.work = self.work / "t0"
         self.work.mkdir(parents=True, exist_ok=True)
-        self.staging_path = self.base / f"mip_web_{particle}.json"
+        self.staging_path = self.base / f"{'t0' if mode == 't0' else 'mip'}_web_{particle}.json"
         self.root = Path(config.DATA_DIR) / f"run{run:05d}_Hodo.root"
         self.lock = threading.RLock()
         self.preview_lock = threading.Lock()
@@ -61,9 +71,9 @@ class App:
         sources = [fit_overrides.overrides_path(self.run),
                    param / "HDPRM" / config.SUB_DIR / f"HodoParam_run{self.run:05d}_{self.particle}",
                    param / "HDPHC" / config.SUB_DIR / f"HodoPHCParam_run{self.run:05d}_{self.particle}",
-                   param / "USER" / config.SUB_DIR / f"UserParam_run{self.run:05d}", BINARY,
+                   param / "USER" / config.SUB_DIR / f"UserParam_run{self.run:05d}", self.binary,
                    PROJECT / "common/include/params.h"]
-        fit_root = Path(config.OUTPUT_DIR) / "root" / f"run{self.run:05d}" / f"run{self.run:05d}_BH2_HDPRM_{self.particle}.root"
+        fit_root = self.fit_output()
         fit_stat = fit_root.stat() if fit_root.is_file() else None
         record = [str(resolved), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns,
                   [(str(path), digest(path)) for path in sources],
@@ -71,7 +81,7 @@ class App:
         return hashlib.sha256(json.dumps(record).encode()).hexdigest()
 
     def channel(self, key):
-        match = re.fullmatch(r"bh2-(\d+)-(u|d)", str(key))
+        match = re.fullmatch(r"bh2-(\d+)-(t0)" if self.mode == "t0" else r"bh2-(\d+)-(u|d)", str(key))
         if not match or not 0 <= int(match[1]) < config.NUM_OF_CH["BH2"]:
             raise ValueError("BH2 channel is invalid")
         return int(match[1]), match[2].upper()
@@ -84,7 +94,7 @@ class App:
             state = read_json(Path(job["state_path"]), {})
             hold = state.get("hold") or {}
             if state.get("status") == "held" and hold.get("id") != job["hold_id"]:
-                job["status"] = "done" if hold.get("step") == "hodo_hdprm" and hold.get("rc") == 0 else "failed"
+                job["status"] = "done" if hold.get("step") == self.expected_step and hold.get("rc") == 0 else "failed"
                 job["message"] = "再実行完了・Slackの新しいQAを確認してください" if job["status"] == "done" else "再実行が確認待ちで停止しました。Slackとログを確認してください"
             elif state.get("status") in ("failed", "stopped", "awaiting_final_approval", "approved") and hold.get("id") != job["hold_id"]:
                 job["status"] = "done" if state.get("status") == "awaiting_final_approval" and state.get("last_rc", state.get("rc")) == 0 else "failed"
@@ -111,7 +121,7 @@ class App:
         for path in [self.base / "lanes/hodo/calib_dispatch_state.json", self.base / "calib_dispatch_state.json"]:
             state = read_json(path, {})
             hold = state.get("hold") or {}
-            if state.get("status") == "held" and hold.get("step") == "hodo_hdprm" and not hold.get("decision"):
+            if state.get("status") == "held" and hold.get("step") == self.expected_step and not hold.get("decision"):
                 import yaml
                 session_path = self.base / "calib_session.yml"
                 session = yaml.safe_load(session_path.read_text()) or {}
@@ -122,7 +132,7 @@ class App:
                 if suffix != self.particle:
                     raise ValueError("表示中の粒子と校正セッションが異なります")
                 return path, state, hold
-        raise ValueError("WriteはHodo ADC/TDC（hodo_hdprm）の確認待ちから行ってください。現在は閲覧・調整・仮保存のみ可能です")
+        raise ValueError(f"Writeは{self.stage_label}（{self.expected_step}）の確認待ちから行ってください。現在は閲覧・調整・仮保存のみ可能です")
 
     def public(self, doc):
         try:
@@ -130,7 +140,7 @@ class App:
             gate = {"hold_id": hold["id"], "reason": ""}
         except (ValueError, OSError) as error:
             gate = {"hold_id": None, "reason": str(error)}
-        return {"run": self.run, "particle": self.particle, "fingerprint": doc["fingerprint"],
+        return {"run": self.run, "particle": self.particle, "mode": self.mode, "fingerprint": doc["fingerprint"],
                 "revision": doc["revision"], "staged": doc["staged"], "notice": doc.get("notice", ""),
                 "job": doc.get("job"), "gate": gate}
 
@@ -149,12 +159,12 @@ class App:
         identifier = secrets.token_hex(12)
         output = self.work / f"{identifier}.json"
         settings_path = self.work / f"{identifier}.txt"
-        command = [str(BINARY), str(self.fit_input().resolve()), self.particle, str(segment), side, str(output)]
+        command = [str(self.binary), str(self.fit_input().resolve()), self.particle, str(segment), side, str(output)]
         if settings is not None:
-            settings_path.write_text(fit_overrides.mip_fit_line(key, self.particle, settings) + "\n")
+            settings_path.write_text((fit_overrides.t0_fit_line if self.mode == "t0" else fit_overrides.mip_fit_line)(key, self.particle, settings) + "\n")
             # The preview uses the same particle-qualified key as the production reader.
             if curve_only and settings["function"] != "mean":
-                command = [str(BINARY), "--curve", str(settings_path), f"{key}:{self.particle}", str(output)]
+                command = [str(self.binary), "--curve", str(settings_path), f"{key}:{self.particle}", str(output)]
             else:
                 command += [str(settings_path)]
         environment = dict(os.environ)
@@ -170,17 +180,24 @@ class App:
             settings_path.unlink(missing_ok=True)
 
     def fit_output(self):
-        return Path(config.OUTPUT_DIR) / "root" / f"run{self.run:05d}" / f"run{self.run:05d}_BH2_HDPRM_{self.particle}.root"
+        kind = "T0_Offset" if self.mode == "t0" else "BH2_HDPRM"
+        return Path(config.OUTPUT_DIR) / "root" / f"run{self.run:05d}" / f"run{self.run:05d}_{kind}_{self.particle}.root"
+
+    def histogram_name(self, segment, side):
+        return f"T0_seg{segment}_TimeOffset_{self.particle}" if self.mode == "t0" else f"BH2_ADC_seg{segment}{side}_{self.particle}"
+
+    def channel_keys(self):
+        return [f"bh2-{segment}-{side}" for segment in range(config.NUM_OF_CH["BH2"])
+                for side in (("t0",) if self.mode == "t0" else ("u", "d"))]
 
     def fit_input(self):
         output = self.fit_output()
         if not output.is_file():
-            raise ValueError("HDPRMのFit結果がありません。先にHDPRMを実行してください")
+            raise ValueError(f"{self.stage_label}のFit結果がありません。先に当該段階を実行してください")
         with uproot.open(output) as source:
-            required = [f"BH2_ADC_seg{segment}{side}_{self.particle}"
-                        for segment in range(config.NUM_OF_CH["BH2"]) for side in ("U", "D")]
+            required = [self.histogram_name(*self.channel(key)) for key in self.channel_keys()]
             if any(name not in source for name in required):
-                raise ValueError("このHDPRM結果には元のADCヒストグラムが保存されていません。HDPRMを再実行してから開いてください")
+                raise ValueError(f"この{self.stage_label}結果には元の{'T0' if self.mode == 't0' else 'ADC'}ヒストグラムが保存されていません。当該段階を再実行してから開いてください")
         return output
 
     def overview(self, request):
@@ -188,21 +205,24 @@ class App:
             doc = self.document()
             self.require_current(request, doc)
             offset = int(request.get("page", 0)) * 12
-            keys = [f"bh2-{segment}-{side}" for segment in range(config.NUM_OF_CH["BH2"]) for side in ("u", "d")]
+            keys = self.channel_keys()
             if offset < 0 or offset >= len(keys):
                 raise ValueError("page is invalid")
             with uproot.open(self.fit_input()) as source:
                 channels = []
                 for key in keys[offset:offset+12]:
                     segment, side = self.channel(key)
-                    name = f"BH2_ADC_seg{segment}{side}_{self.particle}"
+                    name = self.histogram_name(segment, side)
                     counts, edges = source[name].to_numpy()
                     if not np.all(np.isfinite(counts)):
                         raise ValueError(f"nonfinite histogram: {name}")
-                    counts = counts.reshape(-1, 2).sum(axis=1)
-                    edges = edges[::2]
+                    rebin = 3 if self.mode == "t0" else 2
+                    used = len(counts)//rebin*rebin
+                    counts = counts[:used].reshape(-1, rebin).sum(axis=1)
+                    edges = edges[:used+1:rebin]
                     channels.append({"key": key, "label": f"BH2 seg{segment} {side}",
                                      "x": ((edges[:-1] + edges[1:])/2).tolist(), "counts": counts.tolist(),
+                                     "bounds": [float(edges[0]), float(edges[-1])],
                                      "automatic": self.automatic(key, doc["fingerprint"])})
             return {**self.public(doc), "channels": channels, "pages": (len(keys)+11)//12}
 
@@ -213,15 +233,16 @@ class App:
             snapshot = None
             if fit_root.is_file():
                 with uproot.open(fit_root) as output:
-                    if "mip_fit" in output:
+                    tree_name = "t0_fit" if self.mode == "t0" else "mip_fit"
+                    if tree_name in output:
                         segment, side = self.channel(key)
-                        columns = output["mip_fit"].arrays(library="np")
-                        for index, (row_seg, row_side) in enumerate(zip(columns["seg"], columns["side"])):
-                            if row_seg == segment and row_side == (0 if side == "U" else 1):
+                        columns = output[tree_name].arrays(library="np")
+                        for index, row_seg in enumerate(columns["seg"]):
+                            if row_seg == segment and (self.mode == "t0" or columns["side"][index] == (0 if side == "U" else 1)):
                                 parameters = columns["parameters"][index].tolist()
                                 bounds = columns["range"][index].tolist()
                                 if bounds[0] < bounds[1] and parameters[0] > 0 and parameters[2] > 0:
-                                    function = str(columns["function"][index])
+                                    function = "gaussian" if self.mode == "t0" else str(columns["function"][index])
                                     snapshot = {"parameters": parameters, "range": bounds, "function": function,
                                                 "success": bool(columns["success"][index]), "status": int(columns["status"][index]),
                                                 "covariance": int(columns["covariance"][index]), "ndf": int(columns["ndf"][index]),
@@ -233,14 +254,15 @@ class App:
                                         if function == "mean":
                                             snapshot["range"] = snapshot["statistics"]["range"]
                                     elif snapshot["status"] < 0:
-                                        snapshot["origin"] = "Fit未実施（低統計）。詳細な統計値の表示にはHDPRMの再実行が必要です"
+                                        snapshot["origin"] = ("Fit未実施（低統計）。初期値を調整してFitしてください" if self.mode == "t0"
+                                                              else "Fit未実施（低統計）。詳細な統計値の表示にはHDPRMの再実行が必要です")
                                     curve_settings = {"parameters": parameters, "range": bounds,
                                                       "function": function, "range_mode": "fixed"}
                                     snapshot["curve"] = (self.execute_preview(key, curve_settings, curve_only=True)["curve"]
                                                          if snapshot["status"] >= 0 and function != "mean" else [])
                                 break
             if snapshot is None:
-                raise ValueError("保存済みのMIP Fit結果を読み出せません。HDPRMを再実行してから開いてください")
+                raise ValueError(f"保存済みの{self.stage_label} Fit結果を読み出せません。当該段階を再実行してから開いてください")
             self.cache[cache_key] = snapshot
         return copy.deepcopy(self.cache[cache_key])
 
@@ -251,25 +273,32 @@ class App:
             key = request["key"]
             self.channel(key)
             result = self.automatic(key, doc["fingerprint"])
-            entry = fit_overrides.load(self.run).get("fit", {}).get("BH2", {}).get("hdprm", {}).get(key, {})
-            committed = entry.get("mip_fit", {}).get(self.particle)
+            entry = fit_overrides.load(self.run).get("fit", {}).get("BH2", {}).get(self.mode, {}).get(key, {})
+            committed = entry.get(self.override_key, {}).get(self.particle)
             automatic = self.initial_settings(result)
             initial = doc["staged"].get(key, {}).get("settings") or committed or automatic
             return {**self.public(doc), "automatic": result, "initial": initial,
                     "baseline": committed or automatic, "automatic_note": result["origin"]}
 
-    @staticmethod
-    def initial_settings(result):
+    def initial_settings(self, result):
         return {"parameters": result["parameters"], "range": result["range"],
-                "function": "mean" if result["function"] == "mean" else "auto", "range_mode": "auto"}
+                "function": "gaussian" if self.mode == "t0" else "mean" if result["function"] == "mean" else "auto", "range_mode": "auto"}
 
     def fit(self, request, curve_only=False):
         with self.lock, locked_path(self.staging_path):
             doc = self.document()
             self.require_current(request, doc)
             key = request["key"]
-            settings = fit_overrides.validate_mip_fit(request["settings"])
-            if not 0 <= settings["range"][0] < settings["range"][1] <= 4096:
+            settings = self.validate_settings(request["settings"])
+            if self.mode == "t0":
+                segment, side = self.channel(key)
+                with uproot.open(self.fit_input()) as source:
+                    edges = source[self.histogram_name(segment, side)].axis().edges()
+                    used = (len(edges)-1)//3*3
+                    bounds = [float(edges[0]), float(edges[used])]
+                if not bounds[0] <= settings["range"][0] < settings["range"][1] <= bounds[1]:
+                    raise ValueError(f"T0のFit範囲は{bounds[0]}〜{bounds[1]} ns内で指定してください")
+            elif not 0 <= settings["range"][0] < settings["range"][1] <= 4096:
                 raise ValueError("Fit範囲はADCヒストグラム内（0–4096）で指定してください")
             if curve_only:
                 effective = dict(settings)
@@ -316,8 +345,8 @@ class App:
             self.require_current(request, doc)
             rows = []
             for key, row in doc["staged"].items():
-                entry = fit_overrides.load(self.run).get("fit", {}).get("BH2", {}).get("hdprm", {}).get(key, {})
-                before = entry.get("mip_fit", {}).get(self.particle)
+                entry = fit_overrides.load(self.run).get("fit", {}).get("BH2", {}).get(self.mode, {}).get(key, {})
+                before = entry.get(self.override_key, {}).get(self.particle)
                 if before is None:
                     automatic = self.automatic(key, doc["fingerprint"])
                     before = self.initial_settings(automatic)
@@ -350,16 +379,16 @@ class App:
                 if request.get("hold_id") != hold["id"]:
                     raise ValueError("承認待ちの対象が変わりました。確認画面を開き直してください")
                 overrides = read_json(fit_overrides.overrides_path(self.run), fit_overrides.empty_doc())
-                channels = overrides.setdefault("fit", {}).setdefault("BH2", {}).setdefault("hdprm", {})
+                channels = overrides.setdefault("fit", {}).setdefault("BH2", {}).setdefault(self.mode, {})
                 for key, row in doc["staged"].items():
-                    channels.setdefault(key, {}).setdefault("mip_fit", {})[self.particle] = fit_overrides.validate_mip_fit(row["settings"])
+                    channels.setdefault(key, {}).setdefault(self.override_key, {})[self.particle] = self.validate_settings(row["settings"])
                 target = fit_overrides.overrides_path(self.run)
                 if target.exists():
                     backup = self.work / (time.strftime("overrides_%Y%m%dT%H%M%S_") + secrets.token_hex(4) + ".json")
                     shutil.copy2(target, backup)
                 fit_overrides.save(self.run, overrides)
                 doc["job"] = {"status": "running", "hold_id": hold["id"], "state_path": str(state_path),
-                              "started_at": time.time(), "message": "HDPRMを再実行中。完了後にSlackの新しいQAで確認待ちになります"}
+                              "started_at": time.time(), "message": f"{self.stage_label}を再実行中。完了後にSlackの新しいQAで確認待ちになります"}
                 write_json(self.staging_path, doc)
                 # Refit uses the existing lane's decode mode and always returns to its gate.
                 from common.lib import calib_ops
@@ -374,7 +403,10 @@ class App:
                 return self.public(doc)
 
 
-def handler(app):
+def handler(app, t0_app=None):
+    applications = {"hdprm": app}
+    if t0_app is not None:
+        applications["t0"] = t0_app
     class Handler(BaseHTTPRequestHandler):
         def send(self, payload, content_type="application/json", status=200):
             body = payload if isinstance(payload, bytes) else json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()
@@ -393,10 +425,17 @@ def handler(app):
                 return False
             return True
 
+        def application(self):
+            mode = parse_qs(urlparse(self.path).query).get("mode", ["hdprm"])[0]
+            if mode not in applications:
+                raise ValueError("unknown Hodo tuning mode")
+            return applications[mode]
+
         def do_GET(self):
             if not self.valid_host():
                 return
             try:
+                app = self.application()
                 if urlparse(self.path).path == "/plotly.min.js":
                     self.send(PLOTLY.read_bytes(), "application/javascript")
                 elif urlparse(self.path).path == "/state":
@@ -413,6 +452,7 @@ def handler(app):
             if not self.valid_host():
                 return
             try:
+                app = self.application()
                 if self.headers.get("X-MIP-Token") != app.token:
                     self.send({"error": "invalid session"}, status=403)
                     return
@@ -447,7 +487,10 @@ def main():
     if not BINARY.is_file():
         parser.error("build BH2_MIP_PREVIEW with CMake first")
     app = App(args.run, "K" if args.kaon else "Pi")
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler(app))
+    if not T0_BINARY.is_file():
+        parser.error("build T0_OFFSET_PREVIEW with CMake first")
+    t0_app = App(args.run, app.particle, mode="t0")
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler(app, t0_app))
     print(f"run{args.run:05d} {app.particle} BH2 MIP / conda {sys.executable}", flush=True)
     print(f"open http://localhost:{args.port}/?run={args.run}  (Ctrl-C to stop)", flush=True)
     try:

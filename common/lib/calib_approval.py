@@ -940,15 +940,16 @@ def step_gate_action_blocks(
             "text": {"type": "plain_text", "text": "最良値を採用して終了"},
             "value": value,
         })
-    if step_s == "hodo_hdprm":
-        blocks.append(mip_web_link_block(int(run)))
+    if step_s in ("hodo_hdprm", "hodo_t0"):
+        blocks.append(mip_web_link_block(int(run), mode="t0" if step_s == "hodo_t0" else "hdprm"))
     return blocks
 
 
 #_____________________________________________________________________________
-def mip_web_link_block(run: int) -> dict[str, Any]:
+def mip_web_link_block(run: int, mode="hdprm") -> dict[str, Any]:
+    label = "BH2 T0 offset" if mode == "t0" else "BH2 ADC MIP"
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": (
-        f"BH2 ADC MIP: <http://localhost:8767/?run={run}|Webで手直し> · "
+        f"{label}: <http://localhost:8767/?run={run}&mode={mode}|Webで手直し> · "
         f"PCで先に `~/mip.sh {run}` を起動（Kは `--kaon`）"
     )}]}
 
@@ -1066,8 +1067,8 @@ def exit_check_action_blocks(
         blocks[1]["elements"].pop(0)
     elif "qa_delivery_failed:" in reason:
         blocks[1]["elements"][0]["text"]["text"] = "再送を確認して次へ"
-    if step_s == "hodo_hdprm":
-        blocks.append(mip_web_link_block(int(run)))
+    if step_s in ("hodo_hdprm", "hodo_t0"):
+        blocks.append(mip_web_link_block(int(run), mode="t0" if step_s == "hodo_t0" else "hdprm"))
     return blocks
 
 

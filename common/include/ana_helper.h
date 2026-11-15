@@ -99,7 +99,8 @@ namespace ana_helper {
     FitResult pedestal_fit(TH1D *h, TCanvas *c, Int_t n_c);
     FitResult pedestal_mode(TH1D *h, TCanvas *c, Int_t n_c); // smoothed maximum, no fit
     FitResult bht_tot_fit(TH1D *h, TCanvas *c, Int_t n_c);
-    FitResult t0_offset_fit(TH1D *h, TCanvas *c, Int_t n_c);
+    FitResult t0_offset_fit(TH1D *h, TCanvas *c, Int_t n_c,
+                            const MipFitSettings* settings = nullptr, MipFitState* fit_state = nullptr);
     std::pair<Double_t, Double_t> find_phc_range(TH1D* h, Double_t ratio);
     FitResult phc_fit(TH2D *h, TCanvas *c, Int_t n_c);
     void write_phc_tree(const std::vector<std::vector<FitResult>>& sides, TFile* fout);

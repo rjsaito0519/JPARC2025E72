@@ -57,6 +57,7 @@ def save(run: int, doc: dict[str, Any]) -> Path:
     write_json(path, doc)
     write_flat_mip_left(run, doc)
     write_flat_mip_fit(run, doc)
+    write_flat_t0_fit(run, doc)
     return path
 
 
@@ -195,4 +196,52 @@ def write_flat_mip_fit(run, doc=None):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+    return path
+
+
+#_____________________________________________________________________________
+def validate_t0_fit(settings):
+    if not isinstance(settings, dict):
+        raise ValueError("T0 settings must be an object")
+    parameters, bounds = settings.get("parameters"), settings.get("range")
+    if not isinstance(parameters, list) or len(parameters) != 3:
+        raise ValueError("three T0 Gaussian parameters are required")
+    if not isinstance(bounds, list) or len(bounds) != 2:
+        raise ValueError("two T0 fit bounds are required")
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+           for value in parameters+bounds):
+        raise ValueError("T0 parameters and bounds must be finite")
+    if parameters[0] <= 0 or parameters[2] <= 0 or bounds[0] >= bounds[1]:
+        raise ValueError("T0 normalization and width must be positive, with ordered bounds")
+    if settings.get("function") != "gaussian" or settings.get("range_mode") not in ("auto", "fixed"):
+        raise ValueError("T0 supports Gaussian with auto or fixed range")
+    return {"parameters": [float(value) for value in parameters], "range": [float(value) for value in bounds],
+            "function": "gaussian", "range_mode": settings["range_mode"]}
+
+
+#_____________________________________________________________________________
+def t0_fit_line(key, particle, settings):
+    settings = validate_t0_fit(settings)
+    return " ".join([f"{key}:{particle}", "gaussian", settings["range_mode"],
+                     *[format(value, ".17g") for value in settings["range"]+settings["parameters"]+[0.]]])
+
+
+#_____________________________________________________________________________
+def flat_t0_fit_path(run):
+    return overrides_path(run).with_name("fit_override_t0.txt")
+
+
+#_____________________________________________________________________________
+def write_flat_t0_fit(run, doc=None):
+    doc = load(run) if doc is None else doc
+    channels = doc.get("fit", {}).get("BH2", {}).get("t0", {})
+    lines = ["# key function range_mode lower upper p0 p1 p2 0 (E72_T0_FIT_OVERRIDE)"]
+    for key, entry in sorted(channels.items()):
+        for particle, settings in sorted(entry.get("gaussian_fit", {}).items()):
+            if particle not in ("Pi", "K"):
+                raise ValueError("unknown T0 calibration particle")
+            lines.append(t0_fit_line(key, particle, settings))
+    path = flat_t0_fit_path(run)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines)+"\n", encoding="utf-8")
     return path

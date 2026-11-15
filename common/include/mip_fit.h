@@ -47,6 +47,7 @@ MipStatistics summarize_mip_statistics(TH1D* histogram, double lower, double upp
 bool read_mip_settings(const std::string& path, const std::string& key, MipFitSettings& settings);
 bool load_mip_settings(const std::string& key, MipFitSettings& settings);
 MipFitState describe_mip_fit(TF1* function, int status, int covariance);
+TF1* fit_manual_t0(TH1D* histogram, const MipFitSettings& settings, MipFitState& state);
 TF1* fit_manual_mip(TH1D* histogram, const MipFitSettings& settings, MipFitState& state);
 }
 #endif
