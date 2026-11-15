@@ -20,7 +20,7 @@ class ResidualFitInvalid(ValueError):
 
 
 # -- prepare residual correction data  -----------------------------------
-def make_dictdata(root_file_path):
+def make_dictdata(root_file_path, input_path=None):
     try:
         file = uproot.open(root_file_path)
         if "tree" not in file:
@@ -53,6 +53,19 @@ def make_dictdata(root_file_path):
         )
     print(colored(f"  [INFO] Reference Mean (Plane 0): {ref_mu:.4f} mm", "cyan"))
 
+    ranges = {}
+    if input_path is not None:
+        try:
+            with uproot.open(input_path) as source:
+                for plane in range(len(tree["residual_p0_val"])):
+                    for side in ("a", "b"):
+                        suffix = "K" if Path(root_file_path).stem.endswith("_K") else "Pi"
+                        name = f"BLC{1 if detector_id == 1 else 2}{side}_Track_Residual_plane{plane}_{suffix}"
+                        edges = source[name].axis().edges()
+                        ranges[(plane, side)] = (float(edges[0]), float(edges[-1]))
+        except Exception as error:
+            raise ResidualFitInvalid(f"cannot verify residual histogram bounds: {input_path}: {error}") from error
+
     data = dict()
     has_sigma = "residual_p1_val" in tree
     invalid = []
@@ -62,11 +75,17 @@ def make_dictdata(root_file_path):
         sig_a = float(tree["residual_p1_val"][i][0]) if has_sigma else 0.0
         mu_b = float(tree["residual_p0_val"][i][1])
         sig_b = float(tree["residual_p1_val"][i][1]) if has_sigma else 0.0
-        for label, mu, sig in (
-            (f"{detector_id + i}", mu_a, sig_a),
-            (f"{detector_id + i + 8}", mu_b, sig_b),
+        for side, label, mu, sig in (
+            ("a", f"{detector_id + i}", mu_a, sig_a),
+            ("b", f"{detector_id + i + 8}", mu_b, sig_b),
         ):
             if not fit_validity.all_finite([mu, sig]):
+                invalid.append(label)
+                continue
+            bounds = ranges.get((i, side))
+            if ((has_sigma and sig <= 0.) or
+                    (bounds is not None and (not bounds[0] <= mu <= bounds[1]
+                                             or (has_sigma and sig > bounds[1] - bounds[0])))):
                 invalid.append(label)
                 continue
             corr = -1.0 * (mu - ref_mu)
@@ -77,7 +96,7 @@ def make_dictdata(root_file_path):
 
     if invalid:
         raise ResidualFitInvalid(
-            f"{root_file_path}: non-finite residual mean/sigma on plane(s) {invalid}"
+            f"{root_file_path}: invalid residual mean/sigma (non-finite, nonpositive width, or outside histogram bounds) on plane(s) {invalid}"
         )
     return data
 # ---------------------------------------------------------------------------

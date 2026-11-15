@@ -476,7 +476,7 @@ def collect_residual(a, pf):
     path = fresh_outputs(a.run, [(a.blc, a.blc, "residual", a.suffix)], [decode_path],
                          required=True)[a.blc]
     try:
-        fit = update_residual.make_dictdata(str(path))
+        fit = update_residual.make_dictdata(str(path), input_path=decode_path)
     except update_residual.ResidualFitInvalid as exc:
         hist = conv.history_path(a.run, a.blc, "resi", a.suffix)
         reason = f"residual invalid {a.blc}: {exc}"

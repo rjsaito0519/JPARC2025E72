@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 project_root = Path(__file__).resolve().parent.parent.parent
@@ -618,6 +619,23 @@ def validate_suffixes(mode: dict, suffixes: list):
         sys.exit(1)
 
 
+def seed_dcgeo(target: Path, template: Path):
+    """Make decode and additive calibration updates use the same initial geometry."""
+    from common.lib.param import exclusive_param_lock
+
+    with exclusive_param_lock(target):
+        if target.exists():
+            return
+        descriptor, temporary = tempfile.mkstemp(prefix=target.name + ".", dir=target.parent)
+        os.close(descriptor)
+        try:
+            shutil.copyfile(template, temporary)
+            os.replace(temporary, target)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+
 def setup_calibration_run(run_num: int, mode: dict, suffixes: list, ref, mom):
     """Setup one run for hodo/bcin/bcout/d5/d5g4. Returns (yml, link, infos)."""
     SUB_DIR = config.SUB_DIR
@@ -686,6 +704,10 @@ def setup_calibration_run(run_num: int, mode: dict, suffixes: list, ref, mom):
             print(colored(f"Error: param not found: {tier3_abs}", "red"))
             sys.exit(1)
 
+        if p_key == "DCGEO:" and mode_key in ("bcin", "bcout"):
+            template = resolve_param_template(p_info["dir"], p_info["tpl"], required=True)
+            seed_dcgeo(tier1_abs, template)
+            return tier1_rel
         return tier3_rel
 
     d5_mtx_dest = None
