@@ -83,6 +83,14 @@ void analyze(TString path, TString particle){
     for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_bh2_adc[0][i] = (TH1D*)f->Get(Form("BH2_ADC_seg%dU_%s", i, particle.Data()));
     for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_bh2_adc[1][i] = (TH1D*)f->Get(Form("BH2_ADC_seg%dD_%s", i, particle.Data()));
 
+    // Preserve the ADC input paired with this fit, before fitting rebins it.
+    fout->cd();
+    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); ++i) {
+        for (Int_t side = 0; side < 2; ++side) {
+            h_bh2_adc[side][i]->Write();
+        }
+    }
+
     // -- set tdc range ----------
     TH1D *h_sum_tdc = (TH1D*)h_bh2_tdc[0][0]->Clone("h_sum_tdc");
     h_sum_tdc->Reset(); 

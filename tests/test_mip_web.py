@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -168,7 +169,7 @@ class MipWebTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.app.fit({**self.request, "settings": {**self.settings, **changes}})
 
-    def test_saved_root_function_metadata_is_used(self):
+    def saved_fit(self, *, status=4000, success=True):
         self.app.root.parent.mkdir(parents=True, exist_ok=True)
         self.app.root.write_bytes(b"input fixture")
         output = Path(web.config.OUTPUT_DIR) / "root/run00012/run00012_BH2_HDPRM_Pi.root"
@@ -178,13 +179,53 @@ class MipWebTests(unittest.TestCase):
                 "range": "2 * float64", "function": "string", "success": "bool", "status": "int32",
                 "covariance": "int32", "ndf": "int32"})
             tree.extend({"seg": [3], "side": [0], "parameters": [[12300., 251., 32., 2.]],
-                "range": [[190., 330.]], "function": ["landau"], "success": [True], "status": [4000],
+                "range": [[190., 330.]], "function": ["landau"], "success": [success], "status": [status],
                 "covariance": [3], "ndf": [45]})
+        return output
+
+    def test_saved_root_function_metadata_is_used(self):
+        self.saved_fit()
         self.app.execute_preview = lambda *args, **kwargs: {"curve": self.result["curve"]}
         restored = web.App.automatic(self.app, "bh2-3-u", self.source)
         self.assertEqual("landau", restored["function"])
         self.assertEqual([12300., 251., 32., 2.], restored["parameters"])
         self.assertEqual("前回実行のFit結果", restored["origin"])
+
+    def test_later_decode_does_not_replace_saved_fit(self):
+        output = self.saved_fit()
+        os.utime(output, (1000, 1000))
+        self.app.execute_preview = lambda *args, **kwargs: {"curve": self.result["curve"]} if kwargs.get("curve_only") else self.fail("implicit refit")
+        restored = web.App.automatic(self.app, "bh2-3-u", self.source)
+        self.assertEqual([12300., 251., 32., 2.], restored["parameters"])
+
+    def test_unfitted_estimate_is_not_drawn_as_fit(self):
+        self.saved_fit(status=-1, success=False)
+        self.app.execute_preview = lambda *args, **kwargs: self.fail("estimate must not become a curve")
+        restored = web.App.automatic(self.app, "bh2-3-u", self.source)
+        self.assertEqual([], restored["curve"])
+        self.assertIn("Fit未実施", restored["origin"])
+
+    def test_missing_saved_result_requires_hdprm_without_refit(self):
+        self.app.execute_preview = lambda *args, **kwargs: self.fail("implicit refit")
+        with self.assertRaisesRegex(ValueError, "HDPRM"):
+            web.App.automatic(self.app, "bh2-3-u", self.source)
+
+    def test_overview_and_refit_use_histogram_saved_with_result(self):
+        output = self.saved_fit()
+        counts = web.np.arange(8, dtype=float)
+        edges = web.np.arange(9, dtype=float)
+        with web.uproot.update(output) as root_file:
+            for segment in range(web.config.NUM_OF_CH["BH2"]):
+                for side in ("U", "D"):
+                    root_file[f"BH2_ADC_seg{segment}{side}_Pi"] = counts, edges
+        self.assertEqual(output, self.app.fit_input())
+        result = self.app.overview({"fingerprint": self.source, "page": 0})
+        self.assertEqual([1., 5., 9., 13.], result["channels"][0]["counts"])
+
+    def test_legacy_result_without_histograms_requires_refit(self):
+        self.saved_fit()
+        with self.assertRaisesRegex(ValueError, "元のADC"):
+            self.app.fit_input()
 
     def test_unacknowledged_replay_does_not_wait_forever(self):
         self.staged()

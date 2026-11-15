@@ -149,7 +149,7 @@ class App:
         identifier = secrets.token_hex(12)
         output = self.work / f"{identifier}.json"
         settings_path = self.work / f"{identifier}.txt"
-        command = [str(BINARY), str(self.root.resolve()), self.particle, str(segment), side, str(output)]
+        command = [str(BINARY), str(self.fit_input().resolve()), self.particle, str(segment), side, str(output)]
         if settings is not None:
             settings_path.write_text(fit_overrides.mip_fit_line(key, self.particle, settings) + "\n")
             # The preview uses the same particle-qualified key as the production reader.
@@ -169,6 +169,20 @@ class App:
             output.unlink(missing_ok=True)
             settings_path.unlink(missing_ok=True)
 
+    def fit_output(self):
+        return Path(config.OUTPUT_DIR) / "root" / f"run{self.run:05d}" / f"run{self.run:05d}_BH2_HDPRM_{self.particle}.root"
+
+    def fit_input(self):
+        output = self.fit_output()
+        if not output.is_file():
+            raise ValueError("HDPRMのFit結果がありません。先にHDPRMを実行してください")
+        with uproot.open(output) as source:
+            required = [f"BH2_ADC_seg{segment}{side}_{self.particle}"
+                        for segment in range(config.NUM_OF_CH["BH2"]) for side in ("U", "D")]
+            if any(name not in source for name in required):
+                raise ValueError("このHDPRM結果には元のADCヒストグラムが保存されていません。HDPRMを再実行してから開いてください")
+        return output
+
     def overview(self, request):
         with self.lock, locked_path(self.staging_path):
             doc = self.document()
@@ -177,7 +191,7 @@ class App:
             keys = [f"bh2-{segment}-{side}" for segment in range(config.NUM_OF_CH["BH2"]) for side in ("u", "d")]
             if offset < 0 or offset >= len(keys):
                 raise ValueError("page is invalid")
-            with uproot.open(self.root) as source:
+            with uproot.open(self.fit_input()) as source:
                 channels = []
                 for key in keys[offset:offset+12]:
                     segment, side = self.channel(key)
@@ -195,9 +209,9 @@ class App:
     def automatic(self, key, fingerprint):
         cache_key = (fingerprint, key)
         if cache_key not in self.cache:
-            fit_root = Path(config.OUTPUT_DIR) / "root" / f"run{self.run:05d}" / f"run{self.run:05d}_BH2_HDPRM_{self.particle}.root"
+            fit_root = self.fit_output()
             snapshot = None
-            if fit_root.is_file() and fit_root.stat().st_mtime_ns >= self.root.stat().st_mtime_ns:
+            if fit_root.is_file():
                 with uproot.open(fit_root) as output:
                     if "mip_fit" in output:
                         segment, side = self.channel(key)
@@ -211,14 +225,15 @@ class App:
                                     snapshot = {"parameters": parameters, "range": bounds, "function": function,
                                                 "success": bool(columns["success"][index]), "status": int(columns["status"][index]),
                                                 "covariance": int(columns["covariance"][index]), "ndf": int(columns["ndf"][index]),
-                                                "origin": "前回実行のFit結果" if int(columns["status"][index]) >= 0 else "低統計の自動推定値（Fitなし）を初期値として表示"}
+                                                "origin": "前回実行のFit結果" if int(columns["status"][index]) >= 0 else "Fit未実施（低統計）。推定値は調整の初期値にのみ使用します"}
                                     curve_settings = {"parameters": parameters, "range": bounds,
                                                       "function": function, "range_mode": "fixed"}
-                                    snapshot.update(self.execute_preview(key, curve_settings, curve_only=True))
+                                    snapshot["curve"] = (self.execute_preview(key, curve_settings, curve_only=True)["curve"]
+                                                         if snapshot["status"] >= 0 else [])
                                 break
-            self.cache[cache_key] = snapshot or {**self.execute_preview(key), "origin": "自動Fitを現在のデータから再計算（校正値は更新しません）"}
-        if self.cache[cache_key].get("status") == -1:
-            self.cache[cache_key]["origin"] = "低統計の自動推定値（Fitなし）を初期値として表示"
+            if snapshot is None:
+                raise ValueError("保存済みのMIP Fit結果を読み出せません。HDPRMを再実行してから開いてください")
+            self.cache[cache_key] = snapshot
         return copy.deepcopy(self.cache[cache_key])
 
     def edit(self, request):
