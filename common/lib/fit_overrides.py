@@ -40,24 +40,34 @@ def load(run: int) -> dict[str, Any]:
         return empty_doc()
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return empty_doc()
-    if not isinstance(doc, dict):
-        return empty_doc()
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot read fit overrides: {path}") from error
+    _validate_document(doc)
     doc.setdefault("fit", {})
     doc.setdefault("calib_locks", {})
     return doc
 
 
 #_____________________________________________________________________________
+def _validate_document(doc):
+    if not isinstance(doc, dict) or any(name in doc and not isinstance(doc[name], dict)
+                                       for name in ("fit", "calib_locks")):
+        raise ValueError("fit overrides must contain fit/calib_locks mappings")
+
+
+#_____________________________________________________________________________
 def save(run: int, doc: dict[str, Any]) -> Path:
     path = overrides_path(run)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    from .calib_state_io import write_json
-    write_json(path, doc)
-    write_flat_mip_left(run, doc)
-    write_flat_mip_fit(run, doc)
-    write_flat_t0_fit(run, doc)
+    from .calib_state_io import locked_path, write_json
+    with locked_path(path):
+        _validate_document(doc)
+        # Validate every exported setting before publishing any new version.
+        exports = [(flat_override_path(run), _mip_left_lines(doc)),
+                   (flat_mip_fit_path(run), _mip_fit_lines(doc)),
+                   (flat_t0_fit_path(run), _t0_fit_lines(doc))]
+        for target, content in exports:
+            _atomic_text(target, content)
+        write_json(path, doc)
     return path
 
 
@@ -71,21 +81,36 @@ def channel_key(det: str, seg: int, side: str) -> str:
 def set_mip_left(
     run: int, det: str, seg: int, side: str, mip_left: float, mode: str = "hdprm",
 ) -> dict[str, Any]:
-    doc = load(run)
-    fit = doc.setdefault("fit", {})
-    det_map = fit.setdefault(det.upper(), {})
-    mode_map = det_map.setdefault(mode, {})
-    key = channel_key(det, seg, side)
-    entry = mode_map.get(key) if isinstance(mode_map.get(key), dict) else {}
-    entry["mip_left"] = float(mip_left)
-    mode_map[key] = entry
-    save(run, doc)
-    return doc
+    from .calib_state_io import locked_path
+    with locked_path(overrides_path(run)):
+        doc = load(run)
+        fit = doc.setdefault("fit", {})
+        det_map = fit.setdefault(det.upper(), {})
+        mode_map = det_map.setdefault(mode, {})
+        key = channel_key(det, seg, side)
+        entry = mode_map.get(key) if isinstance(mode_map.get(key), dict) else {}
+        entry["mip_left"] = float(mip_left)
+        mode_map[key] = entry
+        save(run, doc)
+        return doc
 
 
 #_____________________________________________________________________________
-def write_flat_mip_left(run: int, doc: Optional[dict[str, Any]] = None) -> Path:
-    doc = load(run) if doc is None else doc
+def _atomic_text(path, lines):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=path.name+".", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write("\n".join(lines)+"\n")
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return path
+
+
+#_____________________________________________________________________________
+def _mip_left_lines(doc):
     lines = ["# key mip_left  (E72_FIT_OVERRIDE)"]
     fit = doc.get("fit") if isinstance(doc.get("fit"), dict) else {}
     for det, modes in sorted(fit.items()):
@@ -93,15 +118,20 @@ def write_flat_mip_left(run: int, doc: Optional[dict[str, Any]] = None) -> Path:
             continue
         hdprm = modes.get("hdprm") if isinstance(modes.get("hdprm"), dict) else {}
         for key, entry in sorted(hdprm.items()):
-            if not isinstance(entry, dict):
+            if not isinstance(entry, dict) or "mip_left" not in entry:
                 continue
-            if "mip_left" not in entry:
-                continue
-            lines.append(f"{key} {float(entry['mip_left'])}")
-    path = flat_override_path(run)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+            value = float(entry["mip_left"])
+            if not math.isfinite(value):
+                raise ValueError("MIP left bound must be finite")
+            lines.append(f"{key} {value}")
+    return lines
+
+
+#_____________________________________________________________________________
+def write_flat_mip_left(run: int, doc: Optional[dict[str, Any]] = None) -> Path:
+    from .calib_state_io import locked_path
+    with locked_path(overrides_path(run)):
+        return _atomic_text(flat_override_path(run), _mip_left_lines(load(run) if doc is None else doc))
 
 
 #_____________________________________________________________________________
@@ -117,18 +147,20 @@ def calib_lock_keys(run: int, det: str, mode: str = "hdprm") -> set[str]:
 def set_calib_lock(
     run: int, det: str, param_key: str, locked: bool, mode: str = "hdprm",
 ) -> dict[str, Any]:
-    doc = load(run)
-    locks = doc.setdefault("calib_locks", {})
-    det_map = locks.setdefault(det.upper(), {})
-    rows = list(det_map.get(mode) or [])
-    key = str(param_key)
-    if locked and key not in rows:
-        rows.append(key)
-    if not locked:
-        rows = [r for r in rows if r != key]
-    det_map[mode] = rows
-    save(run, doc)
-    return doc
+    from .calib_state_io import locked_path
+    with locked_path(overrides_path(run)):
+        doc = load(run)
+        locks = doc.setdefault("calib_locks", {})
+        det_map = locks.setdefault(det.upper(), {})
+        rows = list(det_map.get(mode) or [])
+        key = str(param_key)
+        if locked and key not in rows:
+            rows.append(key)
+        if not locked:
+            rows = [r for r in rows if r != key]
+        det_map[mode] = rows
+        save(run, doc)
+        return doc
 
 
 #_____________________________________________________________________________
@@ -173,8 +205,7 @@ def mip_fit_line(key, particle, settings):
 
 
 #_____________________________________________________________________________
-def write_flat_mip_fit(run, doc=None):
-    doc = load(run) if doc is None else doc
+def _mip_fit_lines(doc):
     fit = doc.get("fit") if isinstance(doc.get("fit"), dict) else {}
     bh2 = fit.get("BH2") if isinstance(fit.get("BH2"), dict) else {}
     channels = bh2.get("hdprm") if isinstance(bh2.get("hdprm"), dict) else {}
@@ -186,17 +217,14 @@ def write_flat_mip_fit(run, doc=None):
             if particle not in ("Pi", "K"):
                 raise ValueError("unknown MIP particle")
             lines.append(mip_fit_line(key, particle, settings))
-    path = flat_mip_fit_path(run)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "w") as stream:
-            stream.write("\n".join(lines) + "\n")
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-    return path
+    return lines
+
+
+#_____________________________________________________________________________
+def write_flat_mip_fit(run, doc=None):
+    from .calib_state_io import locked_path
+    with locked_path(overrides_path(run)):
+        return _atomic_text(flat_mip_fit_path(run), _mip_fit_lines(load(run) if doc is None else doc))
 
 
 #_____________________________________________________________________________
@@ -232,8 +260,7 @@ def flat_t0_fit_path(run):
 
 
 #_____________________________________________________________________________
-def write_flat_t0_fit(run, doc=None):
-    doc = load(run) if doc is None else doc
+def _t0_fit_lines(doc):
     channels = doc.get("fit", {}).get("BH2", {}).get("t0", {})
     lines = ["# key function range_mode lower upper p0 p1 p2 0 (E72_T0_FIT_OVERRIDE)"]
     for key, entry in sorted(channels.items()):
@@ -241,7 +268,11 @@ def write_flat_t0_fit(run, doc=None):
             if particle not in ("Pi", "K"):
                 raise ValueError("unknown T0 calibration particle")
             lines.append(t0_fit_line(key, particle, settings))
-    path = flat_t0_fit_path(run)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines)+"\n", encoding="utf-8")
-    return path
+    return lines
+
+
+#_____________________________________________________________________________
+def write_flat_t0_fit(run, doc=None):
+    from .calib_state_io import locked_path
+    with locked_path(overrides_path(run)):
+        return _atomic_text(flat_t0_fit_path(run), _t0_fit_lines(load(run) if doc is None else doc))

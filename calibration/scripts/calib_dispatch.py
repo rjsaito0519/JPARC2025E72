@@ -1197,6 +1197,19 @@ def do_approve(cfg, note, via, user_id, expected_subject_sha=None):
     st, state_lane = resolve_approval_state(cfg["run"])
     if st is None:
         runner.fail(f"run{cfg['run']:05d}: not started; cannot approve")
+    steps = (st.get("plan") or {}).get("steps") or []
+    raw_steps = [{row["name"]: row.get("opts") or {}} if isinstance(row, dict) and "name" in row else row
+                 for row in steps]
+    required_lanes = {state_lane} if state_lane else set(calib_lanes.split_steps_by_lane(raw_steps))
+    if not required_lanes:
+        required_lanes = set((st.get("lanes") or {}).keys())
+        inferred = calib_lanes.lane_of_step({st.get("step", "?"): st.get("opts") or {}})
+        if inferred:
+            required_lanes.add(inferred)
+    incomplete = {lane: status for lane, status in collect_lane_statuses(cfg["run"]).items()
+                  if lane in required_lanes and not calib_lanes.lane_complete_for_deps(status)}
+    if incomplete:
+        runner.fail(f"run{cfg['run']:05d}: lane work is not complete: {incomplete}; cannot approve")
     if not calib_approval.is_process_complete(st):
         runner.fail(
             f"run{cfg['run']:05d}: status={st.get('status')!r} "

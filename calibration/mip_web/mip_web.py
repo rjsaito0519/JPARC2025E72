@@ -97,7 +97,9 @@ class App:
                 job["status"] = "done" if hold.get("step") == self.expected_step and hold.get("rc") == 0 else "failed"
                 job["message"] = "再実行完了・Slackの新しいQAを確認してください" if job["status"] == "done" else "再実行が確認待ちで停止しました。Slackとログを確認してください"
             elif state.get("status") in ("failed", "stopped", "awaiting_final_approval", "approved") and hold.get("id") != job["hold_id"]:
-                job["status"] = "done" if state.get("status") == "awaiting_final_approval" and state.get("last_rc", state.get("rc")) == 0 else "failed"
+                job["status"] = "done" if (state.get("status") in ("awaiting_final_approval", "approved")
+                                                  and state.get("step") == self.expected_step
+                                                  and state.get("last_rc", state.get("rc")) == 0) else "failed"
                 job["message"] = "校正段階が終了しました。SlackでQAを確認してください" if job["status"] == "done" else "再実行が停止しました。Slackとログを確認してください"
             if (job["status"] == "running" and state.get("status") in ("held", "stopped")
                     and hold.get("id") == job["hold_id"]
@@ -118,7 +120,9 @@ class App:
         return doc
 
     def gate(self):
-        for path in [self.base / "lanes/hodo/calib_dispatch_state.json", self.base / "calib_dispatch_state.json"]:
+        lane_path = self.base / "lanes/hodo/calib_dispatch_state.json"
+        paths = [lane_path] if lane_path.is_file() else [self.base / "calib_dispatch_state.json"]
+        for path in paths:
             state = read_json(path, {})
             hold = state.get("hold") or {}
             held = state.get("status") == "held" and hold.get("step") == self.expected_step and not hold.get("decision")
@@ -127,9 +131,11 @@ class App:
                             and type(state.get("index")) is int and state["index"] >= 0)
             if held or final_review:
                 import yaml
-                session_path = self.base / "calib_session.yml"
+                session_path = path.parent / "session.yml" if path == lane_path else self.base / "calib_session.yml"
+                if not session_path.is_file():
+                    session_path = self.base / "calib_session.yml"
                 session = yaml.safe_load(session_path.read_text()) or {}
-                if session.get("auto"):
+                if session.get("auto") or state.get("approval_mode") == "auto":
                     raise ValueError("自動進行のセッションではWriteできません。承認待ちを有効にしてください")
                 from common.lib import calib_approval
                 if final_review and calib_approval.effective_status(state) != calib_approval.STATUS_AWAITING:
@@ -235,7 +241,33 @@ class App:
                                      "x": ((edges[:-1] + edges[1:])/2).tolist(), "counts": counts.tolist(),
                                      "bounds": [float(edges[0]), float(edges[-1])],
                                      "automatic": self.automatic(key, doc["fingerprint"])})
+            self.require_current(request, self.document())
             return {**self.public(doc), "channels": channels, "pages": (len(keys)+11)//12}
+
+    def invalid_snapshot(self, key, parameters, bounds, function):
+        """Keep a bad saved fit editable, without drawing or adopting an invented fit."""
+        segment, side = self.channel(key)
+        with uproot.open(self.fit_input()) as source:
+            counts, edges = source[self.histogram_name(segment, side)].to_numpy()
+        rebin = 3 if self.mode == "t0" else 2
+        upper = float(edges[len(counts)//rebin*rebin])
+        lower = float(edges[0])
+        span = upper-lower
+        selected = list(bounds) if len(bounds) == 2 and np.all(np.isfinite(bounds)) and bounds[0] < bounds[1] else [lower, upper]
+        selected = [max(lower, selected[0]), min(upper, selected[1])]
+        if selected[0] >= selected[1]:
+            selected = [lower, upper]
+        centers = .5*(edges[:-1]+edges[1:])
+        peak = float(centers[int(np.argmax(counts))])
+        size = 3 if self.mode == "t0" else 4
+        seeds = [max(1., float(np.max(counts))*span*.1), peak, max(float(edges[1]-edges[0]), span*.05), 0.][:size]
+        for index, value in enumerate(parameters[:size]):
+            if np.isfinite(value) and (index not in (0, 2) or value > 0.) and (index != 3 or value >= 0.):
+                seeds[index] = float(value)
+        seeds[1] = min(selected[1], max(selected[0], seeds[1]))
+        return {"parameters": seeds, "range": selected, "function": function if function in ("gaussian", "landau", "mean") else "gaussian",
+                "status": -2, "covariance": -1, "ndf": 0, "success": False, "curve": [], "unusable": True,
+                "origin": "前回Fitの保存値が不正です。曲線は表示せず、調整用の初期値だけを用意しました。Fitまたは集計を実行してください"}
 
     def automatic(self, key, fingerprint):
         cache_key = (fingerprint, key)
@@ -252,8 +284,13 @@ class App:
                             if row_seg == segment and (self.mode == "t0" or columns["side"][index] == (0 if side == "U" else 1)):
                                 parameters = columns["parameters"][index].tolist()
                                 bounds = columns["range"][index].tolist()
-                                if bounds[0] < bounds[1] and parameters[0] > 0 and parameters[2] > 0:
-                                    function = "gaussian" if self.mode == "t0" else str(columns["function"][index])
+                                function = "gaussian" if self.mode == "t0" else str(columns["function"][index])
+                                usable = (len(parameters) == (3 if self.mode == "t0" else 4)
+                                          and np.all(np.isfinite(parameters+bounds)) and bounds[0] < bounds[1]
+                                          and parameters[0] > 0 and parameters[2] > 0
+                                          and function in ("gaussian", "landau", "mean")
+                                          and (len(parameters) == 3 or parameters[3] >= 0.))
+                                if usable:
                                     snapshot = {"parameters": parameters, "range": bounds, "function": function,
                                                 "success": bool(columns["success"][index]), "status": int(columns["status"][index]),
                                                 "covariance": int(columns["covariance"][index]), "ndf": int(columns["ndf"][index]),
@@ -271,6 +308,8 @@ class App:
                                                       "function": function, "range_mode": "fixed"}
                                     snapshot["curve"] = (self.execute_preview(key, curve_settings, curve_only=True)["curve"]
                                                          if snapshot["status"] >= 0 and function != "mean" else [])
+                                else:
+                                    snapshot = self.invalid_snapshot(key, parameters, bounds, function)
                                 break
             if snapshot is None:
                 raise ValueError(f"保存済みの{self.stage_label} Fit結果を読み出せません。当該段階を再実行してから開いてください")
@@ -288,6 +327,7 @@ class App:
             committed = entry.get(self.override_key, {}).get(self.particle)
             automatic = self.initial_settings(result)
             initial = doc["staged"].get(key, {}).get("settings") or committed or automatic
+            self.require_current(request, self.document())
             return {**self.public(doc), "automatic": result, "initial": initial,
                     "baseline": committed or automatic, "automatic_note": result["origin"]}
 
@@ -315,7 +355,9 @@ class App:
                 effective = dict(settings)
                 if effective["function"] == "auto":
                     effective["function"] = request.get("auto_function", "gaussian")
-                return self.execute_preview(key, effective, curve_only=True)
+                result = self.execute_preview(key, effective, curve_only=True)
+                self.require_current(request, self.document())
+                return result
             result = self.execute_preview(key, settings)
             if settings["function"] == "mean" and not (result.get("statistics") or {}).get("valid"):
                 result["success"] = False
