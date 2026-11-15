@@ -121,23 +121,34 @@ class App:
         for path in [self.base / "lanes/hodo/calib_dispatch_state.json", self.base / "calib_dispatch_state.json"]:
             state = read_json(path, {})
             hold = state.get("hold") or {}
-            if state.get("status") == "held" and hold.get("step") == self.expected_step and not hold.get("decision"):
+            held = state.get("status") == "held" and hold.get("step") == self.expected_step and not hold.get("decision")
+            final_review = (state.get("status") == "awaiting_final_approval" and state.get("step") == self.expected_step
+                            and state.get("finished") is True and state.get("rc") == 0
+                            and type(state.get("index")) is int and state["index"] >= 0)
+            if held or final_review:
                 import yaml
                 session_path = self.base / "calib_session.yml"
                 session = yaml.safe_load(session_path.read_text()) or {}
                 if session.get("auto"):
                     raise ValueError("自動進行のセッションではWriteできません。承認待ちを有効にしてください")
                 from common.lib import calib_approval
+                if final_review and calib_approval.effective_status(state) != calib_approval.STATUS_AWAITING:
+                    raise ValueError("承認済みの結果は最終承認待ちに戻してから修正してください")
                 _, suffix = calib_approval.particle_suffix(state)
                 if suffix != self.particle:
                     raise ValueError("表示中の粒子と校正セッションが異なります")
+                if final_review:
+                    signature = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
+                    hold = {"id": "final_review:"+signature, "source": "final_review", "step": self.expected_step,
+                            "index": state["index"], "rc": 0}
                 return path, state, hold
         raise ValueError(f"Writeは{self.stage_label}（{self.expected_step}）の確認待ちから行ってください。現在は閲覧・調整・仮保存のみ可能です")
 
     def public(self, doc):
         try:
             _, _, hold = self.gate()
-            gate = {"hold_id": hold["id"], "reason": ""}
+            gate = {"hold_id": hold["id"], "reason": (f"最終承認待ちです。Writeすると{self.stage_label}だけを再実行し、新しいQAの確認へ戻ります"
+                                                      if hold.get("source") == "final_review" else "")}
         except (ValueError, OSError) as error:
             gate = {"hold_id": None, "reason": str(error)}
         return {"run": self.run, "particle": self.particle, "mode": self.mode, "fingerprint": doc["fingerprint"],
@@ -364,6 +375,29 @@ class App:
                 rows.append({"key": key, "changes": changes, "statistics": row["result"].get("statistics")})
             return {**self.public(doc), "rows": rows}
 
+    def reopen_final_review(self, path, state, context):
+        """An explicit Write reopens this unapproved final stage for refitting."""
+        if context.get("source") != "final_review":
+            return context
+        sys.path.insert(0, str(PROJECT / "calibration/scripts"))
+        import calib_dispatch
+        hold = calib_dispatch.make_hold("web_refit_review", f"Web Write: refit {self.stage_label} before final approval",
+                                        self.expected_step, state["index"], 0)
+        lane = path.parent.name if path.parent.parent.name == "lanes" else ""
+        if lane:
+            hold["lane"] = lane
+        reopened = copy.deepcopy(state)
+        reopened.update(status="held", finished=False, hold=hold, gate_waiter=False,
+                        hold_requested=False, stop_requested=False, updated_at=calib_dispatch.utc_now())
+        reopened.pop("gate_waiter_pid", None)
+        write_json(path, reopened)
+        calib_dispatch.append_hold_journal(self.run, {"event": "web_refit_review", "at": hold["at"],
+            "hold_id": hold["id"], "step": self.expected_step, "index": state["index"], "lane": lane,
+            "source": hold["source"], "reason": hold["reason"], "final_review_id": context["id"]})
+        calib_dispatch.append_progress(self.run, "web_refit_review", step=self.expected_step,
+                                       index=state["index"], status="held", hold_source="web_refit_review")
+        return hold
+
     def write(self, request):
         # Keep settings and the replay receipt under the same cross-session lock.
         with self.lock, locked_path(self.staging_path), locked_path(fit_overrides.overrides_path(self.run)):
@@ -393,6 +427,9 @@ class App:
                 # Refit uses the existing lane's decode mode and always returns to its gate.
                 from common.lib import calib_ops
                 try:
+                    hold = self.reopen_final_review(state_path, state, hold)
+                    doc["job"]["hold_id"] = hold["id"]
+                    write_json(self.staging_path, doc)
                     accepted, message = calib_ops.run_dispatch("retry", self.run, hold_id=hold["id"], background_resume=True)
                     if not accepted:
                         raise RuntimeError(message)

@@ -142,6 +142,51 @@ class T0WebTests(unittest.TestCase):
         override=Path(command.call_args.kwargs['env']['E72_T0_FIT_OVERRIDE'])
         self.assertIn('bh2-3-t0:Pi gaussian fixed',override.read_text())
 
+    def final_review(self, status='awaiting_final_approval', step='hodo_t0'):
+        path,_=self.gate()
+        web.write_json(path,{'status':status,'step':step,'index':1,'rc':0,'finished':True,'calib_particle':'pion'})
+        return path
+
+    def test_pending_final_stage_can_be_reviewed_without_state_changes(self):
+        path=self.final_review()
+        original=path.read_bytes()
+        _,_,context=self.app.gate()
+        self.assertTrue(context['id'].startswith('final_review:'))
+        self.assertEqual(original,path.read_bytes())
+
+    def test_final_review_write_reopens_only_on_explicit_write(self):
+        staged=self.staged()
+        path=self.final_review()
+        context=self.app.gate()[2]
+        with patch('common.lib.calib_ops.run_dispatch',return_value=(True,'accepted')) as replay:
+            result=self.app.write({**self.request,'revision':staged['revision'],'hold_id':context['id']})
+        state=json.loads(path.read_text())
+        self.assertEqual('held',state['status'])
+        self.assertFalse(state['finished'])
+        self.assertEqual('web_refit_review',state['hold']['source'])
+        self.assertEqual('hodo_t0',state['hold']['step'])
+        self.assertEqual(1,state['hold']['index'])
+        self.assertNotEqual(context['id'],state['hold']['id'])
+        self.assertEqual(state['hold']['id'],result['job']['hold_id'])
+        replay.assert_called_once_with('retry',12,hold_id=state['hold']['id'],background_resume=True)
+
+    def test_changed_final_review_context_cannot_be_written(self):
+        staged=self.staged()
+        path=self.final_review()
+        context=self.app.gate()[2]
+        state=json.loads(path.read_text())
+        state['updated_at']='changed'
+        web.write_json(path,state)
+        with self.assertRaises(ValueError):
+            self.app.write({**self.request,'revision':staged['revision'],'hold_id':context['id']})
+        self.assertEqual(state,json.loads(path.read_text()))
+        self.assertFalse(web.fit_overrides.overrides_path(12).exists())
+
+    def test_approved_or_different_final_stage_cannot_be_reopened(self):
+        for status,step in [('approved','hodo_t0'),('awaiting_final_approval','hodo_hdprm')]:
+            self.final_review(status,step)
+            with self.assertRaises(ValueError):self.app.gate()
+
     def test_slack_t0_link_selects_t0_screen(self):
         from common.lib import calib_approval
         text=json.dumps(calib_approval.step_gate_action_blocks(12,'hodo_t0',1,hold_id='t0-hold'))
