@@ -36,21 +36,21 @@ append_cherenkov_npe_page(
         gPad->SetTopMargin(.10);
         gPad->SetBottomMargin(.13);
         const TString suffix = particle.IsNull() ? "" : "_"+particle;
-        const std::vector<TString> keys{names[index], names[index]+suffix, names[index]+"_AwT"+suffix};
-        const std::vector<TString> labels{"All events", particle, particle+" + AwT"};
-        const int colors[]{kGray+2, kBlue, kOrange};
+        const std::vector<TString> keys{names[index], names[index]+"_AwT", names[index]+suffix, names[index]+"_AwT"+suffix};
+        const std::vector<TString> labels{"No PID cut", "No PID + AwT", particle, particle+" + AwT"};
+        const int colors[]{kGray+2, kGreen+2, kBlue, kOrange};
         double maximum = 0.;
         for (const auto& key : keys) {
             auto* histogram = dynamic_cast<TH1*>(input->Get(key));
             if (histogram) maximum = std::max(maximum, histogram->GetMaximum());
         }
-        auto* legend = new TLegend(.38, .73, .95, .90);
+        auto* legend = new TLegend(.38, .66, .95, .90);
         legend->SetBorderSize(0);
         legend->SetFillStyle(0);
         legend->SetTextSize(.030);
         bool drawn = false;
         for (std::size_t selection = 0; selection < keys.size(); ++selection) {
-            if (selection == 1 && suffix.IsNull()) continue;
+            if (selection >= 2 && suffix.IsNull()) continue;
             auto* histogram = dynamic_cast<TH1*>(input->Get(keys[selection]));
             if (!histogram) {
                 legend->AddEntry(static_cast<TObject*>(nullptr), labels[selection]+": missing", "");
