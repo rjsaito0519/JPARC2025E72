@@ -26,6 +26,7 @@
 // Custom headers
 #include "config.h"
 #include "ana_helper.h"
+#include "cherenkov_npe_qa.h"
 #include "paths.h"
 #include "params.h"
 
@@ -164,6 +165,13 @@ void analyze(TString path, TString particle){
 
     }
     c_kvc->Print(pdf_path);
+    for (const TString component : {TString("S_offline"), TString("S_online"),
+                                    TString("a"), TString("b"), TString("c"), TString("d")}) {
+        std::vector<TString> names;
+        for (Int_t segment = 0; segment < num_ch; ++segment)
+            names.push_back(Form("KVC_Hit_Npe_seg%d%s", segment, component.Data()));
+        ana_helper::append_cherenkov_npe_page(f, c_kvc, pdf_path, names, particle, 4, 2);
+    }
     c_kvc->Print(pdf_path + "]"); // end
     delete c_kvc;
 

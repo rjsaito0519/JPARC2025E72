@@ -26,6 +26,7 @@
 // Custom headers
 #include "config.h"
 #include "ana_helper.h"
+#include "cherenkov_npe_qa.h"
 #include "paths.h"
 #include "params.h"
 
@@ -164,6 +165,8 @@ void analyze(TString path, TString particle){
     const auto& win = param::bac_tdc_window;
     Int_t tdc_ok = (tdc_res.par[1] >= win[0] && tdc_res.par[1] <= win[1]) ? 1 : 0;
     c_bac->Print(pdf_path);
+    ana_helper::append_cherenkov_npe_page(f, c_bac, pdf_path,
+        {"BAC_Hit_Npe_offline_sum", "BAC_Hit_Npe_seg4S_online"}, particle, 2, 1);
     c_bac->Print(pdf_path + "]"); // end
     delete c_bac;
 
