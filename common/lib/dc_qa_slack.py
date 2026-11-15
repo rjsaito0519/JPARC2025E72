@@ -110,18 +110,21 @@ def post_dc_qa(
     chamber = "all" if all_chambers and mode == "reso" else ("bcin" if bcin else "bcout")
     mode_key = f"dc_{mode}_{chamber}"
     notes = []
+    automatic = bool(((manifest or {}).get("meta") or {}).get("auto"))
     for path in paths:
         caption = f"run{run:05d} dc {mode} {path.name}"
         fit_rc = ((manifest or {}).get("meta") or {}).get("fit_rc")
         if fit_rc == 2 and mode in ("resi", "reso"):
             caption += (
                 f"\n【反復途中】未収束のため decode → 同じ {mode} を自動反復します。"
-                f"この PDF に承認ボタンはありません。{mode} 段階終了時に承認・確認ボタンを表示します。"
+                + ("auto運転のため承認操作は不要です。" if automatic
+                   else f"この PDF に承認ボタンはありません。{mode} 段階終了時に承認・確認ボタンを表示します。")
             )
         elif fit_rc == 3:
             caption += "\n【要確認】自動反復を停止します。後続の確認メッセージから判断してください。"
         elif fit_rc == 0:
-            caption += "\n【段階の計算完了】後続の承認メッセージで確認してください。"
+            caption += ("\n【段階の計算完了】auto運転のため承認操作は不要です。"
+                        if automatic else "\n【段階の計算完了】後続の承認メッセージで確認してください。")
         ok, msg = slack_notify.post_pdf(
             run,
             mode_key,

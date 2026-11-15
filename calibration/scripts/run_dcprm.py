@@ -21,6 +21,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from common.lib.param import exclusive_param_lock  # noqa: E402
 from common.lib import (  # noqa: E402
     calib_approval,
+    calib_auto,
     config,
     dc_qa_slack,
     qa_session,
@@ -52,6 +53,7 @@ def _dc_session(run, suffix, args, mode, input_path):
         input_path=input_path,
         meta={
             "family": "dc",
+            "auto": calib_auto.enabled(),
             "mode": mode,
             "particle": "kaon" if args.kaon else "pion",
             "bcin": bool(args.bcin),
