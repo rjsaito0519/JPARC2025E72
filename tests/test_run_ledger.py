@@ -364,6 +364,16 @@ class UsageAndStyleTests(unittest.TestCase):
         self.assertEqual('不明', run_ledger.classify_usage(1, '[a] Physics Run | [b] pedestal run')[0])
         self.assertEqual('不明', run_ledger.classify_usage(1, 'beam check')[0])
 
+    def test_explicit_setup_and_scan_are_other_without_hiding_physics_or_calibration(self):
+        for title in ('beam tuning', 'k beam tune', 'KBeam tune', 'KVC threshold scan: KBeam x1/12',
+                      'trigger timing adjustment', 'daq test with beam'):
+            self.assertEqual('その他', run_ledger.classify_usage(1, title)[0])
+        for title in ('beam check', 'KBEAM x1/12'):
+            self.assertEqual('不明', run_ledger.classify_usage(1, title)[0])
+        self.assertEqual('Physics', run_ledger.classify_usage(1, 'Physics Run after beam tuning')[0])
+        self.assertEqual('較正', run_ledger.classify_usage(1, 'HTOF calibration run after beam tune')[0])
+        self.assertEqual('較正', run_ledger.classify_usage(1, 'FTOF study after beam tune')[0])
+
     def test_prephysics_requires_adjacent_simple_trigger_and_successful_source(self):
         def sources(titles, ok=True):
             return [{'ok': ok, 'records': [{'run': run, 'fields': {'title': title}} for run, title in titles]}]

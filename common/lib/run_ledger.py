@@ -346,6 +346,8 @@ def classify_usage(run, title, calibration_candidates=(), junk_runs=()):
         return 'Physics', '元タイトル: Physics Run/E72Physics'
     if re.search(r'pedestal|calibration|beam\s*(?:through|thru)|\bftof\b', title, re.I):
         return '較正', '元タイトル: pedestal/calibration/beam through/FTOF'
+    if re.search(r"\bthreshold\s*scan\b|\b(?:k\s*)?beam\s*tun(?:e|ing)\b|\btrigger\s*timing\s*adjustment\b|\bdaq\s*(?:test|check)\b", title, re.I):
+        return 'その他', '元タイトル: 調整/threshold scan/DAQ試験'
     if run in calibration_candidates:
         return '較正', '連続するPhysics直前の単純Beam/KBeam trigger（タイトルによる用途分類）'
     if not title.strip() or title.strip() == '0' or re.search('beam', title, re.I):
