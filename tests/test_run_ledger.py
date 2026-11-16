@@ -223,23 +223,87 @@ class SnapshotTests(unittest.TestCase):
 class FakeSheets(SheetsClient):
     def __init__(self, grid):
         self.grid = copy.deepcopy(grid)
-        self.requests = 0
-        self.posts = 0
-        self.lost_response = False
-        self.reject_write = False
-        self.before_write = None
+        self.requests = self.posts = 0
+        self.lost_response = self.reject_write = False
+        self.before_write = self.before_metadata = self.before_append = None
+        self.lose_metadata_response = False
+        self._row_meta = {}
 
     def read(self, title):
         self.requests += 1
         return copy.deepcopy(self.grid)
 
+    def _document(self):
+        metadata = []
+        if self.grid and 'run_key' in self.grid[0]:
+            column = self.grid[0].index('run_key')
+            for identifier, item in self._row_meta.items():
+                index = next((index for index, row in enumerate(self.grid)
+                              if column < len(row) and row[column] == item['attached_key']), None)
+                if index is not None:
+                    metadata.append({'metadataId': identifier, 'metadataKey': 'e72_run_key_v1',
+                                     'metadataValue': item['value'], 'location': {'dimensionRange': {
+                                         'sheetId': 0, 'dimension': 'ROWS', 'startIndex': index, 'endIndex': index+1}}})
+        return {'sheets': [{'properties': {'sheetId': 0, 'title': 'Test', 'gridProperties': {
+            'rowCount': max(1000, len(self.grid)+20), 'columnCount': 100}}}], 'developerMetadata': metadata}
+
     def request(self, method, suffix, body=None):
         self.requests += 1
-        self.posts += 1
-        if self.reject_write:
-            raise RuntimeError('offline')
-        if self.before_write:
-            self.before_write(self)
+        if method == 'GET':
+            return self._document()
+        if suffix == '/developerMetadata:search':
+            return {'matchedDeveloperMetadata': [{'developerMetadata': item} for item in self._document()['developerMetadata']]}
+        if suffix == ':batchUpdate':
+            for update in body['requests']:
+                if 'createDeveloperMetadata' in update:
+                    if self.before_metadata:
+                        self.before_metadata(self)
+                        self.before_metadata = None
+                    item = update['createDeveloperMetadata']['developerMetadata']
+                    index = item['location']['dimensionRange']['startIndex']
+                    column = self.grid[0].index('run_key')
+                    identifier = len(self._row_meta)+1
+                    self._row_meta[identifier] = {'value': item['metadataValue'], 'attached_key': self.grid[index][column]}
+                elif 'deleteDeveloperMetadata' in update:
+                    identifier = update['deleteDeveloperMetadata']['dataFilter']['developerMetadataLookup']['metadataId']
+                    self._row_meta.pop(identifier, None)
+                elif 'appendCells' in update:
+                    rows = [[cell.get('userEnteredValue', {}).get('stringValue', '') for cell in row['values']]
+                            for row in update['appendCells']['rows']]
+                    is_header = rows and rows[0] and rows[0][0] == 'run_key'
+                    if not is_header:
+                        self.posts += 1
+                        if self.reject_write:
+                            raise RuntimeError('offline')
+                        if self.before_append:
+                            self.before_append(self)
+                    self.grid.extend(rows)
+                    if not is_header and self.lost_response:
+                        raise RuntimeError('append response lost after commit')
+            if self.lose_metadata_response and any('createDeveloperMetadata' in item for item in body['requests']):
+                raise RuntimeError('metadata response lost after commit')
+            return {}
+        if suffix == '/values:batchUpdateByDataFilter':
+            self.posts += 1
+            if self.reject_write:
+                raise RuntimeError('offline')
+            if self.before_write:
+                self.before_write(self)
+            for update in body['data']:
+                identifier = update['dataFilter']['developerMetadataLookup']['metadataId']
+                item = self._row_meta[identifier]
+                column = self.grid[0].index('run_key')
+                row = next(row for row in self.grid[1:] if len(row)>column and row[column] == item['attached_key'])
+                values = update['values'][0]
+                row += ['']*max(0, len(values)-len(row))
+                for index, value in enumerate(values):
+                    if value is not None:
+                        row[index] = value
+            if self.lost_response:
+                raise RuntimeError('response lost after commit')
+            return {}
+        if suffix != '/values:batchUpdate':
+            raise AssertionError('Unexpected fake API request')
         for update in body['data']:
             region = update['range'].rsplit('!', 1)[1]
             match = re.fullmatch(r'([A-Z]+)(\d+):([A-Z]+)(\d+)', region)
@@ -253,8 +317,6 @@ class FakeSheets(SheetsClient):
             values = update['values'][0]
             self.grid[row] += ['']*max(0, column+len(values)-len(self.grid[row]))
             self.grid[row][column:column+len(values)] = values
-        if self.lost_response:
-            raise RuntimeError('response lost after commit')
         return {}
 
 
@@ -323,11 +385,45 @@ class SheetOwnershipTests(unittest.TestCase):
             sheet.publish('Test', plan_updates(sheet.grid, [self.record(1, 'new')], 'Test'))
         self.assertEqual(1, sheet.posts)
 
-    def test_mid_write_row_sort_is_detected_not_claimed_successful(self):
+    def test_mid_write_sort_updates_by_run_id_without_touching_other_run(self):
         sheet = FakeSheets(self.grid())
         sheet.before_write = lambda current: current.grid.__setitem__(slice(1, None), list(reversed(current.grid[1:])))
-        with self.assertRaises(RuntimeError):
+        sheet.publish('Test', plan_updates(sheet.grid, [self.record(1, 'new')], 'Test'))
+        table = read_table(sheet.grid)
+        self.assertEqual('new', table['rows']['run00001']['values'][HEADERS.index('Hodo')])
+        self.assertEqual('実行中', table['rows']['run00002']['values'][HEADERS.index('Hodo')])
+        self.assertEqual('run2 memo', table['rows']['run00002']['values'][HEADERS.index('メモ')])
+
+    def test_row_insert_after_precheck_preserves_outside_run_and_notes(self):
+        sheet = FakeSheets(self.grid())
+        plan = plan_updates(sheet.grid, [self.record(1, 'new')], 'Test')
+        note_row = ['']*len(HEADERS)
+        note_row[HEADERS.index('メモ')] = 'inserted note'
+        sheet.before_write = lambda current: current.grid.insert(1, list(note_row))
+        sheet.publish('Test', plan)
+        table = read_table(sheet.grid)
+        self.assertEqual('new', table['rows']['run00001']['values'][HEADERS.index('Hodo')])
+        self.assertEqual('実行中', table['rows']['run00002']['values'][HEADERS.index('Hodo')])
+        self.assertEqual('inserted note', sheet.grid[1][HEADERS.index('メモ')])
+
+    def test_sort_during_metadata_creation_aborts_without_value_corruption(self):
+        sheet = FakeSheets(self.grid())
+        sheet.before_metadata = lambda current: current.grid.__setitem__(slice(1, None), list(reversed(current.grid[1:])))
+        before = {key: row['values'] for key, row in read_table(sheet.grid)['rows'].items()}
+        with self.assertRaisesRegex(RuntimeError, 'association changed'):
             sheet.publish('Test', plan_updates(sheet.grid, [self.record(1, 'new')], 'Test'))
+        self.assertEqual(before, {key: row['values'] for key, row in read_table(sheet.grid)['rows'].items()})
+        self.assertEqual(0, sheet.posts)
+        sheet.publish('Test', plan_updates(sheet.grid, [self.record(1, 'new')], 'Test'))
+        table = read_table(sheet.grid)
+        self.assertEqual('new', table['rows']['run00001']['values'][HEADERS.index('Hodo')])
+        self.assertEqual('実行中', table['rows']['run00002']['values'][HEADERS.index('Hodo')])
+
+    def test_lost_metadata_response_does_not_create_duplicate_tags(self):
+        sheet = FakeSheets(self.grid())
+        sheet.lose_metadata_response = True
+        sheet.publish('Test', plan_updates(sheet.grid, [self.record(1, 'new')], 'Test'))
+        self.assertEqual(1, len(sheet._row_meta))
 
     def test_source_sheet_cannot_be_a_destination(self):
         for source in TEST_SOURCES:

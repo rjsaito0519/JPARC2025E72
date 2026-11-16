@@ -124,7 +124,7 @@ def plan_updates(grid, records, title):
 
 #_____________________________________________________________________________
 class SheetsClient:
-    def __init__(self, destination, credential_file, *, sources=(), max_requests=20):
+    def __init__(self, destination, credential_file, *, sources=(), max_requests=30):
         self.destination = spreadsheet_id(destination)
         protected = {spreadsheet_id(row['spreadsheet_id']) for row in sources}
         if self.destination in protected or hashlib.sha256(self.destination.encode()).hexdigest() in PROTECTED_SOURCE_HASHES:
@@ -156,7 +156,8 @@ class SheetsClient:
         return self.credentials.token
 
     def request(self, method, suffix, body=None):
-        attempts = 3 if method == 'GET' else 1
+        reading = method == 'GET' or suffix in ('/developerMetadata:search', '/values:batchGetByDataFilter')
+        attempts = 3 if reading else 1
         for attempt in range(attempts):
             if self.requests >= self.max_requests:
                 raise RuntimeError('Manual sync request budget exceeded; retry later')
@@ -168,7 +169,7 @@ class SheetsClient:
                 with urllib.request.urlopen(request, timeout=25) as response:
                     return json.load(response)
             except urllib.error.HTTPError as error:
-                if method != 'GET' or error.code not in (429, 500, 502, 503, 504) or attempt+1 == attempts:
+                if not reading or error.code not in (429, 500, 502, 503, 504) or attempt+1 == attempts:
                     raise RuntimeError(f'Google Sheets HTTP {error.code}') from None
             except OSError:
                 if attempt+1 == attempts:
@@ -209,13 +210,122 @@ class SheetsClient:
             'properties': {'sheetId': properties['sheetId'], 'gridProperties': wanted},
             'fields': ','.join('gridProperties.'+key for key in wanted)}}]})
 
-    def publish(self, title, plan):
-        if structure_token(read_table(self.read(title))) != plan['before']:
-            raise RuntimeError('Sheet keys/header changed since planning; rerun sync')
-        batches = []
-        batch = []
+    def append_rows(self, sheet_id, rows):
+        pending = []
         size = 0
-        for update in plan['updates']:
+        for values in rows:
+            row = {'values': [{'userEnteredValue': {'stringValue': value}} if value is not None else {}
+                              for value in values]}
+            length = len(json.dumps(row, ensure_ascii=False).encode())
+            if pending and size+length > 700000:
+                self.request('POST', ':batchUpdate', {'requests': [{'appendCells': {
+                    'sheetId': sheet_id, 'rows': pending, 'fields': 'userEnteredValue'}}]})
+                pending, size = [], 0
+            pending.append(row)
+            size += length
+        if pending:
+            self.request('POST', ':batchUpdate', {'requests': [{'appendCells': {
+                'sheetId': sheet_id, 'rows': pending, 'fields': 'userEnteredValue'}}]})
+
+    def row_ids(self, title, keys, sheet_id):
+        # Metadata follows rows during a sort/insert. Verify the initial association before using it.
+        for attempt in range(2):
+            document = self.request('POST', '/developerMetadata:search', {'dataFilters': [
+                {'developerMetadataLookup': {'metadataKey': 'e72_run_key_v1', 'visibility': 'DOCUMENT'}}]})
+            table = read_table(self.read(title))
+            found = {}
+            for match in document.get('matchedDeveloperMetadata', []):
+                item = match['developerMetadata']
+                location = item.get('location', {}).get('dimensionRange', {})
+                if item.get('metadataKey') != 'e72_run_key_v1' or location.get('sheetId', 0) != sheet_id:
+                    continue
+                if location.get('dimension') != 'ROWS' or location.get('endIndex', 0)-location.get('startIndex', 0) != 1:
+                    raise RuntimeError('Invalid ledger row metadata')
+                key = item.get('metadataValue')
+                if key in found:
+                    raise RuntimeError('Duplicate ledger row metadata; no value updates performed')
+                row = table['rows'].get(key)
+                if row is None or row['number'] != location.get('startIndex', 0)+1:
+                    self.request('POST', ':batchUpdate', {'requests': [{'deleteDeveloperMetadata': {
+                        'dataFilter': {'developerMetadataLookup': {'metadataId': item['metadataId']}}}}]})
+                    raise RuntimeError('Row metadata/key association changed; tag removed without value updates; rerun sync')
+                found[key] = item['metadataId']
+            missing = set(keys)-set(found)
+            if not missing:
+                return found, table
+            if attempt:
+                raise RuntimeError('Row metadata creation unconfirmed; retry sync')
+            requests = []
+            for key in sorted(missing):
+                row = table['rows'].get(key)
+                if row is None:
+                    raise RuntimeError('Run disappeared before metadata association; retry sync')
+                requests.append({'createDeveloperMetadata': {'developerMetadata': {
+                    'metadataKey': 'e72_run_key_v1', 'metadataValue': key, 'visibility': 'DOCUMENT',
+                    'location': {'dimensionRange': {'sheetId': sheet_id, 'dimension': 'ROWS',
+                                                   'startIndex': row['number']-1, 'endIndex': row['number']}}}}})
+            try:
+                self.request('POST', ':batchUpdate', {'requests': requests})
+            except RuntimeError:
+                # The following read resolves lost responses without creating duplicate metadata.
+                pass
+        raise RuntimeError('Could not resolve ledger row metadata')
+
+    def publish(self, title, plan):
+        table = read_table(self.read(title))
+        if structure_token(table) != plan['before']:
+            raise RuntimeError('Sheet keys/header changed since planning; rerun sync')
+        properties = next(row['properties'] for row in self.metadata()['sheets']
+                          if row['properties']['title'] == title)
+        sheet_id = properties['sheetId']
+        headers = list(table['headers'] or HEADERS)
+        if not table['headers']:
+            self.append_rows(sheet_id, [headers])
+        else:
+            # Column/header edits remain prohibited during a sync; row movement is handled by metadata.
+            extra = [name for name in OPTIONAL_HEADERS if name not in headers]
+            if extra:
+                updates = []
+                for name in extra:
+                    column = column_name(len(headers))
+                    headers.append(name)
+                    updates.append({'range': f'{quoted_tab(title)}!{column}1:{column}1', 'values': [[name]]})
+                self.request('POST', '/values:batchUpdate', {'valueInputOption': 'RAW', 'data': updates})
+        table = read_table(self.read(title))
+        if table['headers'] != headers:
+            raise RuntimeError('Sheet header changed; no run values updated')
+        missing = [record for record in plan['records'] if record['run_key'] not in table['rows']]
+        pending = None
+        if missing:
+            try:
+                self.append_rows(sheet_id, [[str(record.get(name, '')) if name in MACHINE_HEADERS else None
+                                            for name in headers] for record in missing])
+            except RuntimeError as error:
+                pending = error
+            table = read_table(self.read(title))
+            if not all(record['run_key'] in table['rows'] for record in missing):
+                raise RuntimeError('Append unconfirmed; manual retry re-resolves run keys') from pending
+        keys = [record['run_key'] for record in plan['records']]
+        if not keys:
+            return {'verified': True, 'requests': self.requests, 'changed': plan['changed'], 'inserted': plan['inserted']}
+        identifiers, table = self.row_ids(title, keys, sheet_id)
+        if table['headers'] != headers:
+            raise RuntimeError('Sheet columns changed before value update')
+        batches, batch, size = [], [], 0
+        for record in plan['records']:
+            old_values = table['rows'][record['run_key']]['values']
+            values = [None]*len(headers)
+            for column, name in enumerate(headers):
+                if name not in MACHINE_HEADERS:
+                    continue
+                value = str(record.get(name, ''))
+                old_value = str(old_values[column]) if column < len(old_values) else ''
+                if value != old_value:
+                    values[column] = value
+            if all(value is None for value in values):
+                continue
+            update = {'dataFilter': {'developerMetadataLookup': {'metadataId': identifiers[record['run_key']]}},
+                      'majorDimension': 'ROWS', 'values': [values]}
             length = len(json.dumps(update, ensure_ascii=False).encode())
             if batch and size+length > 700000:
                 batches.append(batch)
@@ -224,16 +334,15 @@ class SheetsClient:
             size += length
         if batch:
             batches.append(batch)
-        pending = None
         for updates in batches:
             try:
-                self.request('POST', '/values:batchUpdate', {'valueInputOption': 'RAW', 'data': updates})
+                self.request('POST', '/values:batchUpdateByDataFilter', {'valueInputOption': 'RAW', 'data': updates})
             except RuntimeError as error:
                 pending = error
                 break
-        # Re-resolve every row by key after write, including a potentially lost response.
         observed = read_table(self.read(title))
-        headers = observed['headers']
+        if observed['headers'] != headers:
+            raise RuntimeError('Sheet header changed during update; stop column edits and retry')
         for record in plan['records']:
             row = observed['rows'].get(record['run_key'])
             if row is None:
@@ -242,5 +351,5 @@ class SheetsClient:
                 column = headers.index(header)
                 value = str(row['values'][column]) if column < len(row['values']) else ''
                 if value != str(record.get(header, '')):
-                    raise RuntimeError('Sheet changed or write incomplete; retry after structural edits stop') from pending
+                    raise RuntimeError('Sheet changed or write incomplete; retry sync') from pending
         return {'verified': True, 'requests': self.requests, 'changed': plan['changed'], 'inserted': plan['inserted']}
