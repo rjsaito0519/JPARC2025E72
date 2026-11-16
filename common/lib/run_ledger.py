@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import copy
 import hashlib
 import io
 import json
@@ -17,8 +18,8 @@ from .calib_state_io import write_json
 
 MACHINE_HEADERS = ['run_key', 'run番号', '元情報', '日付', '開始', '終了', '所要時間', 'タイトル',
                    '粒子', '運動量(原文)', '元シートメモ', '較正状態', 'Hodo', 'BcIn', 'BcOut', 'D5',
-                   '解析状態', '承認照合', '対象版', '前回成功', 'ローカル最終確認', '元情報最終成功', '出典', '要確認', '用途', '分類根拠']
-OPTIONAL_HEADERS = ['用途', '分類根拠']
+                   '解析状態', '承認照合', '対象版', '前回成功', 'ローカル最終確認', '元情報最終成功', '出典', '要確認', '用途', '分類根拠', 'ローカル最終試行', '工程別最終確認']
+OPTIONAL_HEADERS = ['用途', '分類根拠', 'ローカル最終試行', '工程別最終確認']
 HUMAN_HEADERS = ['メモ', 'タグ']
 FIELDS = ['date', 'start', 'end', 'duration', 'title', 'particle', 'momentum', 'source_memo']
 LAYOUTS = {
@@ -189,6 +190,66 @@ def _source_fields(observations):
     return fields, conflicts
 
 
+
+#_____________________________________________________________________________
+def snapshot_view(snapshot, old, now):
+    def states(document):
+        result = dict(document.get('lanes') or {})
+        if document.get('parent'):
+            result['parent'] = document['parent']
+        return result
+
+    prior = copy.deepcopy(old.get('state_cache') or {})
+    confirmed = dict(old.get('state_checked_at') or {})
+    if not prior:
+        previous = old.get('snapshot') or {}
+        retained = previous.get('previous_snapshot') or previous
+        prior = {lane: copy.deepcopy(state) for lane, state in states(retained).items()
+                 if not state.get('error') and state.get('status') != 'unknown'}
+        if previous.get('consistent') and not previous.get('previous_snapshot'):
+            confirmed = {lane: old.get('checked_at', '') for lane in prior}
+    current = states(snapshot) if snapshot['consistent'] else {}
+    keys = set(current) if snapshot['consistent'] else set(prior) | {'hodo', 'bcin', 'bcout', 'd5'}
+    cached = {lane: copy.deepcopy(value) for lane, value in prior.items() if lane in keys}
+    confirmed = {lane: at for lane, at in confirmed.items() if lane in keys}
+    display, stale = {}, []
+    for lane in sorted(keys):
+        state, previous = current.get(lane), prior.get(lane)
+        readable = state is not None and state.get('status') != 'unknown'
+        if readable:
+            value = copy.deepcopy(state)
+            if state.get('error'):
+                stale.append(lane)
+                if previous:
+                    for field in ('version', 'parameters'):
+                        if field in previous:
+                            value[field] = copy.deepcopy(previous[field])
+                else:
+                    value['version'] = '未確認'
+            else:
+                confirmed[lane] = now
+            cached[lane] = copy.deepcopy(value)
+        else:
+            stale.append(lane)
+            value = copy.deepcopy(previous or state or {
+                'status': 'unknown', 'label': '未確認（取得失敗）', 'version': '未確認', 'approval': '未確認'})
+        if lane in stale:
+            if readable and value.get('status') in ('failed', 'error'):
+                value['label'] = value.get('label', '失敗')+'（対象照合未確認）'
+            else:
+                prefix = '対象版未確認' if readable else '前回取得値' if previous else '取得失敗'
+                value['label'] = f'未確認（{prefix}）: '+value.get('label', '未確認')
+            value['approval'] = '今回未確認'+(f"（前回照合: {previous.get('approval', '未確認')}）" if previous else '')
+            value['version'] = str(value.get('version') or '未確認')+('（前回取得値・今回未確認）' if previous else '')
+        display[lane] = value
+    view = dict(snapshot, parent=display.get('parent'), lanes={lane: value for lane, value in display.items() if lane != 'parent'})
+    if stale:
+        view['label'] = (snapshot['label']+' / 一部更新失敗（前回値あり）'
+                         if snapshot['consistent'] and snapshot['label'].startswith('失敗')
+                         else '未確認（更新失敗・前回値あり）' if prior else '未確認（取得失敗）')
+    return cached, confirmed, view, stale
+
+
 #_____________________________________________________________________________
 def build_ledger(sources, previous=None, *, runs=None, snapshotter=calib_snapshot.snapshot_run, now=None, junk_runs=()):
     now = now or utc_now()
@@ -228,6 +289,7 @@ def build_ledger(sources, previous=None, *, runs=None, snapshotter=calib_snapsho
                   '範囲行を展開' if any(record['is_range'] for row in observations.values() for record in row['records']) else
                   '取得済み' if presence else '元情報未確認')
         snapshot = snapshotter(run)
+        state_cache, state_checked_at, display_snapshot, stale_lanes = snapshot_view(snapshot, old, now)
         last_success = dict(old.get('last_success') or {})
         states = dict(snapshot.get('lanes') or {})
         if snapshot.get('parent'):
@@ -255,9 +317,22 @@ def build_ledger(sources, previous=None, *, runs=None, snapshotter=calib_snapsho
         if not snapshot['consistent'] or any(state.get('error') for state in states.values()):
             retained = old.get('snapshot') or {}
             snapshot['previous_snapshot'] = retained.get('previous_snapshot') or retained
+        if stale_lanes:
+            issues.append('較正表示の更新失敗（前回値/確認時刻を保持）: '+', '.join(stale_lanes))
+        legacy_snapshot = old.get('snapshot') or {}
+        legacy_states = list((legacy_snapshot.get('lanes') or {}).values())
+        if legacy_snapshot.get('parent'):
+            legacy_states.append(legacy_snapshot['parent'])
+        legacy_valid = (legacy_snapshot.get('consistent') and not legacy_snapshot.get('previous_snapshot')
+                        and not any(state.get('error') or state.get('status') == 'unknown' for state in legacy_states))
+        prior_confirmed = (old.get('checked_at') or '') if 'attempted_at' in old or legacy_valid else ''
+        checked_at = now if snapshot['consistent'] and not stale_lanes else prior_confirmed
         output[str(run)] = {'run': run, 'run_key': run_key(run), 'source_status': status,
                             'sources': observations, 'fields': fields, 'conflicts': conflicts,
-                            'snapshot': snapshot, 'last_success': last_success, 'checked_at': now,
+                            'snapshot': snapshot, 'display_snapshot': display_snapshot,
+                            'state_cache': state_cache, 'state_checked_at': state_checked_at,
+                            'stale_lanes': stale_lanes, 'last_success': last_success,
+                            'checked_at': checked_at, 'attempted_at': now,
                             'issues': issues}
         usage, reason = classify_usage(run, fields['title'], calibration_candidates, junk_runs)
         output[str(run)]['usage'] = usage
@@ -267,7 +342,7 @@ def build_ledger(sources, previous=None, *, runs=None, snapshotter=calib_snapsho
 
 #_____________________________________________________________________________
 def sheet_row(record):
-    snapshot = record['snapshot']
+    snapshot = record.get('display_snapshot') or record['snapshot']
     states = dict(snapshot.get('lanes') or {})
     if snapshot.get('parent'):
         states['parent'] = snapshot['parent']
@@ -283,6 +358,9 @@ def sheet_row(record):
                    '対象版': '; '.join(f"{lane}: {state.get('version', '?')} ({','.join(state.get('scope', []))})" for lane, state in states.items()),
                    '前回成功': json.dumps(record['last_success'], ensure_ascii=False, sort_keys=True) if record['last_success'] else '記録なし',
                    'ローカル最終確認': record['checked_at'],
+                   'ローカル最終試行': record.get('attempted_at', record['checked_at']),
+                   '工程別最終確認': '; '.join(f"{lane}: {record.get('state_checked_at', {}).get(lane) or '未確認'}"
+                       +('（今回更新失敗）' if lane in record.get('stale_lanes', []) else '') for lane in states),
                    '元情報最終成功': '; '.join(f"{name}: {row['last_success']} ({row['presence']})" for name, row in record['sources'].items()),
                    '出典': '\n'.join(source_rows), '要確認': '; '.join(record['issues']),
                    '用途': record.get('usage', '不明'), '分類根拠': record.get('usage_reason', '未分類')})

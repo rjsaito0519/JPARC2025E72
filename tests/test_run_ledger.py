@@ -87,6 +87,83 @@ class SourceTests(unittest.TestCase):
         self.assertEqual('beam', current['runs']['1916']['fields']['title'])
         self.assertEqual('一部取得失敗', current['runs']['1916']['source_status'])
 
+    def test_snapshot_failure_preserves_display_and_last_successful_confirmation(self):
+        sources = self.refresh(lambda source: source_csv(source['layout']))
+        good = {'consistent': True, 'label': '実行中', 'parent': None,
+                'lanes': {'hodo': {'status': 'running', 'label': '実行中', 'version': 'v1',
+                                   'particle': 'pion', 'approval': '未承認'}}}
+        first = run_ledger.build_ledger(sources, snapshotter=lambda run: copy.deepcopy(good), now='first')
+        bad = {'consistent': False, 'label': '未確認', 'parent': None, 'lanes': {}}
+        second = run_ledger.build_ledger(sources, first, snapshotter=lambda run: copy.deepcopy(bad), now='second')
+        row = run_ledger.sheet_row(second['runs']['1916'])
+        self.assertIn('実行中', row['Hodo'])
+        self.assertIn('前回取得値', row['Hodo'])
+        self.assertIn('v1', row['対象版'])
+        self.assertEqual('first', row['ローカル最終確認'])
+        self.assertEqual('second', row['ローカル最終試行'])
+        third = run_ledger.build_ledger(sources, second, snapshotter=lambda run: copy.deepcopy(bad), now='third')
+        self.assertEqual(row['Hodo'], run_ledger.sheet_row(third['runs']['1916'])['Hodo'])
+        restored = run_ledger.build_ledger(sources, third, snapshotter=lambda run: copy.deepcopy(good), now='restored')
+        self.assertEqual('restored', restored['runs']['1916']['checked_at'])
+        self.assertFalse(restored['runs']['1916']['stale_lanes'])
+
+    def test_partial_lane_failure_keeps_only_failed_lane_old(self):
+        sources = self.refresh(lambda source: source_csv(source['layout']))
+        first_snapshot = {'consistent': True, 'label': '実行中', 'parent': None, 'lanes': {
+            'hodo': {'status': 'approved', 'label': '対象範囲の承認済み', 'version': 'hodo-v1', 'approval': '照合済み'},
+            'bcin': {'status': 'running', 'label': '実行中', 'version': 'bcin-v1'}}}
+        first = run_ledger.build_ledger(sources, snapshotter=lambda run: copy.deepcopy(first_snapshot), now='first')
+        partial = copy.deepcopy(first_snapshot)
+        partial['lanes']['hodo'] = {'status': 'unknown', 'label': '読取失敗', 'error': 'OSError'}
+        partial['lanes']['bcin'].update(status='failed', label='失敗', version='bcin-v2')
+        partial['label'] = '失敗あり / 未確認あり'
+        second = run_ledger.build_ledger(sources, first, snapshotter=lambda run: copy.deepcopy(partial), now='second')
+        record = second['runs']['1916']
+        row = run_ledger.sheet_row(record)
+        self.assertTrue(row['Hodo'].startswith('未確認'))
+        self.assertIn('承認済み', row['Hodo'])
+        self.assertIn('hodo-v1', row['対象版'])
+        self.assertIn('bcin-v2', row['対象版'])
+        self.assertTrue(row['較正状態'].startswith('失敗'))
+        self.assertTrue(row['BcIn'].startswith('失敗'))
+        self.assertEqual({'hodo': 'first', 'bcin': 'second'}, record['state_checked_at'])
+        self.assertEqual('first', row['ローカル最終確認'])
+
+    def test_successfully_observed_state_removal_is_not_a_read_failure(self):
+        sources = self.refresh(lambda source: source_csv(source['layout']))
+        good = {'consistent': True, 'label': '実行中', 'parent': None,
+                'lanes': {'hodo': {'status': 'running', 'label': '実行中', 'version': 'v1'}}}
+        first = run_ledger.build_ledger(sources, snapshotter=lambda run: copy.deepcopy(good), now='first')
+        empty = {'consistent': True, 'label': '未連携', 'parent': None, 'lanes': {}}
+        second = run_ledger.build_ledger(sources, first, snapshotter=lambda run: copy.deepcopy(empty), now='second')
+        self.assertEqual('未連携', run_ledger.sheet_row(second['runs']['1916'])['Hodo'])
+        self.assertEqual('second', second['runs']['1916']['checked_at'])
+        self.assertFalse(second['runs']['1916']['state_cache'])
+
+    def test_first_snapshot_failure_is_unknown_not_unlinked(self):
+        sources = self.refresh(lambda source: source_csv(source['layout']))
+        bad = {'consistent': False, 'label': '未確認', 'parent': None, 'lanes': {}}
+        ledger = run_ledger.build_ledger(sources, snapshotter=lambda run: copy.deepcopy(bad), now='attempt')
+        row = run_ledger.sheet_row(ledger['runs']['1916'])
+        self.assertTrue(row['Hodo'].startswith('未確認'))
+        self.assertEqual('', row['ローカル最終確認'])
+        self.assertEqual('attempt', row['ローカル最終試行'])
+
+    def test_subject_failure_does_not_hide_a_new_execution_failure(self):
+        sources = self.refresh(lambda source: source_csv(source['layout']))
+        good = {'consistent': True, 'label': '実行中', 'parent': None,
+                'lanes': {'hodo': {'status': 'running', 'label': '実行中', 'version': 'v1'}}}
+        first = run_ledger.build_ledger(sources, snapshotter=lambda run: copy.deepcopy(good), now='first')
+        bad = copy.deepcopy(good)
+        bad['label'] = '失敗あり'
+        bad['lanes']['hodo'].update(status='failed', label='失敗', version='unverified', error='subject:OSError')
+        second = run_ledger.build_ledger(sources, first, snapshotter=lambda run: copy.deepcopy(bad), now='second')
+        row = run_ledger.sheet_row(second['runs']['1916'])
+        self.assertTrue(row['Hodo'].startswith('失敗'))
+        self.assertIn('v1', row['対象版'])
+        self.assertNotIn('unverified', row['対象版'])
+        self.assertEqual('first', row['ローカル最終確認'])
+
     def test_one_failed_source_does_not_block_other_source_updates(self):
         self.refresh(lambda source: source_csv(source['layout']))
         current = self.refresh(lambda source: b'<html>no</html>' if source['name'] == '2025-11'
@@ -262,7 +339,7 @@ class FakeSheets(SheetsClient):
                     item = update['createDeveloperMetadata']['developerMetadata']
                     index = item['location']['dimensionRange']['startIndex']
                     column = self.grid[0].index('run_key')
-                    identifier = len(self._row_meta)+1
+                    identifier = max(self._row_meta, default=0)+1
                     self._row_meta[identifier] = {'value': item['metadataValue'], 'attached_key': self.grid[index][column]}
                 elif 'deleteDeveloperMetadata' in update:
                     identifier = update['deleteDeveloperMetadata']['dataFilter']['developerMetadataLookup']['metadataId']
