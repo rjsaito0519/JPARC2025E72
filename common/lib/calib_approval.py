@@ -950,7 +950,7 @@ def mip_web_link_block(run: int, mode="hdprm") -> dict[str, Any]:
     label = "BH2 T0 offset" if mode == "t0" else "BH2 ADC MIP"
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": (
         f"{label}: <http://localhost:8767/?run={run}&mode={mode}|Webで手直し> · "
-        f"PCで先に `~/mip.sh {run}` を起動（Kは `--kaon`）"
+        f"PCで先に `~/calib.sh {run}` を起動（Kは `--kaon`）"
     )}]}
 
 
