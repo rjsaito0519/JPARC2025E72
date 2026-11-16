@@ -134,12 +134,15 @@ def score_btof(
         names = _pick_keys(all_keys, prefix, tof_tag, particle)
         seg_w = []
         seg_n = 0.0
+        segments = []
         for name in names:
             try:
                 hist = root[name]
             except Exception:  # noqa: BLE001
                 continue
             width, n_ent = project_tof_width(hist)
+            segments.append({"histogram": name, "width": float(width) if np.isfinite(width) else None,
+                             "n_entries": n_ent, "n_total": float(np.sum(hist.values(flow=True)))})
             if np.isfinite(width) and n_ent > 0:
                 seg_w.append(width)
                 seg_n += n_ent
@@ -148,6 +151,7 @@ def score_btof(
             "width": det_width,
             "n_seg": len(seg_w),
             "n_entries": seg_n,
+            "segments": segments,
         }
         if np.isfinite(det_width):
             widths.append(det_width)

@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import hashlib
 import math
+import os
+import tempfile
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -123,6 +125,8 @@ def snapshot_round(
         "at": _utc_now(),
         "per_det": score.get("per_det") or {},
     }
+    if score.get("timings"):
+        entry["timings"] = score["timings"]
     with journal_path(run).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, sort_keys=True) + "\n")
     return entry
@@ -263,8 +267,62 @@ def restore_round(run: int, round_i: int, suffix: str) -> Path:
         raise FileNotFoundError(f"round snapshot missing: {src}")
     dest = hdphc_param_path(run, suffix)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
+    selected = next((entry for entry in load_journal(run)
+                     if int(entry["round"]) == int(round_i)), None)
+    if not selected or qa_session.file_sha256(src) != selected.get("param_sha"):
+        raise ValueError(f"round {round_i} parameter snapshot does not match its journal")
+    from .param import exclusive_param_lock
+    with exclusive_param_lock(dest):
+        descriptor, temporary = tempfile.mkstemp(prefix=dest.name + ".", dir=dest.parent)
+        os.close(descriptor)
+        try:
+            shutil.copyfile(src, temporary)
+            shutil.copymode(src, temporary)
+            os.replace(temporary, dest)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    from .calib_state_io import write_json
+    write_json(rounds_dir(run) / "adoption_validation.json",
+               {"round": int(round_i), "matches": None, "status": "pending_decode", "restored_at": _utc_now()})
     return dest
+
+
+#_____________________________________________________________________________
+def score_differences(expected, actual):
+    """Compare the same saved PHC candidate after a fresh decode; no quality cuts."""
+    differences = []
+    if not expected.get("ok") or not actual.get("ok"):
+        differences.append("score is not valid")
+    def compare(label, left, right):
+        finite_values = width_ok(left) and width_ok(right)
+        same_value = finite_values and math.isclose(float(left), float(right), rel_tol=1e-8, abs_tol=1e-10)
+        if not same_value:
+            differences.append(f"{label}: recorded={left}, decoded={right}")
+    for key in ("width", "n_entries"):
+        compare(key, expected.get(key), actual.get(key))
+    for detector, values in (expected.get("per_det") or {}).items():
+        current = (actual.get("per_det") or {}).get(detector) or {}
+        empty_detector = (values.get("n_seg") == current.get("n_seg") == 0
+                          and values.get("n_entries") == current.get("n_entries") == 0
+                          and not width_ok(values.get("width")) and not width_ok(current.get("width")))
+        for key in ("width", "n_entries", "n_seg"):
+            if key != "width" or not empty_detector:
+                compare(f"{detector}.{key}", values.get(key), current.get(key))
+        if "segments" in values:
+            recorded_segments = {segment["histogram"]: segment for segment in values["segments"]}
+            current_segments = {segment["histogram"]: segment for segment in current.get("segments", [])}
+            if recorded_segments.keys() != current_segments.keys():
+                differences.append(f"{detector}: histogram set changed")
+            for name, segment in recorded_segments.items():
+                decoded_segment = current_segments.get(name) or {}
+                for key in ("n_entries", "n_total"):
+                    compare(f"{name}.{key}", segment.get(key), decoded_segment.get(key))
+                empty_segment = (segment.get("n_entries") == decoded_segment.get("n_entries") == 0
+                                 and segment.get("width") is None and decoded_segment.get("width") is None)
+                if not empty_segment:
+                    compare(f"{name}.width", segment.get("width"), decoded_segment.get("width"))
+    return differences
 
 
 #_____________________________________________________________________________

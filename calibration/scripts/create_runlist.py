@@ -619,8 +619,8 @@ def validate_suffixes(mode: dict, suffixes: list):
         sys.exit(1)
 
 
-def seed_dcgeo(target: Path, template: Path):
-    """Make decode and additive calibration updates use the same initial geometry."""
+def seed_run_parameter(target: Path, template: Path):
+    """Make decode and calibration updates use the same initial parameter file."""
     from common.lib.param import exclusive_param_lock
 
     with exclusive_param_lock(target):
@@ -704,9 +704,10 @@ def setup_calibration_run(run_num: int, mode: dict, suffixes: list, ref, mom):
             print(colored(f"Error: param not found: {tier3_abs}", "red"))
             sys.exit(1)
 
-        if p_key == "DCGEO:" and mode_key in ("bcin", "bcout"):
+        if ((p_key == "DCGEO:" and mode_key in ("bcin", "bcout"))
+                or (p_key == "HDPHC:" and mode_key == "hodo")):
             template = resolve_param_template(p_info["dir"], p_info["tpl"], required=True)
-            seed_dcgeo(tier1_abs, template)
+            seed_run_parameter(tier1_abs, template)
             return tier1_rel
         return tier3_rel
 

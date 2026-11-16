@@ -113,7 +113,9 @@ class AdaptivePhcTests(unittest.TestCase):
         with mock.patch.object(iterator.config, "ANALYZER_DIR", self.root / "analyzer"), \
                 mock.patch.object(iterator, "stage_prepare_and_decode", return_value=self.root / "runlist.yml"), \
                 mock.patch.object(iterator.decode_run, "run_decode"), \
-                mock.patch.object(iterator, "run_hodo_ok") as qa:
+                mock.patch.object(iterator, "run_hodo_ok") as qa, \
+                mock.patch.object(iterator.hodo_btof_monitor, "score_btof",
+                                  return_value={"width":1.0,"ok":True,"n_entries":100}):
             iterator.run_hdphc_adopt_stage(adopt_args)
         self.assertEqual(parameter.read_text(), "round2")
         self.assertIn("--qa-only", qa.call_args.args[1])

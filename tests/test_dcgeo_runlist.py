@@ -27,7 +27,10 @@ class DcgeoRunlistTests(unittest.TestCase):
         self.template.write_text('1001 BLC2a-U1 0 0 0 0 0 0 0 .2 16 -5 .35\n')
         conf = paths['PARAM_DIR']/'conf/example/analyzer_e72_example1.conf'
         conf.parent.mkdir(parents=True)
-        conf.write_text('DCGEO: param/DCGEO/example/DCGeomParam_e72_example\n')
+        conf.write_text('DCGEO: param/DCGEO/example/DCGeomParam_e72_example\nHDPHC: param/HDPHC/example/HodoPHCParam_e72_example\n')
+        self.phc_template=paths['PARAM_DIR']/'HDPHC/example/HodoPHCParam_e72_example'
+        self.phc_template.parent.mkdir(parents=True)
+        self.phc_template.write_text('initial correction\n')
         for mode in ('bcin','bcout'):
             runlist = paths['ANALYZER_DIR']/f"runmanager/runlist/{create.MODES[mode]['tpl_yml']}"
             runlist.parent.mkdir(parents=True, exist_ok=True)
@@ -60,11 +63,29 @@ class DcgeoRunlistTests(unittest.TestCase):
         self.assertEqual(reference, self.setup_run(ref=11))
         self.assertFalse(self.target.exists())
 
+    def test_missing_phc_is_seeded_before_first_hodo_decode(self):
+        self.setup_run(mode='hodo',stage='hdphc')
+        conf=create.config.PARAM_DIR/'conf/e72/analyzer_run00012_hodo_K.conf'
+        line=next(line for line in conf.read_text().splitlines() if line.startswith('HDPHC:'))
+        target=create.config.PARAM_DIR/Path(line.split()[1]).relative_to('param')
+        self.assertEqual('HodoPHCParam_run00012_K',target.name)
+        self.assertEqual(self.phc_template.read_bytes(),target.read_bytes())
+        target.write_text('updated PHC correction\n')
+        self.assertEqual('updated PHC correction\n',target.read_text())
+        self.assertEqual('initial correction\n',self.phc_template.read_text())
+
+    def test_existing_phc_is_not_replaced_by_example(self):
+        target=create.config.PARAM_DIR/'HDPHC/e72/HodoPHCParam_run00012_K'
+        target.parent.mkdir(parents=True)
+        target.write_text('manual correction\n')
+        self.setup_run(mode='hodo',stage='hdphc')
+        self.assertEqual('manual correction\n',target.read_text())
+
     def test_failed_publication_does_not_leave_partial_geometry(self):
         self.target.parent.mkdir(parents=True)
         with patch.object(create.os, 'replace', side_effect=OSError('publication failed')):
             with self.assertRaises(OSError):
-                create.seed_dcgeo(self.target, self.template)
+                create.seed_run_parameter(self.target, self.template)
         self.assertFalse(self.target.exists())
         self.assertEqual([], list(self.target.parent.glob(self.target.name+'.*.*')))
 

@@ -17,6 +17,7 @@ Full order (wiki Hodoscope-Calibration / TDC-Window):
 Does not run htof. Does not roll back hdprm/t0.
 """
 import sys
+import time
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -207,9 +208,11 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
     if progress["finished"]:
         runner.info(f"PHC series complete ({progress['reason']}); round {round_i} not run")
         return runner.EXIT_SKIP
+    started = time.monotonic()
     runlist = stage_prepare_and_decode(
         a.run, a.kaon, "hdphc", local=a.local, dry_run=False,
     )
+    prepared = time.monotonic()
     hodo_path = hodo_btof_monitor.hodo_root(a.run)
     runner.step(f"iterate_hodo_chain hdphc {round_i}")
     run_hodo_ok(
@@ -220,10 +223,14 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
         ),
         f"hdphc[{round_i}]",
     )
+    fitted = time.monotonic()
     decode_run.run_decode(runlist, local=a.local)
+    decoded = time.monotonic()
     score = hodo_btof_monitor.score_btof(
         a.run, particle_suffix=suffix, ftof=a.ftof, root_path=hodo_path,
     )
+    score["timings"] = {"prepare_decode_seconds": prepared-started, "fit_update_seconds": fitted-prepared,
+                        "evaluation_decode_seconds": decoded-fitted, "score_seconds": time.monotonic()-decoded}
     entry = hodo_hdphc_rounds.snapshot_round(
         a.run, round_i, suffix, score, input_path=hodo_path,
         qa_paths=hodo_qa_pdf.source_paths(a.run, "hdphc", a.kaon, a.ftof),
@@ -256,10 +263,6 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
 #_____________________________________________________________________________
 def run_hdphc_adopt_stage(a):
     suffix = "K" if a.kaon else "Pi"
-    runlist = (
-        config.ANALYZER_DIR / "runmanager" / "runlist" / config.SUB_DIR
-        / f"hodo_run{a.run:05d}.yml"
-    )
     journal = hodo_hdphc_rounds.load_journal(a.run)
     try:
         adopt = "auto" if hodo_hdphc_rounds.finish_requested(a.run, journal) else a.adopt
@@ -268,12 +271,20 @@ def run_hdphc_adopt_stage(a):
         runner.fail(str(exc))
     runner.info(f"adopting hdphc round {chosen}")
     hodo_hdphc_rounds.restore_round(a.run, chosen, suffix)
-    if not runlist.is_file():
-        runlist = stage_prepare_and_decode(
-            a.run, a.kaon, "hdphc", local=a.local, dry_run=False,
-        )
-    else:
-        decode_run.run_decode(runlist, local=a.local)
+    runlist = stage_prepare_and_decode(
+        a.run, a.kaon, "hdphc", local=a.local, dry_run=False,
+    )
+    hodo_path = hodo_btof_monitor.hodo_root(a.run)
+    actual = hodo_btof_monitor.score_btof(a.run, particle_suffix=suffix, ftof=a.ftof,
+                                        root_path=hodo_path)
+    expected = next(entry for entry in journal if int(entry["round"]) == chosen)
+    differences = hodo_hdphc_rounds.score_differences(expected, actual)
+    from common.lib.calib_state_io import write_json
+    write_json(hodo_hdphc_rounds.rounds_dir(a.run) / "adoption_validation.json",
+               {"round": chosen, "matches": not differences, "differences": differences,
+                "runlist": str(runlist),
+                "decoded_input_token": hodo_hdphc_rounds.qa_session.input_token(hodo_path) if hodo_path.is_file() else None,
+                "recorded": expected, "decoded": actual})
     hodo_hdphc_rounds.write_summary(a.run, adopted=chosen)
     run_hodo_ok(
         a.run,
@@ -284,7 +295,13 @@ def run_hdphc_adopt_stage(a):
         ),
         f"hdphc[qa-only adopt={chosen}]",
     )
-    runner.info(f"done: hdphc adopted round {chosen}")
+    if differences:
+        from common.lib import calib_anomaly
+        reason = "phc_adoption_score_mismatch: " + "; ".join(differences)
+        calib_anomaly.remember_check_reason(a.run, reason)
+        runner.warn(reason)
+        sys.exit(runner.EXIT_CHECK)
+    runner.info(f"done: hdphc adopted round {chosen}; fresh decode score verified")
 
 
 #_____________________________________________________________________________
