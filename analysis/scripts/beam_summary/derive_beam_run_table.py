@@ -10,9 +10,8 @@ the beam is the non-pion particle (pions contaminate every beam); "slit close" o
 beam; the two sheets cover different periods (a run in both is held for review).
 See docs/beam_summary/beam-run-condition-table-20260928.md.
 
-Download the sheets as CSV (link-shared, no login needed):
-  curl -sL -o s1.csv 'https://docs.google.com/spreadsheets/d/1InLDUJ0r0K-O6rJH3NRi5tuxHurfRHQ6BXPYSFhVyuA/export?format=csv&gid=587812810'
-  curl -sL -o s2.csv 'https://docs.google.com/spreadsheets/d/1aRQxyxYVs1FBuR2Pa83zUQRgdYaYYOJujOiqYGNCFHI/export?format=csv&gid=1541909500'
+Download the two run-summary sheets as CSV using your private source settings.
+Keep their share identifiers outside the repository.
 Then:
   python3 derive_beam_run_table.py --s1 s1.csv --s2 s2.csv --json derived.json --table table_body.txt
 and paste table_body.txt between "kBeamRunRanges[] = {" and "};". The script also prints the review

@@ -1,0 +1,16 @@
+# Copy to ~/.config/e72/run-ledger.yml; keep all real IDs and keys outside Git.
+destination: YOUR_PERSONAL_SPREADSHEET_ID
+credential_file: ~/.config/e72/google-sheets-service-account.json
+tab: E72_Test
+cache_dir: ~/.cache/e72/run-ledger
+sources:
+  - name: 2025-11
+    spreadsheet_id: YOUR_READ_ONLY_SOURCE_ID_1
+    gid: 0
+    layout: 2025-11
+  - name: 2026-04
+    spreadsheet_id: YOUR_READ_ONLY_SOURCE_ID_2
+    gid: 0
+    layout: 2026-04
+# Confirm questionable runs individually; detector OFF is not automatically junk.
+junk_runs: []

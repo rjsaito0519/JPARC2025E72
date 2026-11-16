@@ -18,6 +18,14 @@ common/lib/conf.py
 common/include/paths.h
 calibration/config/slack_local.yml
 calibration/config/discord_local.yml
+calibration/config/run_ledger_local*.yml
+**/run-ledger.yml
+**/run-ledger-local*.yml
+**/*service-account*.json
+**/google-sheets*.json
+.env
+.env.*
+!.env.example
 
 # Output directories
 results/root/
