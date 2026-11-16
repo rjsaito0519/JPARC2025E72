@@ -390,17 +390,22 @@ class UsageAndStyleTests(unittest.TestCase):
         self.assertEqual('較正', sheet.grid[1][headers.index('用途')])
         self.assertEqual([], plan_updates(sheet.grid, [record], 'Test')['updates'])
 
-    def test_style_rules_target_only_status_and_run_cells(self):
+    def test_style_rules_target_only_status_run_and_title_cells(self):
         from common.lib import run_ledger_style
         headers = list(reversed(HEADERS))
         rules = run_ledger_style.rules_for(5, headers)
-        allowed = set(run_ledger_style.STATUS_COLUMNS) | {'run番号'}
+        allowed = set(run_ledger_style.STATUS_COLUMNS) | {'run番号', 'タイトル'}
         for rule in rules:
             self.assertTrue(run_ledger_style.owned(rule))
             for region in rule['ranges']:
                 self.assertIn(headers[region['startColumnIndex']], allowed)
                 self.assertEqual(1, region['startRowIndex'])
                 self.assertEqual(region['startColumnIndex']+1, region['endColumnIndex'])
+        usage_rules = {header: [rule for rule in rules if rule['ranges'][0]['startColumnIndex'] == headers.index(header)]
+                       for header in ('run番号', 'タイトル')}
+        for run_rule, title_rule in zip(usage_rules['run番号'], usage_rules['タイトル']):
+            self.assertEqual(run_rule['booleanRule'], title_rule['booleanRule'])
+        self.assertEqual(4, len(usage_rules['タイトル']))
         self.assertFalse(run_ledger_style.owned({'booleanRule': {'condition': {'type': 'TEXT_EQ', 'values': [{'userEnteredValue': 'my rule'}]}}}))
 
     def test_style_signature_accepts_default_sheet_id_and_quantized_colors(self):

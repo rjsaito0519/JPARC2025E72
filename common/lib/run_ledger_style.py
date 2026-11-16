@@ -37,7 +37,8 @@ def rules_for(sheet_id, headers, row_count=1000):
             add(column, f'REGEXMATCH(TO_TEXT({cell}),"{pattern}")', shade)
     usage_cell = '$'+column_name(headers.index('用途'))+'2'
     for usage, shade in [('Physics', 'physics'), ('較正', 'calibration'), ('その他', 'white'), ('不明', 'gray')]:
-        add(headers.index('run番号'), f'{usage_cell}="{usage}"', shade)
+        for header in ('run番号', 'タイトル'):
+            add(headers.index(header), f'{usage_cell}="{usage}"', shade)
     return rules
 
 
