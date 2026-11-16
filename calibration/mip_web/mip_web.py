@@ -482,7 +482,93 @@ class App:
                 return self.public(doc)
 
 
-def handler(app, t0_app=None):
+
+class Portal:
+    """Keep independent run/particle/stage workspaces behind one localhost endpoint."""
+    def __init__(self, default_run=None, default_particle=None):
+        self.default_run = default_run
+        self.default_particle = default_particle
+        self.applications = {}
+        self.result_headers = {}
+        self.lock = threading.Lock()
+        self.preview_lock = threading.Lock()
+
+    def available(self):
+        rows = []
+        folder = Path(config.OUTPUT_DIR) / "root"
+        pattern = re.compile(r"run(\d{5})_(BH2_HDPRM|T0_Offset)_(Pi|K)\.root")
+        for path in folder.glob("run*/run*.root"):
+            match = pattern.fullmatch(path.name)
+            if not match or path.parent.name != "run"+match[1]:
+                continue
+            run = int(match[1])
+            if not (Path(config.DATA_DIR) / f"run{run:05d}_Hodo.root").is_file():
+                continue
+            mode = "t0" if match[2] == "T0_Offset" else "hdprm"
+            try:
+                stat = path.stat()
+                stamp = (str(path), stat.st_mtime_ns, stat.st_size)
+                with self.lock:
+                    readiness = self.result_headers.get(stamp)
+                if readiness is None:
+                    particle = match[3]
+                    required = ([f"T0_seg{segment}_TimeOffset_{particle}" for segment in range(config.NUM_OF_CH["BH2"])]
+                                if mode == "t0" else [f"BH2_ADC_seg{segment}{side}_{particle}"
+                                    for segment in range(config.NUM_OF_CH["BH2"]) for side in ("U", "D")])
+                    with uproot.open(path) as source:
+                        ready = all(name in source for name in required)
+                    readiness = (ready, "" if ready else "元ヒストグラムなし・当該段階の再実行が必要")
+                    with self.lock:
+                        self.result_headers[stamp] = readiness
+            except (OSError, ValueError):
+                readiness = (False, "結果ファイルを読み取れません")
+            rows.append({"run": run, "particle": match[3], "mode": mode, "ready": readiness[0], "reason": readiness[1]})
+        return sorted(rows, key=lambda row: (-row["run"], row["particle"], row["mode"]))
+
+    def infer_particle(self, run, mode):
+        base = Path(config.OUTPUT_DIR) / "calib" / f"run{run:05d}"
+        lane = base / "lanes/hodo/calib_dispatch_state.json"
+        state = read_json(lane if lane.is_file() else base / "calib_dispatch_state.json", {})
+        plan = state.get("plan") or {}
+        if state.get("calib_particle") in ("pion", "kaon") or plan.get("calib_particle") in ("pion", "kaon") or state.get("kaon") is True or plan.get("kaon") is True:
+            from common.lib.calib_approval import particle_suffix
+            return particle_suffix(state)[1]
+        kind = "T0_Offset" if mode == "t0" else "BH2_HDPRM"
+        choices = [particle for particle in ("Pi", "K") if
+                   (Path(config.OUTPUT_DIR) / "root" / f"run{run:05d}" / f"run{run:05d}_{kind}_{particle}.root").is_file()]
+        if len(choices) == 1:
+            return choices[0]
+        if self.default_particle and run == self.default_run:
+            return self.default_particle
+        if len(choices) > 1:
+            raise ValueError("PiとKの結果があります。入口の一覧から粒子を選んでください")
+        raise ValueError("この段階の保存済みFit結果がありません。先に較正を実行してください")
+
+    def resolve(self, query):
+        if any(len(query.get(key, [])) > 1 for key in ("run", "mode", "particle")):
+            raise ValueError("対象の指定が重複しています")
+        value = query.get("run", [str(self.default_run) if self.default_run is not None else ""])[0]
+        if not re.fullmatch(r"\d{1,5}", value):
+            raise ValueError("対象runを一覧またはSlackのリンクから選んでください")
+        run = int(value)
+        mode = query.get("mode", ["hdprm"])[0]
+        if mode not in ("hdprm", "t0"):
+            raise ValueError("unknown Hodo tuning mode")
+        if not (Path(config.DATA_DIR) / f"run{run:05d}_Hodo.root").is_file():
+            raise ValueError(f"run{run:05d}のHodo decodeがありません")
+        particle = query.get("particle", [None])[0] or self.infer_particle(run, mode)
+        if particle not in ("Pi", "K"):
+            raise ValueError("粒子はPiまたはKを選んでください")
+        key = (run, particle, mode)
+        with self.lock:
+            if key not in self.applications:
+                app = App(run, particle, mode)
+                app.preview_lock = self.preview_lock
+                self.applications[key] = app
+            return self.applications[key]
+
+
+def handler(app=None, t0_app=None, portal=None):
     applications = {"hdprm": app}
     if t0_app is not None:
         applications["t0"] = t0_app
@@ -505,7 +591,10 @@ def handler(app, t0_app=None):
             return True
 
         def application(self):
-            mode = parse_qs(urlparse(self.path).query).get("mode", ["hdprm"])[0]
+            query = parse_qs(urlparse(self.path).query)
+            if portal is not None:
+                return portal.resolve(query)
+            mode = query.get("mode", ["hdprm"])[0]
             if mode not in applications:
                 raise ValueError("unknown Hodo tuning mode")
             return applications[mode]
@@ -514,13 +603,33 @@ def handler(app, t0_app=None):
             if not self.valid_host():
                 return
             try:
-                app = self.application()
-                if urlparse(self.path).path == "/plotly.min.js":
+                path = urlparse(self.path).path
+                query = parse_qs(urlparse(self.path).query)
+                if portal is not None and path == "/portal-health":
+                    self.send({"service": "e72_calib_portal", "version": 1})
+                    return
+                if portal is not None and path == "/runs":
+                    self.send({"runs": portal.available()})
+                    return
+                if portal is not None and path == "/" and "run" not in query and portal.default_run is None:
+                    self.send((HERE / "calib_portal.html").read_bytes(), "text/html; charset=utf-8")
+                    return
+                if path == "/plotly.min.js":
                     self.send(PLOTLY.read_bytes(), "application/javascript")
-                elif urlparse(self.path).path == "/state":
+                    return
+                try:
+                    app = self.application()
+                except (ValueError, OSError) as error:
+                    if portal is not None and path == "/":
+                        import html
+                        page = (HERE / "calib_portal.html").read_text().replace("__ERROR__", html.escape(str(error)), 1)
+                        self.send(page.encode(), "text/html; charset=utf-8")
+                        return
+                    raise
+                if urlparse(self.path).path == "/state":
                     self.send(app.state())
                 elif urlparse(self.path).path == "/":
-                    page = (HERE / "mip_web.html").read_text().replace("__TOKEN__", app.token)
+                    page = (HERE / "mip_web.html").read_text().replace("__TOKEN__", app.token).replace("__RUN__", str(app.run)).replace("__PARTICLE__", app.particle)
                     self.send(page.encode(), "text/html; charset=utf-8")
                 else:
                     self.send({"error": "not found"}, status=404)
@@ -557,21 +666,23 @@ def handler(app, t0_app=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("run", type=int)
+    parser.add_argument("run", type=int, nargs="?")
     parser.add_argument("--kaon", action="store_true")
     parser.add_argument("--port", type=int, default=8767)
     args = parser.parse_args()
-    if not 0 <= args.run <= 99999:
+    if args.run is not None and not 0 <= args.run <= 99999:
         parser.error("run must be 0–99999")
     if not BINARY.is_file():
         parser.error("build BH2_MIP_PREVIEW with CMake first")
-    app = App(args.run, "K" if args.kaon else "Pi")
     if not T0_BINARY.is_file():
         parser.error("build T0_OFFSET_PREVIEW with CMake first")
-    t0_app = App(args.run, app.particle, mode="t0")
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler(app, t0_app))
-    print(f"run{args.run:05d} {app.particle} BH2 MIP / conda {sys.executable}", flush=True)
-    print(f"open http://localhost:{args.port}/?run={args.run}  (Ctrl-C to stop)", flush=True)
+    portal = Portal(args.run, "K" if args.kaon else None)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler(portal=portal))
+    query = f"?run={args.run}" if args.run is not None else ""
+    if args.kaon:
+        query += ("&" if query else "?") + "particle=K"
+    print(f"Calibration review / conda {sys.executable}", flush=True)
+    print(f"open http://localhost:{args.port}/{query}  (Ctrl-C to stop)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

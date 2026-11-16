@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>較正レビュー</title>
+<style>
+:root{color-scheme:light dark}body{font:16px/1.6 system-ui,sans-serif;max-width:1000px;margin:32px auto;padding:0 20px}h1{font-size:26px}label{display:inline-block;margin:0 20px 16px 0}input,select,button{font:inherit;padding:7px}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:12px;border-bottom:1px solid #8886}a{color:light-dark(#17659f,#88c6fb)}.error{color:light-dark(#a22,#ffb5b5)}.hint{color:light-dark(#555,#bbb)}[hidden]{display:none}#results{max-height:65vh;overflow:auto}thead{position:sticky;top:0;background:Canvas}
+</style></head><body>
+<h1>較正レビュー</h1>
+<p>接続できました。Slackの「Webで手直し」を開くと、そのrun・較正段階へ進みます。</p>
+<p class="hint">ここから選ぶ場合は、保存済みのFit結果がある対象を選んでください。開くだけでは較正の再実行や採用は行いません。</p>
+<p id="error" class="error" role="alert">__ERROR__</p>
+<label>runで絞り込む <input id="filter" type="search" placeholder="例: 2977" inputmode="numeric"></label>
+<label>粒子 <select id="particle"><option value="">すべて</option><option value="Pi">Pi</option><option value="K">K</option></select></label>
+<button id="refresh">一覧を更新</button><p id="summary" role="status">読み込み中…</p>
+<div id="results"><table><thead><tr><th>run</th><th>粒子</th><th>較正段階</th></tr></thead><tbody id="rows"></tbody></table></div>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);let runs=[];const initialParticle=new URLSearchParams(location.search).get('particle');if(initialParticle==='Pi'||initialParticle==='K')$('particle').value=initialParticle;
+if($('error').textContent==='__ERROR__')$('error').hidden=true;
+function draw(){const search=$('filter').value.trim(),particle=$('particle').value;const chosen=runs.filter(row=>(!search||String(row.run).includes(search))&&(!particle||row.particle===particle));$('rows').replaceChildren();for(const row of chosen){const tr=document.createElement('tr');for(const text of ['run'+String(row.run).padStart(5,'0'),row.particle]){const td=document.createElement('td');td.textContent=text;tr.append(td);}const td=document.createElement('td'),link=document.createElement('a');link.href='/?'+new URLSearchParams({run:row.run,particle:row.particle,mode:row.mode});link.textContent=row.mode==='t0'?'BH2 T0 offset':'BH2 ADC MIP';if(row.ready){td.append(link);}else{td.textContent=link.textContent+'（'+row.reason+'）';td.className='hint';}tr.append(td);$('rows').append(tr);}$('summary').textContent=chosen.length?chosen.length+'件の結果':'表示できる結果がありません。先に較正を実行するか、絞り込み条件を確認してください。';}
+async function load(){$('refresh').disabled=true;try{const response=await fetch('/runs',{cache:'no-store'});const result=await response.json();if(!response.ok)throw Error(result.error||'一覧を取得できませんでした');runs=result.runs;draw();}catch(error){$('error').textContent=error.message;$('error').hidden=false;$('summary').textContent='接続を確認してください';}finally{$('refresh').disabled=false;}}
+$('filter').oninput=draw;$('particle').onchange=draw;$('refresh').onclick=load;load();
+</script></body></html>
