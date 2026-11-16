@@ -171,12 +171,17 @@ def _equivalent(value):
 
 
 #_____________________________________________________________________________
-def _source_fields(observations):
+def _source_fields(observations, previous_fields=None):
+    present = {name: item for name, item in observations.items() if item.get('presence', 'present') == 'present'}
+    stale = {name: item for name, item in observations.items() if item.get('presence') == 'stale'}
+    selected = present or stale
+    if not selected and previous_fields is not None:
+        return {name: previous_fields.get(name, '') for name in FIELDS}, []
     fields = {}
     conflicts = []
     for name in FIELDS:
         candidates = []
-        for source, observation in observations.items():
+        for source, observation in (selected or observations).items():
             for record in observation['records']:
                 value = record['fields'].get(name, '')
                 if value:
@@ -279,12 +284,21 @@ def build_ledger(sources, previous=None, *, runs=None, snapshotter=calib_snapsho
             prior = observations.get(name)
             if records:
                 observations[name] = {'records': records, 'presence': 'present' if result['ok'] else 'stale',
-                                      'last_success': result['last_success']}
+                                      'last_success': result['last_success'], 'last_present_at': result['last_success']}
             elif prior:
-                observations[name] = dict(prior, presence='absent' if result['ok'] else 'stale')
-        fields, conflicts = _source_fields(observations)
+                observations[name] = dict(prior,
+                    presence='absent' if result['ok'] or prior.get('presence') == 'absent' else 'stale',
+                    last_present_at=prior.get('last_present_at') or prior.get('last_success'),
+                    last_success=result['last_success'] if result['ok'] else prior.get('last_success', ''),
+                    fetch_failed=not result['ok'])
+        fields, conflicts = _source_fields(observations, old.get('fields'))
+        source_value_state = ('current' if any(row['presence'] == 'present' for row in observations.values()) else
+                              'stale' if any(row['presence'] == 'stale' for row in observations.values()) else
+                              'absent' if observations else 'unknown')
         presence = [row['presence'] for row in observations.values()]
-        status = ('一部取得失敗' if partial_errors else
+        status = ('取得失敗（前回取得値）' if partial_errors and source_value_state == 'stale' else
+                  '一部取得失敗（前回確認では元情報不在）' if partial_errors and source_value_state == 'absent' else
+                  '一部取得失敗' if partial_errors else
                   '元シートに不在' if presence and all(value == 'absent' for value in presence) else
                   '範囲行を展開' if any(record['is_range'] for row in observations.values() for record in row['records']) else
                   '取得済み' if presence else '元情報未確認')
@@ -304,7 +318,8 @@ def build_ledger(sources, previous=None, *, runs=None, snapshotter=calib_snapsho
                                           'scope': state.get('scope') or []}
         if snapshot.get('previous_approval'):
             last_success['historical_approval'] = snapshot['previous_approval']
-        issues = [f'元情報競合: {", ".join(conflicts)}'] if conflicts else []
+        conflict_label = '元情報競合（前回取得値）' if source_value_state == 'stale' else '元情報競合'
+        issues = [f'{conflict_label}: {", ".join(conflicts)}'] if conflicts else []
         if partial_errors:
             issues.append('取得失敗: '+', '.join(partial_errors))
         if not snapshot['consistent']:
@@ -328,7 +343,7 @@ def build_ledger(sources, previous=None, *, runs=None, snapshotter=calib_snapsho
         prior_confirmed = (old.get('checked_at') or '') if 'attempted_at' in old or legacy_valid else ''
         checked_at = now if snapshot['consistent'] and not stale_lanes else prior_confirmed
         output[str(run)] = {'run': run, 'run_key': run_key(run), 'source_status': status,
-                            'sources': observations, 'fields': fields, 'conflicts': conflicts,
+                            'sources': observations, 'fields': fields, 'conflicts': conflicts, 'source_value_state': source_value_state,
                             'snapshot': snapshot, 'display_snapshot': display_snapshot,
                             'state_cache': state_cache, 'state_checked_at': state_checked_at,
                             'stale_lanes': stale_lanes, 'last_success': last_success,
@@ -347,7 +362,8 @@ def sheet_row(record):
     if snapshot.get('parent'):
         states['parent'] = snapshot['parent']
     fields = record['fields']
-    source_rows = [f"{source}: {item['url']} ({item['run_cell']})"
+    presence_labels = {'present': '現在', 'stale': '前回取得', 'absent': '履歴・元表に不在'}
+    source_rows = [f"{source} [{presence_labels.get(observation['presence'], '未確認')}]: {item['url']} ({item['run_cell']})"
                    for source, observation in record['sources'].items() for item in observation['records']]
     result = dict(zip(MACHINE_HEADERS, ['']*len(MACHINE_HEADERS)))
     result.update({'run_key': record['run_key'], 'run番号': str(record['run']), '元情報': record['source_status'],

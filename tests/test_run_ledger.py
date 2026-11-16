@@ -85,7 +85,7 @@ class SourceTests(unittest.TestCase):
         self.assertTrue(all(row['last_success'] == 'first' for row in second))
         current = run_ledger.build_ledger(second, ledger, snapshotter=empty_snapshot, now='second')
         self.assertEqual('beam', current['runs']['1916']['fields']['title'])
-        self.assertEqual('一部取得失敗', current['runs']['1916']['source_status'])
+        self.assertEqual('取得失敗（前回取得値）', current['runs']['1916']['source_status'])
 
     def test_snapshot_failure_preserves_display_and_last_successful_confirmation(self):
         sources = self.refresh(lambda source: source_csv(source['layout']))
@@ -179,6 +179,59 @@ class SourceTests(unittest.TestCase):
         ledger = run_ledger.build_ledger(current, old, snapshotter=empty_snapshot)
         self.assertEqual('元シートに不在', ledger['runs']['1916']['source_status'])
         self.assertEqual('beam', ledger['runs']['1916']['fields']['title'])
+
+    def test_absent_source_history_does_not_conflict_with_current_source(self):
+        first = self.refresh(lambda source: source_csv(source['layout'], title='old'))
+        old = run_ledger.build_ledger(first, snapshotter=empty_snapshot)
+        second = self.refresh(lambda source: source_csv(source['layout'], run='2000' if source['name']=='2025-11' else '1916',
+                                                       title='new'), now='second')
+        current = run_ledger.build_ledger(second, old, snapshotter=empty_snapshot)
+        row = current['runs']['1916']
+        self.assertEqual('new', row['fields']['title'])
+        self.assertEqual([], row['conflicts'])
+        self.assertEqual('absent', row['sources']['2025-11']['presence'])
+        self.assertEqual('old', row['sources']['2025-11']['records'][0]['fields']['title'])
+        self.assertIn('履歴・元表に不在', run_ledger.sheet_row(row)['出典'])
+        third = self.refresh(lambda source: source_csv(source['layout'], run='3000'), now='third')
+        removed = run_ledger.build_ledger(third, current, snapshotter=empty_snapshot)['runs']['1916']
+        self.assertEqual('new', removed['fields']['title'])
+        self.assertEqual([], removed['conflicts'])
+        self.assertEqual('元シートに不在', removed['source_status'])
+
+    def test_failed_stale_source_does_not_override_or_conflict_with_current_values(self):
+        first = self.refresh(lambda source: source_csv(source['layout'], title='old'))
+        old = run_ledger.build_ledger(first, snapshotter=empty_snapshot)
+        second = self.refresh(lambda source: b'<html>failed</html>' if source['name']=='2025-11'
+                              else source_csv(source['layout'], title='new'), now='second')
+        row = run_ledger.build_ledger(second, old, snapshotter=empty_snapshot)['runs']['1916']
+        self.assertEqual('new', row['fields']['title'])
+        self.assertEqual([], row['conflicts'])
+        self.assertEqual('stale', row['sources']['2025-11']['presence'])
+        self.assertEqual('current', row['source_value_state'])
+        self.assertIn('取得失敗', row['source_status'])
+
+    def test_failed_fetch_does_not_resurrect_previously_deleted_source_row(self):
+        first = self.refresh(lambda source: source_csv(source['layout'], title='old'))
+        old = run_ledger.build_ledger(first, snapshotter=empty_snapshot)
+        second = self.refresh(lambda source: source_csv(source['layout'], run='2000' if source['name']=='2025-11' else '1916',
+                                                       title='new'), now='second')
+        current = run_ledger.build_ledger(second, old, snapshotter=empty_snapshot)
+        third = self.refresh(lambda source: b'<html>failed</html>' if source['name']=='2025-11'
+                             else source_csv(source['layout'], title='latest'), now='third')
+        row = run_ledger.build_ledger(third, current, snapshotter=empty_snapshot)['runs']['1916']
+        self.assertEqual('latest', row['fields']['title'])
+        self.assertEqual('absent', row['sources']['2025-11']['presence'])
+        self.assertEqual('first', row['sources']['2025-11']['last_present_at'])
+        self.assertEqual([], row['conflicts'])
+
+    def test_current_empty_cell_does_not_fill_from_deleted_history(self):
+        first = self.refresh(lambda source: source_csv(source['layout'], title='old'))
+        old = run_ledger.build_ledger(first, snapshotter=empty_snapshot)
+        second = self.refresh(lambda source: source_csv(source['layout'], run='2000' if source['name']=='2025-11' else '1916',
+                                                       title=''), now='second')
+        row = run_ledger.build_ledger(second, old, snapshotter=empty_snapshot)['runs']['1916']
+        self.assertEqual('', row['fields']['title'])
+        self.assertEqual([], row['conflicts'])
 
     def test_conflicting_sources_keep_both_values_and_request_review(self):
         current = self.refresh(lambda source: source_csv(source['layout'], title=source['name']))
