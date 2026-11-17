@@ -25,6 +25,11 @@ else()
     message(FATAL_ERROR "ROOT not found. Please ensure ROOT is installed and accessible.")
 endif()
 
+# std::vector<TParticle> の辞書（G4 の PRM を読むツール用。実行時の GenerateDictionary は使わない）
+set(G4PARTICLE_DICT_TOOLS lh2eloss_g4_samples)
+file(MAKE_DIRECTORY ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
+ROOT_GENERATE_DICTIONARY(G__g4particle TParticle.h LINKDEF ${CMAKE_SOURCE_DIR}/common/include/g4particle_linkdef.h NOINSTALL)
+
 # 共有コード（common/src）を収集
 file(GLOB SHARED_SRC "${CMAKE_SOURCE_DIR}/common/src/*.cpp")
 
@@ -52,6 +57,14 @@ foreach(EXECUTABLE_SOURCE ${EXECUTABLE_SOURCES})
 
     # ROOTライブラリをリンク
     target_link_libraries(${EXECUTABLE_NAME} PRIVATE ${ROOT_LIBRARIES})
+
+    # 辞書を使うツール: 辞書をリンクし、pcm を実行ファイルの隣に置く
+    if(EXECUTABLE_NAME IN_LIST G4PARTICLE_DICT_TOOLS)
+        target_sources(${EXECUTABLE_NAME} PRIVATE ${CMAKE_BINARY_DIR}/G__g4particle.cxx)
+        add_custom_command(TARGET ${EXECUTABLE_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libg4particle_rdict.pcm ${CMAKE_SOURCE_DIR}/bin/)
+    endif()
 
     message(STATUS "Executable created: ${EXECUTABLE_NAME}")
 endforeach()
