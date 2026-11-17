@@ -171,19 +171,26 @@ class Map:
 
 # ---------------------------------------------------------------- file I/O
 
+def title_box(text):
+    """Comment box that names the block below it."""
+    bar = "# +" + "-" * (len(text) + 2) + "+\n"
+    return f"{bar}# | {text} |\n{bar}"
+
+
 def write_map(path, grids, geo, header):
     """Write grids {(particle, region, exit, holder): grid} and geometry; header: comment lines (no '#')."""
     check_complete(grids)
     with open(path, "w") as f:
         for h in header:
             f.write(f"# {h}\n" if h else "#\n")
-        f.write("\n")
+        f.write("\n" + title_box("geometry"))
         for k in GEO_KEYS:
             f.write(f"{k:<24}{geo[k]:<8g}# {GEO_UNIT[k]}\n")
         for key in sorted(grids):
             pa, rg, ex, ho = key
             gr = grids[key]
-            f.write(f"\nparticle {pa}  # {PARTICLE_NAMES[pa]}\nregion   {rg}  # {REGION_NAMES[rg]}\n"
+            f.write("\n" + title_box(grid_name(key)))
+            f.write(f"particle {pa}  # {PARTICLE_NAMES[pa]}\nregion   {rg}  # {REGION_NAMES[rg]}\n"
                     f"exit     {ex}  # {EXIT_NAMES[ex]}\nholder   {ho}  # {HOLDER_NAMES[ho]}\n")
             for ax, lab in (("p", "p [MeV/c]"), ("L", "L [mm]"), ("c", "cos")):
                 f.write(f"# {lab}\n" + " ".join(f"{x:g}" for x in gr[ax]) + "\n")
