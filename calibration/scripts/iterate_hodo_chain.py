@@ -252,8 +252,14 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
         hodo_hdphc_rounds.load_journal(a.run),
         patience=getattr(a, "hdphc_patience", 3), max_rounds=getattr(a, "hdphc_iter", 10),
     )
+    hodo_hdphc_rounds.write_summary(a.run)
+    latest = progress["comparisons"][-1]
+    if not latest["comparable"]:
+        runner.warn(f"PHC round {round_i}: REVIEW; excluded from auto adoption; "
+                    + "; ".join(latest["reasons"][:3]))
+    best_text = f"{progress['best_width']:.4f}" if progress["best_width"] is not None else "unavailable"
     runner.info(
-        f"PHC best=round {progress['best_round']} width={progress['best_width']:.4f}; "
+        f"PHC best=round {progress['best_round']} width={best_text}; "
         f"rounds without improvement={progress['without_improvement']}/"
         f"{getattr(a, 'hdphc_patience', 3)}"
     )
@@ -264,11 +270,16 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
 def run_hdphc_adopt_stage(a):
     suffix = "K" if a.kaon else "Pi"
     journal = hodo_hdphc_rounds.load_journal(a.run)
+    if journal:
+        hodo_hdphc_rounds.write_summary(a.run)
     try:
         adopt = "auto" if hodo_hdphc_rounds.finish_requested(a.run, journal) else a.adopt
         chosen = hodo_hdphc_rounds.pick_round(journal, adopt)
     except ValueError as exc:
         runner.fail(str(exc))
+    comparison = next(row for row in hodo_hdphc_rounds.compare_candidates(journal) if row["round"] == chosen)
+    if not comparison["comparable"]:
+        runner.warn("Explicit manual PHC adoption requires review: " + "; ".join(comparison["reasons"][:3]))
     runner.info(f"adopting hdphc round {chosen}")
     hodo_hdphc_rounds.restore_round(a.run, chosen, suffix)
     runlist = stage_prepare_and_decode(

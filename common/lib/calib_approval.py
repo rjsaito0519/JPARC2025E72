@@ -852,9 +852,21 @@ def gate_context(run: int, step: str, index: int, *, lane="") -> str:
             max_rounds=max((int((item.get("opts") or {}).get("hdphc_round", 0)) for item in plan), default=10) or 10,
         )
         if journal and journal[-1].get("ok") and hodo_hdphc_rounds.width_ok(journal[-1].get("width")):
-            lines.append(f"今回の幅: {journal[-1]['width']:.4f}")
+            lines.append(f"今回の参考幅（全有効segment）: {journal[-1]['width']:.4f}")
+        if progress["comparisons"]:
+            latest_comparison = progress["comparisons"][-1]
+            lines.append(f"比較対象 {latest_comparison['required_segments']} / "
+                         f"欠損 {latest_comparison['missing_segments']} / "
+                         f"統計減 {latest_comparison['statistics_decreased']} / "
+                         f"範囲外増 {latest_comparison['flow_increased']}")
+            if not latest_comparison["comparable"]:
+                lines.append("*候補比較: 要確認（自動採用の対象外）*")
+                lines.extend("• " + reason for reason in latest_comparison["reasons"][:3])
+                lines.append("詳細: hdphc_rounds/summary.txt と comparison.json")
+            else:
+                lines.append(f"固定したsegmentでの比較幅: {latest_comparison['width']:.4f}")
         if progress["best_round"] is not None:
-            lines.append(f"幅の最良値: {progress['best_width']:.4f}（第{progress['best_round']}ラウンド） / 改善なし {progress['without_improvement']}回")
+            lines.append(f"比較可能な候補の最良幅: {progress['best_width']:.4f}（第{progress['best_round']}ラウンド） / 改善なし {progress['without_improvement']}回")
         if progress["finished"]:
             following = {"name": "hodo_hdphc_adopt"}
     if step == "d5_pass" and (directory / "d5_converged.txt").is_file():

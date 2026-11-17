@@ -15,6 +15,21 @@ sys.path.insert(0, str(REPO))
 from common.lib import hodo_btof_monitor, hodo_hdphc_rounds  # noqa: E402
 
 
+def comparable_score(width, n_entries=100, **fields):
+    return {
+        "width": width, "ok": True, "n_entries": n_entries,
+        "scoring_context": {"version": 1, "particle": "Pi", "ftof": False,
+                            "required_detectors": ["BHT"]},
+        "per_det": {"BHT": {"segments": [
+            {"histogram": "BHT_seg0U_CBTOF_vs_DeltaE_Pi", "width": width,
+             "n_entries": n_entries, "n_total": n_entries, "axes_sha": "same"}
+        ], "width": width, "n_seg": 1, "n_entries": n_entries}},
+        **fields,
+    }
+
+
+
+
 class RobustWidthTests(unittest.TestCase):
     def test_half_width_uniform_box(self):
         # Flat weights on centers 0..100 → q16≈16, q84≈84, half-width≈34
@@ -35,24 +50,24 @@ class RobustWidthTests(unittest.TestCase):
 class PickRoundTests(unittest.TestCase):
     def test_auto_picks_min_width(self):
         journal = [
-            {"round": 1, "width": 3.0, "ok": True},
-            {"round": 2, "width": 1.0, "ok": True},
-            {"round": 3, "width": 2.0, "ok": True},
+            comparable_score(3.0, round=1),
+            comparable_score(1.0, round=2),
+            comparable_score(2.0, round=3),
         ]
         self.assertEqual(hodo_hdphc_rounds.pick_round(journal, "auto"), 2)
 
     def test_manual_adopt(self):
         journal = [
-            {"round": 1, "width": 3.0, "ok": True},
-            {"round": 2, "width": 1.0, "ok": True},
-            {"round": 3, "width": 2.0, "ok": True},
+            comparable_score(3.0, round=1),
+            comparable_score(1.0, round=2),
+            comparable_score(2.0, round=3),
         ]
         self.assertEqual(hodo_hdphc_rounds.pick_round(journal, "3"), 3)
 
     def test_auto_skips_bad_ok(self):
         journal = [
-            {"round": 1, "width": 0.5, "ok": False},
-            {"round": 2, "width": 2.0, "ok": True},
+            comparable_score(0.5, round=1, ok=False),
+            comparable_score(2.0, round=2),
         ]
         self.assertEqual(hodo_hdphc_rounds.pick_round(journal, "auto"), 2)
 
@@ -166,15 +181,15 @@ class SnapshotRestoreTests(unittest.TestCase):
                  ):
                 hodo_hdphc_rounds.clear_rounds(1)
                 e1 = hodo_hdphc_rounds.snapshot_round(
-                    1, 1, "Pi", {"width": 3.0, "n_entries": 10, "ok": True},
+                    1, 1, "Pi", comparable_score(3.0, n_entries=10),
                 )
                 live.write_text("round2\n", encoding="utf-8")
                 e2 = hodo_hdphc_rounds.snapshot_round(
-                    1, 2, "Pi", {"width": 1.0, "n_entries": 10, "ok": True},
+                    1, 2, "Pi", comparable_score(1.0, n_entries=10),
                 )
                 live.write_text("round3\n", encoding="utf-8")
                 hodo_hdphc_rounds.snapshot_round(
-                    1, 3, "Pi", {"width": 2.0, "n_entries": 10, "ok": True},
+                    1, 3, "Pi", comparable_score(2.0, n_entries=10),
                 )
                 journal = hodo_hdphc_rounds.load_journal(1)
                 chosen = hodo_hdphc_rounds.pick_round(journal, "auto")
@@ -200,7 +215,7 @@ class SnapshotRestoreTests(unittest.TestCase):
                  mock.patch.object(hodo_hdphc_rounds.config, "SUB_DIR", "e72"):
                 hodo_hdphc_rounds.clear_rounds(1)
                 entry = hodo_hdphc_rounds.snapshot_round(
-                    1, 1, "Pi", {"width": 1.0, "n_entries": 10, "ok": True},
+                    1, 1, "Pi", comparable_score(1.0, n_entries=10),
                     qa_paths=[qa_src],
                 )
                 sealed = (

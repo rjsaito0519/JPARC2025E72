@@ -6,6 +6,7 @@ projection (summed over dE). No Gaussian auto-fit.
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +78,7 @@ def _pick_keys(all_keys: list[str], prefix: str, tof_tag: str, particle: str) ->
             # unsuffixed: ..._CBTOF_vs_DeltaE
             if not name.endswith("_Pi") and not name.endswith("_K"):
                 base.append(name)
-    return suffixed if suffixed else base
+    return list(dict.fromkeys(suffixed if suffixed else base))
 
 
 #_____________________________________________________________________________
@@ -141,8 +142,18 @@ def score_btof(
             except Exception:  # noqa: BLE001
                 continue
             width, n_ent = project_tof_width(hist)
-            segments.append({"histogram": name, "width": float(width) if np.isfinite(width) else None,
-                             "n_entries": n_ent, "n_total": float(np.sum(hist.values(flow=True)))})
+            flow_values = hist.values(flow=True)
+            axes_sha = hashlib.sha256(b"".join(
+                np.asarray(axis.edges(), dtype="<f8").tobytes() for axis in hist.axes
+            )).hexdigest()
+            segments.append({
+                "histogram": name, "width": float(width) if np.isfinite(width) else None,
+                "n_entries": n_ent, "n_total": float(np.sum(flow_values)),
+                "n_tof_flow": float(np.sum(flow_values[1:-1, [0, -1]])),
+                "n_de_flow": float(np.sum(flow_values[[0, -1], 1:-1])),
+                "n_both_flow": float(np.sum(flow_values[np.ix_([0, -1], [0, -1])])),
+                "axes_sha": axes_sha,
+            })
             if np.isfinite(width) and n_ent > 0:
                 seg_w.append(width)
                 seg_n += n_ent
@@ -157,12 +168,16 @@ def score_btof(
             widths.append(det_width)
         total_n += seg_n
 
+    root.close()
+    context = {"version": 1, "particle": particle, "ftof": bool(ftof),
+               "required_detectors": list(dets)}
     if not widths:
         return {
             "ok": False,
             "width": float("nan"),
             "n_entries": total_n,
             "message": "no CBTOF/CTOF segments scored",
+            "scoring_context": context,
             "per_det": per_det,
         }
     return {
@@ -170,5 +185,6 @@ def score_btof(
         "width": float(np.median(widths)),
         "n_entries": total_n,
         "message": "ok",
+        "scoring_context": context,
         "per_det": per_det,
     }

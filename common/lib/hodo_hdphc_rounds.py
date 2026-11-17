@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import config, qa_session
+from .phc_comparison import compare_candidates
 
 DEFAULT_MAX_ROUNDS = 10
 DEFAULT_PATIENCE = 3
@@ -124,6 +125,7 @@ def snapshot_round(
         "qa_files": qa_files,
         "at": _utc_now(),
         "per_det": score.get("per_det") or {},
+        "scoring_context": score.get("scoring_context"),
     }
     if score.get("timings"):
         entry["timings"] = score["timings"]
@@ -194,9 +196,10 @@ def adaptive_progress(journal, *, patience=DEFAULT_PATIENCE, max_rounds=DEFAULT_
     best_width = None
     best_round = None
     without_improvement = 0
-    for entry in journal:
+    comparisons = compare_candidates(journal)
+    for entry in comparisons:
         width = entry.get("width")
-        if not entry.get("ok") or not width_ok(width):
+        if not entry["comparable"] or not width_ok(width):
             continue
         width = float(width)
         if best_width is None or width < best_width:
@@ -215,6 +218,8 @@ def adaptive_progress(journal, *, patience=DEFAULT_PATIENCE, max_rounds=DEFAULT_
         "finished": reason is not None, "reason": reason,
         "completed": completed, "best_round": best_round, "best_width": best_width,
         "without_improvement": without_improvement,
+        "comparisons": comparisons,
+        "review_required": any(not row["comparable"] for row in comparisons),
     }
 
 
@@ -229,26 +234,10 @@ def pick_round(journal: list[dict[str, Any]], adopt: str) -> int:
         if k not in rounds:
             raise ValueError(f"adopt round {k} not in journal {sorted(rounds)}")
         return k
-    best = None
-    best_w = None
-    for entry in journal:
-        if not entry.get("ok"):
-            continue
-        width = entry.get("width")
-        if width is None:
-            continue
-        try:
-            w = float(width)
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(w):
-            continue
-        if best_w is None or w < best_w:
-            best_w = w
-            best = int(entry["round"])
-    if best is None:
-        raise ValueError("no finite width in journal for auto adopt")
-    return best
+    candidates = [row for row in compare_candidates(journal) if row["comparable"]]
+    if not candidates:
+        raise ValueError("PHC auto adopt: no comparable candidate; review summary or restart/re-evaluate the series")
+    return min(candidates, key=lambda row: row["width"])["round"]
 
 
 #_____________________________________________________________________________
@@ -299,6 +288,8 @@ def score_differences(expected, actual):
         same_value = finite_values and math.isclose(float(left), float(right), rel_tol=1e-8, abs_tol=1e-10)
         if not same_value:
             differences.append(f"{label}: recorded={left}, decoded={right}")
+    if expected.get("scoring_context") is not None and expected.get("scoring_context") != actual.get("scoring_context"):
+        differences.append("scoring context changed")
     for key in ("width", "n_entries"):
         compare(key, expected.get(key), actual.get(key))
     for detector, values in (expected.get("per_det") or {}).items():
@@ -318,6 +309,11 @@ def score_differences(expected, actual):
                 decoded_segment = current_segments.get(name) or {}
                 for key in ("n_entries", "n_total"):
                     compare(f"{name}.{key}", segment.get(key), decoded_segment.get(key))
+                for key in ("n_tof_flow", "n_de_flow", "n_both_flow"):
+                    if key in segment:
+                        compare(f"{name}.{key}", segment[key], decoded_segment.get(key))
+                if "axes_sha" in segment and segment["axes_sha"] != decoded_segment.get("axes_sha"):
+                    differences.append(f"{name}: histogram axes changed")
                 empty_segment = (segment.get("n_entries") == decoded_segment.get("n_entries") == 0
                                  and segment.get("width") is None and decoded_segment.get("width") is None)
                 if not empty_segment:
@@ -332,6 +328,7 @@ def write_summary(run: int, adopted: Optional[int] = None) -> Path:
         f"hdphc rounds run{int(run):05d}",
         f"{'round':>5}  {'width':>10}  {'n_entries':>12}  {'ok':>3}  param_sha",
     ]
+    comparisons = {row["round"]: row for row in compare_candidates(rows)}
     for entry in rows:
         mark = " *" if adopted is not None and int(entry["round"]) == int(adopted) else ""
         width = entry.get("width")
@@ -340,6 +337,27 @@ def write_summary(run: int, adopted: Optional[int] = None) -> Path:
             f"{int(entry['round']):5d}  {wtxt:>10}  {float(entry.get('n_entries') or 0):12.0f}  "
             f"{'Y' if entry.get('ok') else 'N':>3}  {entry.get('param_sha')}{mark}"
         )
+        comparison = comparisons[int(entry["round"])]
+        label = "comparable" if comparison["comparable"] else "REVIEW"
+        lines.append(f"  fixed population: {label}, width={comparison['width']}, "
+                     f"reference=round {comparison['reference_round']}, segments={comparison['required_segments']}")
+        lines.append(f"  missing={comparison['missing_segments']}, "
+                     f"statistics decreased={comparison['statistics_decreased']}, "
+                     f"flow increased={comparison['flow_increased']}, "
+                     f"reference minimum entries={comparison['reference_min_entries']}")
+        lines.extend("    " + reason for reason in comparison["reasons"])
+        for segment in comparison["segments"]:
+            lines.append(f"    {segment['histogram']}: entries={segment['n_entries']} "
+                         f"(reference {segment['reference_entries']}), total={segment['n_total']} "
+                         f"(reference {segment['reference_total']}), "
+                         f"flow={segment.get('flow_fraction')} "
+                         f"(reference {segment.get('reference_flow_fraction')}), "
+                         f"TOF-only flow={segment.get('n_tof_flow')} "
+                         f"(reference {segment.get('reference_n_tof_flow')}), "
+                         f"dE-only flow={segment.get('n_de_flow')} "
+                         f"(reference {segment.get('reference_n_de_flow')})")
+    comparison_path = rounds_dir(run) / "comparison.json"
+    comparison_path.write_text(json.dumps(list(comparisons.values()), indent=2) + "\n", encoding="utf-8")
     if adopted is not None:
         lines.append(f"adopted: round {int(adopted)}")
     path = summary_path(run)

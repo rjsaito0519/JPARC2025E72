@@ -31,7 +31,7 @@ class PhcAdoptionValidationTests(unittest.TestCase):
                 qa.assert_called_once()
 
     def test_correct_adoption_regenerates_conf_and_records_verified_score(self):
-        self.adopt({'width':1.,'ok':True,'n_entries':100})
+        self.adopt(fixtures.comparable_score(1.))
         validation=json.loads((rounds.rounds_dir(1)/'adoption_validation.json').read_text())
         self.assertTrue(validation['matches'])
         self.assertEqual(2,validation['round'])

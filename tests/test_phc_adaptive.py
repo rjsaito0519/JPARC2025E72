@@ -18,6 +18,21 @@ import iterate_hodo_chain as iterator
 import run_hodo
 
 
+def comparable_score(width, n_entries=100, **fields):
+    return {
+        "width": width, "ok": True, "n_entries": n_entries,
+        "scoring_context": {"version": 1, "particle": "Pi", "ftof": False,
+                            "required_detectors": ["BHT"]},
+        "per_det": {"BHT": {"segments": [
+            {"histogram": "BHT_seg0U_CBTOF_vs_DeltaE_Pi", "width": width,
+             "n_entries": n_entries, "n_total": n_entries, "axes_sha": "same"}
+        ], "width": width, "n_seg": 1, "n_entries": n_entries}},
+        **fields,
+    }
+
+
+
+
 class AdaptivePhcTests(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()
@@ -29,7 +44,7 @@ class AdaptivePhcTests(unittest.TestCase):
             self.addCleanup(override.stop)
 
     def history(self, widths):
-        return [{"round": i, "width": width, "ok": True} for i, width in enumerate(widths, 1)]
+        return [comparable_score(width, round=i) for i, width in enumerate(widths, 1)]
 
     def test_waits_for_three_rounds_without_new_best(self):
         widths = [3.0, 2.0, 2.4, 2.5]
@@ -66,7 +81,7 @@ class AdaptivePhcTests(unittest.TestCase):
 
         args = SimpleNamespace(run=1, kaon=False, ftof=False, force=False,
                                local=False, hdphc_iter=10, hdphc_patience=3)
-        scores = [{"width": width, "ok": True, "n_entries": 1000} for width in widths]
+        scores = [comparable_score(width, n_entries=1000) for width in widths]
         with mock.patch.object(iterator, "stage_prepare_and_decode", return_value=self.root / "runlist.yml"), \
                 mock.patch.object(iterator, "run_hodo_ok", side_effect=fit), \
                 mock.patch.object(iterator.decode_run, "run_decode"), \
@@ -96,7 +111,7 @@ class AdaptivePhcTests(unittest.TestCase):
         parameter.parent.mkdir(parents=True, exist_ok=True)
         for index, width in enumerate((2.0, 1.0, 1.2), 1):
             parameter.write_text(f"round{index}")
-            rounds.snapshot_round(1, index, "Pi", {"width":width,"ok":True,"n_entries":100})
+            rounds.snapshot_round(1, index, "Pi", comparable_score(width))
         return parameter
 
     def test_manual_finish_skips_remaining_updates_then_restores_best(self):
@@ -115,7 +130,7 @@ class AdaptivePhcTests(unittest.TestCase):
                 mock.patch.object(iterator.decode_run, "run_decode"), \
                 mock.patch.object(iterator, "run_hodo_ok") as qa, \
                 mock.patch.object(iterator.hodo_btof_monitor, "score_btof",
-                                  return_value={"width":1.0,"ok":True,"n_entries":100}):
+                                  return_value=comparable_score(1.0)):
             iterator.run_hdphc_adopt_stage(adopt_args)
         self.assertEqual(parameter.read_text(), "round2")
         self.assertIn("--qa-only", qa.call_args.args[1])
@@ -125,7 +140,7 @@ class AdaptivePhcTests(unittest.TestCase):
         parameter = self.completed_series()
         rounds.request_finish(1, hold_id="gate")
         parameter.write_text("refit3")
-        rounds.snapshot_round(1, 3, "Pi", {"width":.5,"ok":True,"n_entries":100})
+        rounds.snapshot_round(1, 3, "Pi", comparable_score(.5))
         self.assertFalse(rounds.finish_requested(1, rounds.load_journal(1)))
 
     def test_finish_operation_requires_successful_current_round_and_preserves_final_approval(self):
@@ -150,7 +165,7 @@ class AdaptivePhcTests(unittest.TestCase):
     def test_refit_invalidates_later_round_scores(self):
         path = rounds.journal_path(1)
         path.parent.mkdir(parents=True)
-        rows = self.history([3.0, 2.0, 1.0]) + [{"round": 2, "width": 2.5, "ok": True}]
+        rows = self.history([3.0, 2.0, 1.0]) + [comparable_score(2.5, round=2)]
         path.write_text("".join(json.dumps(row) + "\n" for row in rows))
         journal = rounds.load_journal(1)
         self.assertEqual([row["round"] for row in journal], [1, 2])
