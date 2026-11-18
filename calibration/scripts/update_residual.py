@@ -43,6 +43,22 @@ def make_dictdata(root_file_path, input_path=None):
         print(colored(f"Error: Could not determine detector from path {root_file_path}", "red"))
         sys.exit(1)
 
+    # New native outputs carry primary ROOT fit status. Legacy outputs retain
+    # the finite/width/bounds checks below.
+    if "residual_fit_status" in tree:
+        statuses = tree["residual_fit_status"]
+        if len(statuses) != len(tree["residual_p0_val"]):
+            raise ResidualFitInvalid(f"{root_file_path}: residual fit status length mismatch")
+        for plane, sides in enumerate(statuses):
+            try:
+                usable = len(sides) == 2 and all(fit_validity.root_fit_status_ok(v) for v in sides)
+            except TypeError:
+                usable = False
+            if not usable:
+                raise ResidualFitInvalid(
+                    f"{root_file_path}: unusable residual fit status at plane {plane}: {sides}"
+                )
+
     # Relative to first plane (U1a) to avoid overall detector shift/rotation.
     if len(tree["residual_p0_val"]) < 1:
         raise ResidualFitInvalid(f"{root_file_path}: empty residual_p0_val")

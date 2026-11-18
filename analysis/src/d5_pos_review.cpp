@@ -325,7 +325,9 @@ main(Int_t argc, char** argv)
   Double_t dy_slope = 0.0, dv_slope = 0.0;
   const Double_t dy_at0 = fit_line(p_dy_delta, kDeltaFitLo, kDeltaFitHi, &dy_slope);
   const Double_t dv_at0 = fit_line(p_dv_delta, kDeltaFitLo, kDeltaFitHi, &dv_slope);
-  const Double_t s_rec = (k_s != 0.0) ? -g_dd.mean / k_s : 0.0;
+  const Double_t s_rec = (g_dd.valid && std::isfinite(k_s) && k_s != 0.0)
+    ? -g_dd.mean / k_s : NAN;
+  const Bool_t position_fit_ok = g_ya.valid && g_yb.valid && g_dd.valid && std::isfinite(s_rec);
 
   // --- text (key value) ---
   std::ofstream ofs(path_txt.Data());
@@ -348,6 +350,14 @@ main(Int_t argc, char** argv)
       << Form("dv_mean_mrad %.4f\ndv_sigma_mrad %.4f\ndv_at_delta0_mrad %.4f\ndv_slope_mrad_per_percent %.4f\n", g_dv.mean, g_dv.sigma, dv_at0, dv_slope)
       << Form("apply --residual-offset BLC1a:%.4f,%.4f --residual-offset BLC1b:%.4f,%.4f\n",
               s_rec, g_ya.mean, -s_rec, g_yb.mean);
+  ofs << "position_fit_ok " << position_fit_ok << "\n";
+  for (const auto& core : {std::make_pair("dy_a", g_ya), std::make_pair("dy_b", g_yb),
+                           std::make_pair("ddxu", g_dd), std::make_pair("dx_a_info", g_xa),
+                           std::make_pair("dx_b_info", g_xb), std::make_pair("dy_info", g_dy),
+                           std::make_pair("dv_info", g_dv)}) {
+    ofs << core.first << "_fit_status " << core.second.fit_status << "\n"
+        << core.first << "_fit_ok " << core.second.valid << "\n";
+  }
   for (Int_t i = 1; i <= p_dd_x1->GetNbinsX(); ++i)
     if (p_dd_x1->GetBinEntries(i) > 0)
       ofs << Form("ddxu_vs_x1 %.2f %.5f %.5f %.0f\n", p_dd_x1->GetBinCenter(i), p_dd_x1->GetBinContent(i),
@@ -372,6 +382,7 @@ main(Int_t argc, char** argv)
   line(Form("D5 (BLC2-referenced): %s  (%lld rank0 pairs)", gSystem->BaseName(path_ref), n_ref));
   line(Form("matrix: %s;  DCGEO: %s", gSystem->BaseName(path_mtx), gSystem->BaseName(path_geo)));
   line(Form("BLC1a z = %.1f mm, BLC1b z = %.1f mm", z_a, z_b));
+  if (!position_fit_ok) line("#color[2]{INVALID position fit: no automatic geometry update}");
   line("dy: D5 fit line (BLC1 Res inflated: set by BLC2) - BLC1 track, core Gauss mean");
   line(Form("  BLC1a dy = %+.4f #pm %.4f mm  (#sigma %.2f mm)", g_ya.mean, g_ya.mean_err, g_ya.sigma));
   line(Form("  BLC1b dy = %+.4f #pm %.4f mm  (#sigma %.2f mm)", g_yb.mean, g_yb.mean_err, g_yb.sigma));

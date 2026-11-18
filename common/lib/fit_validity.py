@@ -29,7 +29,14 @@ def phc_fit_status_ok(status: Optional[Any]) -> bool:
     """Allow successful primary fits, including an IMPROVE-only failure."""
     if status is None:
         return True
+    return root_fit_status_ok(status)
+
+
+#_____________________________________________________________________________
+def root_fit_status_ok(status: Any) -> bool:
+    """Require an explicit, integral ROOT status with successful primary fits."""
     try:
-        return int(status) in PHC_FIT_STATUSES_USABLE
-    except (TypeError, ValueError):
+        value = float(status)
+        return math.isfinite(value) and value in PHC_FIT_STATUSES_USABLE
+    except (TypeError, ValueError, OverflowError):
         return False

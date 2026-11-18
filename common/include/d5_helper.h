@@ -31,11 +31,13 @@ namespace d5_helper {
 
     // Gauss fit in mean +- 1.5 sigma, iterated n_iter times from (mean0, sigma0).
     // The function stays attached to h as "g_<name>" (kNotDraw) for drawing.
-    // Fewer than min_entries entries: NaN.
+    // Low statistics or an unusable fit: NaN with valid=false.
     struct GaussCore {
         Double_t mean = NAN;
         Double_t mean_err = NAN;
         Double_t sigma = NAN;
+        Int_t fit_status = -1;
+        Bool_t valid = kFALSE;
     };
     GaussCore fit_core(TH1* h, Double_t mean0, Double_t sigma0, Int_t n_iter,
                        Int_t min_entries = 100);

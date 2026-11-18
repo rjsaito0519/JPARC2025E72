@@ -32,23 +32,40 @@ namespace d5_helper {
         return kTRUE;
     }
 
-    // ____________________________________________________________________________________________
-    GaussCore fit_core(TH1* h, Double_t mean0, Double_t sigma0, Int_t n_iter, Int_t min_entries) {
+    //_____________________________________________________________________________
+    GaussCore
+    fit_core(
+        TH1* h,
+        Double_t mean0,
+        Double_t sigma0,
+        Int_t n_iter,
+        Int_t min_entries
+    )
+    {
         GaussCore g;
-        if (!h || h->GetEntries() < min_entries || !(sigma0 > 0.)) return g;
+        if (!h || h->GetEntries() < min_entries || !std::isfinite(mean0)
+            || !std::isfinite(sigma0) || !(sigma0 > 0.) || n_iter <= 0) return g;
         Double_t m = mean0, s = sigma0;
         auto* f = new TF1(Form("g_%s", h->GetName()), "gaus", m - 1.5 * s, m + 1.5 * s);
         f->SetLineColor(kRed);
         for (Int_t it = 0; it < n_iter; ++it) {
             f->SetRange(m - 1.5 * s, m + 1.5 * s);
             f->SetParameters(h->GetMaximum(), m, s);
-            h->Fit(f, "QR0");
+            g.fit_status = h->Fit(f, "QR0");
+            if (g.fit_status != 0 && g.fit_status != 4000) return g;
             m = f->GetParameter(1);
             s = std::fabs(f->GetParameter(2));
+            if (!std::isfinite(m) || !std::isfinite(s) || s <= 0.
+                || !std::isfinite(f->GetParError(1)) || f->GetParError(1) <= 0.
+                || f->GetNDF() <= 0) {
+                g.fit_status = -2;
+                return g;
+            }
         }
         g.mean = m;
         g.mean_err = f->GetParError(1);
         g.sigma = s;
+        g.valid = kTRUE;
         return g;
     }
 

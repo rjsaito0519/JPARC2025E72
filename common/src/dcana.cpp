@@ -1,8 +1,9 @@
-#include "ana_helper.h"
-
 #include <cmath>
 #include <iostream>
+
 #include <TLegend.h>
+
+#include "ana_helper.h"
 
 namespace ana_helper {
 
@@ -235,63 +236,89 @@ FitResult dc_tdc_fit_impl(TH1D *h, TCanvas *c, Int_t n_c)
         return g;
     }
 
-    // ____________________________________________________________________________________________
-    FitResult residual_fit(TH1D *h, TCanvas *c, Int_t n_c)
+    //_____________________________________________________________________________
+    FitResult
+    residual_fit(
+        TH1D* h,
+        TCanvas* c,
+        Int_t n_c
+    )
     {
-        Config& conf = Config::getInstance();
-
-        c->cd(n_c);
-        std::vector<Double_t> par, err;
-        TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
         FitResult result;
+        result.par.assign(3, NAN);
+        result.err.assign(3, NAN);
+        if (c) c->cd(n_c);
+        auto invalid_fit = [&](Int_t status) {
+            result.migrad_stats = status;
+            if (h) {
+                h->Draw();
+                TLatex label;
+                label.SetTextColor(kRed);
+                label.DrawLatexNDC(0.18, 0.85, Form("Residual fit invalid (status %d)", status));
+            }
+            return result;
+        };
+        if (!h || h->GetEntries() <= 0) return invalid_fit(-1);
+        const Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
+        const Double_t width = h->GetStdDev();
+        if (!std::isfinite(peak_pos) || !std::isfinite(width) || width <= 0)
+            return invalid_fit(-2);
 
-        Double_t peak_pos = h->GetBinCenter(h->GetMaximumBin());
-        Double_t width    = h->GetStdDev();
+        const auto usable_fit = [](TF1* function, Int_t status) {
+            if ((status != 0 && status != 4000) || function->GetNDF() <= 0
+                || function->GetParameter(2) <= 0) return false;
+            for (Int_t i = 0; i < 3; ++i) {
+                if (!std::isfinite(function->GetParameter(i))
+                    || !std::isfinite(function->GetParError(i))
+                    || function->GetParError(i) < 0) return false;
+            }
+            return true;
+        };
+        TString fit_option = h->GetMaximum() > 500.0 ? "0QEMR" : "0QEMRL";
         std::pair<Double_t, Double_t> peak_n_sigma(1.3, 1.3);
-        
-        // -- first fit -----
-        Double_t lower = std::max(peak_pos-peak_n_sigma.first*width,  h->GetXaxis()->GetXmin());
-        Double_t upper = std::min(peak_pos+peak_n_sigma.second*width, h->GetXaxis()->GetXmax());
-        TF1 *f_prefit = new TF1("pre_fit_gauss", "gausn", lower, upper);
+        Double_t lower = std::max(peak_pos - peak_n_sigma.first * width, h->GetXaxis()->GetXmin());
+        Double_t upper = std::min(peak_pos + peak_n_sigma.second * width, h->GetXaxis()->GetXmax());
+        if (!(lower < upper)) return invalid_fit(-2);
+
+        TF1* f_prefit = new TF1("pre_fit_gauss", "gausn", lower, upper);
         f_prefit->SetParameter(1, peak_pos);
-        f_prefit->SetParameter(2, width*0.9);
-        h->Fit(f_prefit, fit_option.Data(), "", lower, upper);
-        for (Int_t i = 0; i < 3; i++) par.push_back(f_prefit->GetParameter(i));
+        f_prefit->SetParameter(2, width * 0.9);
+        const Int_t prefit_status = h->Fit(f_prefit, fit_option.Data(), "", lower, upper);
+        if (!usable_fit(f_prefit, prefit_status)) {
+            delete f_prefit;
+            return invalid_fit(prefit_status == 0 || prefit_status == 4000 ? -2 : prefit_status);
+        }
+        std::vector<Double_t> par;
+        for (Int_t i = 0; i < 3; ++i) par.push_back(f_prefit->GetParameter(i));
         delete f_prefit;
 
-        // -- second fit -----
-        lower = std::max(par[1]-peak_n_sigma.first*par[2],  h->GetXaxis()->GetXmin());
-        upper = std::min(par[1]+peak_n_sigma.second*par[2], h->GetXaxis()->GetXmax());
-        TF1 *f_fit = new TF1( Form("gaus_%s", h->GetName()), "gausn", lower, upper);
+        lower = std::max(par[1] - peak_n_sigma.first * par[2], h->GetXaxis()->GetXmin());
+        upper = std::min(par[1] + peak_n_sigma.second * par[2], h->GetXaxis()->GetXmax());
+        if (!(lower < upper)) return invalid_fit(-2);
+        TF1* f_fit = new TF1(Form("gaus_%s", h->GetName()), "gausn", lower, upper);
         f_fit->SetParameter(0, par[0]);
         f_fit->SetParameter(1, par[1]);
-        f_fit->SetParameter(2, par[2]*0.9);
+        f_fit->SetParameter(2, par[2] * 0.9);
         f_fit->SetLineColor(kOrange);
         f_fit->SetLineWidth(2);
         f_fit->SetNpx(1000);
-        h->Fit(f_fit, fit_option.Data(), "", lower, upper);
-
-        // -- fill result -----
-        for (Int_t i = 0, n_par = f_fit->GetNpar(); i < n_par; i++) {
-            result.par.push_back(f_fit->GetParameter(i));
-            result.err.push_back(f_fit->GetParError(i));
+        const Int_t fit_status = h->Fit(f_fit, fit_option.Data(), "", lower, upper);
+        if (!usable_fit(f_fit, fit_status))
+            return invalid_fit(fit_status == 0 || fit_status == 4000 ? -2 : fit_status);
+        result.migrad_stats = fit_status;
+        for (Int_t i = 0; i < 3; ++i) {
+            result.par[i] = f_fit->GetParameter(i);
+            result.err[i] = f_fit->GetParError(i);
         }
-
-        // -- draw figure -----
-        h->GetXaxis()->SetRangeUser(
-            result.par[1] - 5.0*result.par[2], 
-            result.par[1] + 5.0*result.par[2]
-        );
+        h->GetXaxis()->SetRangeUser(result.par[1] - 5.0 * result.par[2],
+                                   result.par[1] + 5.0 * result.par[2]);
         h->Draw();
         f_fit->Draw("same");
-
-        TLine *line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
-        line->SetLineStyle(2); // 点線に設定
-        line->SetLineColor(kRed); // 色を赤に設定
+        TLine* line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
+        line->SetLineStyle(2);
+        line->SetLineColor(kRed);
         line->Draw("same");
-
-        c->Update();
-
+        if (c) c->Update();
         return result;
     }
 

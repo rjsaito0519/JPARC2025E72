@@ -221,6 +221,19 @@ def measure(run, s):
     if rc != 0 or not txt.exists():
         return None
     kv = parse_kv(txt)
+    status_keys = {"position_fit_ok"} | {
+        f"{core}_fit_{suffix}" for core in ("dy_a", "dy_b", "ddxu")
+        for suffix in ("ok", "status")
+    }
+    if any(k in kv for k in status_keys):
+        valid = (kv.get("position_fit_ok") == "1"
+                 and all(kv.get(f"{core}_fit_ok") == "1"
+                         and fit_validity.root_fit_status_ok(kv.get(f"{core}_fit_status"))
+                         for core in ("dy_a", "dy_b", "ddxu")))
+        if not valid:
+            runner.warn(f"{txt}: invalid native position fit status; no geometry update")
+            calib_anomaly.remember_check_reason(run, f"d5 pos invalid native fit status ({s})")
+            return None
     keys = {"dy_a": "dy_a_mm", "dy_b": "dy_b_mm", "dy_err_a": "dy_a_err_mm", "dy_err_b": "dy_b_err_mm",
             "s": "blc1_ab_opposite_shift_s_mm", "ddxu": "ddxu_mean_percent", "dv": "dv_mean_mrad"}
     try:

@@ -162,17 +162,20 @@ void analyze(TString path, TString particle){
     std::vector<Double_t> residual_p0_err;
     std::vector<Double_t> residual_p1_val;
     std::vector<Double_t> residual_p1_err;
+    std::vector<Int_t> residual_fit_status;
     tree->Branch("ch", &ch, "ch/I");
     tree->Branch("residual_p0_val", &residual_p0_val);
     tree->Branch("residual_p0_err", &residual_p0_err);
     tree->Branch("residual_p1_val", &residual_p1_val);
     tree->Branch("residual_p1_err", &residual_p1_err);
+    tree->Branch("residual_fit_status", &residual_fit_status);
     for (Int_t i = 0; i < conf.num_of_ch.at("blc"); i++) {
         ch = i;
         residual_p0_val.clear();
         residual_p0_err.clear();
         residual_p1_val.clear();
         residual_p1_err.clear();
+        residual_fit_status.clear();
     
         // -- residual -----
         residual_p0_val.push_back(blca_residual[i].par[1]);
@@ -185,6 +188,8 @@ void analyze(TString path, TString particle){
         residual_p1_val.push_back(blcb_residual[i].par[2]);
         residual_p1_err.push_back(blcb_residual[i].err[2]);
 
+        residual_fit_status.push_back(blca_residual[i].migrad_stats);
+        residual_fit_status.push_back(blcb_residual[i].migrad_stats);
         tree->Fill();
     }    
     
