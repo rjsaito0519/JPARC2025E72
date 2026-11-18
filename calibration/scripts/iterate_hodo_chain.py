@@ -117,7 +117,7 @@ def parse_args():
     p.add_argument("--hdphc-patience", type=int, default=hodo_hdphc_rounds.DEFAULT_PATIENCE,
                    help="stop after this many rounds without a new best width (default 3)")
     p.add_argument("--adopt", default="auto",
-                   help="auto (best comparable global TOF width) or 1-based round index to keep")
+                   help="auto (best comparable peak), 0 (initial correction), or a round index to keep")
     p.add_argument("--skip-hdphc-adopt", action="store_true",
                    help="leave the last hdphc write as-is (no restore/final decode)")
     p.add_argument("--local", action="store_true",
@@ -185,7 +185,17 @@ def run_t0_stage(a):
 def run_hdphc_one_round(a, round_i, *, clear_journal):
     suffix = "K" if a.kaon else "Pi"
     if clear_journal:
-        hodo_hdphc_rounds.clear_rounds(a.run)
+        import os
+        saved = hodo_hdphc_rounds.load_journal(a.run)
+        retry_initial = (os.environ.get("E72_CALIB_STEP_RETRY") == "1"
+                         and getattr(a, "only", None) == "hdphc" and saved
+                         and saved[0]["round"] == 0
+                         and (saved[0].get("scoring_context") or {}).get("version") == 3)
+        if retry_initial:
+            hodo_hdphc_rounds.restore_round(a.run, 0, suffix)
+            runner.info("PHC first-round retry: restored the original initial correction")
+        else:
+            hodo_hdphc_rounds.clear_rounds(a.run)
     journal = hodo_hdphc_rounds.load_journal(a.run)
     prior = [entry for entry in journal if int(entry["round"]) < round_i]
     if hodo_hdphc_rounds.finish_requested(a.run, prior):
@@ -218,13 +228,44 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
     scoring_options = {}
     if prior:
         context = prior[0].get("scoring_context") or {}
-        if context.get("version") != 2:
-            scoring_options["scoring_version"] = 1
-        elif context.get("quality_policy") is not None:
+        version = context.get("version", 1)
+        scoring_options["scoring_version"] = version
+        if version in (2, 3) and context.get("quality_policy") is not None:
             scoring_options["quality_policy"] = context["quality_policy"]
     else:
-        input_integrity = hodo_btof_monitor.initial_integrity(
-            a.run, particle_suffix=suffix, ftof=a.ftof, root_path=hodo_path)
+        initial = hodo_btof_monitor.initial_candidate(
+            a.run, particle_suffix=suffix, ftof=a.ftof, root_path=hodo_path,
+            parameter_files=hodo_btof_monitor.parameters_from_runlist(runlist))
+        input_integrity = initial.get("input_integrity")
+        initial_context = initial.get("scoring_context") or {}
+        if (initial_context.get("beam_selection") or {}).get("ok") is False:
+            from common.lib import beam_selection
+            beam_selection.require(a.run, suffix, hodo_path,
+                                   parameter_files=hodo_btof_monitor.parameters_from_runlist(runlist))
+        if initial_context.get("version") == 3 and (
+                not all((initial_context.get("fixed_parameters") or {}).get(name) for name in ("HDPRM", "USER"))
+                or any(not value.get("time_validity") for value in initial.get("per_det", {}).values())):
+            from common.lib import calib_anomaly
+            reason = "phc_input_integrity_unavailable: cannot verify decoded times/ADC/USER before updating"
+            calib_anomaly.remember_check_reason(a.run, reason)
+            runner.warn(reason)
+            sys.exit(runner.EXIT_CHECK)
+        scoring_options["scoring_version"] = 3
+        if initial.get("ok") and initial.get("scoring_context", {}).get("version") == 3:
+            hodo_hdphc_rounds.snapshot_round(a.run, 0, suffix, initial, input_path=hodo_path)
+            runner.info("PHC: saved initial correction for best-candidate comparison")
+    if scoring_options.get("scoring_version") == 3:
+        scoring_options["parameter_files"] = hodo_btof_monitor.parameters_from_runlist(runlist)
+        if prior:
+            from common.lib import phc_quality, calib_anomaly
+            current_input = hodo_btof_monitor.initial_candidate(
+                a.run, particle_suffix=suffix, ftof=a.ftof, root_path=hodo_path,
+                parameter_files=scoring_options["parameter_files"])
+            if phc_quality.stable_input(current_input) != phc_quality.stable_input(prior[0]):
+                reason = "phc_input_changed: ADC/TDC/USER or raw hit population changed; restart the PHC series"
+                calib_anomaly.remember_check_reason(a.run, reason)
+                runner.warn(reason)
+                sys.exit(runner.EXIT_CHECK)
     runner.step(f"iterate_hodo_chain hdphc {round_i}")
     run_hodo_ok(
         a.run,
@@ -240,7 +281,7 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
     score = hodo_btof_monitor.score_btof(
         a.run, particle_suffix=suffix, ftof=a.ftof, root_path=hodo_path, **scoring_options,
     )
-    if input_integrity is not None and score.get("scoring_context", {}).get("version") == 2:
+    if input_integrity is not None and score.get("scoring_context", {}).get("version") in (2, 3):
         score["input_integrity"] = input_integrity
     score["timings"] = {"prepare_decode_seconds": prepared-started, "fit_update_seconds": fitted-prepared,
                         "evaluation_decode_seconds": decoded-fitted, "score_seconds": time.monotonic()-decoded}
@@ -306,7 +347,8 @@ def run_hdphc_adopt_stage(a):
     comparison = next(row for row in hodo_hdphc_rounds.compare_candidates(journal) if row["round"] == chosen)
     if not comparison["comparable"]:
         runner.warn("Explicit manual PHC adoption requires review: " + "; ".join(comparison["reasons"][:3]))
-    runner.info(f"adopting hdphc round {chosen}")
+    runner.info("PHC: retaining initial correction (no material peak improvement)" if chosen == 0
+                else f"adopting hdphc round {chosen}")
     hodo_hdphc_rounds.restore_round(a.run, chosen, suffix)
     runlist = stage_prepare_and_decode(
         a.run, a.kaon, "hdphc", local=a.local, dry_run=False,
@@ -314,14 +356,19 @@ def run_hdphc_adopt_stage(a):
     hodo_path = hodo_btof_monitor.hodo_root(a.run)
     expected = next(entry for entry in journal if int(entry["round"]) == chosen)
     context = expected.get("scoring_context") or {}
-    scoring_options = ({"scoring_version": 1} if context.get("version") != 2
-                       else {"quality_policy": context.get("quality_policy")})
+    scoring_options = {"scoring_version": context.get("version", 1)}
+    if context.get("version") in (2, 3):
+        scoring_options["quality_policy"] = context.get("quality_policy")
+    if context.get("version") == 3:
+        scoring_options["parameter_files"] = hodo_btof_monitor.parameters_from_runlist(runlist)
     actual = hodo_btof_monitor.score_btof(a.run, particle_suffix=suffix, ftof=a.ftof,
                                         root_path=hodo_path, **scoring_options)
     differences = hodo_hdphc_rounds.score_differences(expected, actual)
     from common.lib.calib_state_io import write_json
     write_json(hodo_hdphc_rounds.rounds_dir(a.run) / "adoption_validation.json",
                {"round": chosen, "matches": not differences, "differences": differences,
+                "decision": "retained_initial" if chosen == 0 else "updated",
+                "warnings": comparison.get("warnings", []),
                 "runlist": str(runlist),
                 "decoded_input_token": hodo_hdphc_rounds.qa_session.input_token(hodo_path) if hodo_path.is_file() else None,
                 "recorded": expected, "decoded": actual})
@@ -331,7 +378,7 @@ def run_hdphc_adopt_stage(a):
         hodo_cmd(
             a.run, "hdphc", a.kaon, a.ftof, a.force,
             qa_only=True, adopted_round=chosen,
-            hdphc_rounds=max(int(entry["round"]) for entry in journal),
+            hdphc_rounds=max(int(entry["round"]) for entry in journal) or None,
         ),
         f"hdphc[qa-only adopt={chosen}]",
     )
@@ -341,7 +388,7 @@ def run_hdphc_adopt_stage(a):
         calib_anomaly.remember_check_reason(a.run, reason)
         runner.warn(reason)
         sys.exit(runner.EXIT_CHECK)
-    runner.info(f"done: hdphc adopted round {chosen}; fresh decode score verified")
+    runner.info(f"done: hdphc {hodo_hdphc_rounds.round_label(chosen)}; fresh decode score verified")
 
 
 #_____________________________________________________________________________
@@ -355,9 +402,9 @@ def main():
         try:
             k = int(a.adopt)
         except ValueError:
-            runner.fail("--adopt must be 'auto' or a positive integer")
-        if k < 1:
-            runner.fail("--adopt round must be >= 1")
+            runner.fail("--adopt must be 'auto' or a nonnegative integer")
+        if k < 0:
+            runner.fail("--adopt round must be >= 0")
     if a.only == "hdphc":
         if a.hdphc_round is None or a.hdphc_round < 1:
             runner.fail("--only hdphc requires --hdphc-round >= 1")

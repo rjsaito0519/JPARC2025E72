@@ -976,7 +976,6 @@ def enter_held(run, payload, hold, event_type, cfg_steps=None):
             payload, cfg_steps, hold["index"], hold.get("reason") or event_type,
         )
     payload["updated_at"] = utc_now()
-    write_state(run, payload)
     append_hold_journal(run, {
         "event": event_type,
         "source": hold.get("source"),
@@ -989,6 +988,7 @@ def enter_held(run, payload, hold, event_type, cfg_steps=None):
         "at": hold.get("at"),
         "unverified": payload.get("unverified") or [],
     })
+    write_state(run, payload)
     return payload
 
 
@@ -1390,9 +1390,12 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
     prev0 = read_state(cfg["run"]) if not dry_run else None
     unverified = list((prev0 or {}).get("unverified") or []) if prev0 else []
     stale_retries = {}
+    attempted_indices = {row.get("index") for row in ((prev0 or {}).get("steps") or steps_hist)}
     i = start_index
     while i < n_steps:
         raw = cfg["steps"][i]
+        retrying_step = i in attempted_indices
+        attempted_indices.add(i)
         name, opts = normalize_step(raw, i)
         cmd = step_cmd(name, opts, cfg, dry_run)
         runner.step(f"calib_dispatch {i + 1}/{n_steps}: {name}")
@@ -1415,7 +1418,8 @@ def run_steps(cfg, dry_run, start_index, steps_hist, label):
                 # and shell errors, before stopping the chain.
                 rc, _ = runner.sh(
                     cmd, check=False,
-                    env={**os.environ, "E72_CALIB_DISPATCH": "1", "E72_CALIB_AUTO": "1" if cfg.get("auto") else "0"},
+                    env={**os.environ, "E72_CALIB_DISPATCH": "1", "E72_CALIB_AUTO": "1" if cfg.get("auto") else "0",
+                         "E72_CALIB_STEP_RETRY": "1" if retrying_step else "0"},
                 )
             except (KeyboardInterrupt, OSError) as e:
                 runner.warn(f"step {name} interrupted: {type(e).__name__}")

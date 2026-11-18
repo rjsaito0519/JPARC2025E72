@@ -21,7 +21,7 @@ def compare_candidates(journal):
     """Return fixed-population scores and the evidence for each candidate."""
     if not journal:
         return []
-    if (journal[0].get("scoring_context") or {}).get("version") == 2:
+    if (journal[0].get("scoring_context") or {}).get("version") in (2, 3):
         from . import phc_quality
         return phc_quality.compare(journal)
     reference = journal[0]

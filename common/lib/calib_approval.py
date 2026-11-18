@@ -866,6 +866,8 @@ def gate_context(run: int, step: str, index: int, *, lane="") -> str:
                 allowed = len(latest_comparison.get("allowed_flow_changes", []))
                 if allowed:
                     lines.append(f"許容内の微小な軸外移動: {allowed}ヒストグラム（総hit数は不変）")
+            if latest_comparison.get("warnings"):
+                lines.append("小さな裾・軸外変化あり（中心ピークを主判定、詳細はsummary）")
             if not latest_comparison["comparable"]:
                 lines.append("*候補比較: 要確認（自動採用の対象外）*")
                 lines.extend("• " + reason for reason in latest_comparison["reasons"][:3])
@@ -873,7 +875,7 @@ def gate_context(run: int, step: str, index: int, *, lane="") -> str:
             else:
                 lines.append(f"固定したsegmentでの比較幅: {latest_comparison['width']:.4f}")
         if progress["best_round"] is not None:
-            lines.append(f"比較可能な候補の最良幅: {progress['best_width']:.4f}（第{progress['best_round']}ラウンド） / 改善なし {progress['without_improvement']}回")
+            lines.append(f"比較可能な候補の最良幅: {progress['best_width']:.4f}（{hodo_hdphc_rounds.round_label(progress['best_round'])}） / 改善なし {progress['without_improvement']}回")
         if progress["finished"]:
             following = {"name": "hodo_hdphc_adopt"}
     if step == "d5_pass" and (directory / "d5_converged.txt").is_file():
@@ -895,7 +897,7 @@ def gate_context(run: int, step: str, index: int, *, lane="") -> str:
         posts = {}
     receipts = [post for post in posts.values() if isinstance(post, dict) and post.get("mode") in modes]
     reason = str((state.get("hold") or {}).get("reason") or "")
-    if not matching or any(marker in reason for marker in ("stale_input:", "phc_round_missing:")):
+    if not matching or any(marker in reason for marker in ("stale_input:", "phc_round_missing:", "beam_selection_mismatch:", "phc_input_changed:")):
         receipts = []
     if "qa_delivery_failed:" in reason:
         pinned = re.search(r"\bqa_exec_id=([A-Za-z0-9_]+)", reason)

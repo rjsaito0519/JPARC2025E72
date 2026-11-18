@@ -121,7 +121,7 @@ def snapshot_round(
         "input_token": tok,
         "param_sha": param_sha,
         "param_file": src.name,
-        "qa_kind": "fit",
+        "qa_kind": "initial" if round_i == 0 else "fit",
         "qa_files": qa_files,
         "at": _utc_now(),
         "per_det": score.get("per_det") or {},
@@ -130,12 +130,18 @@ def snapshot_round(
     from . import phc_shared
     shared = phc_shared.report_path(run, suffix)
     if shared.is_file():
-        shared_data = json.loads(shared.read_text())
-        if shared_data.get("decision") != "written" or shared_data.get("param_sha") != param_sha:
+        try:
+            shared_data = json.loads(shared.read_text())
+            matches = (isinstance(shared_data, dict) and shared_data.get("decision") == "written"
+                       and shared_data.get("param_sha") == param_sha)
+        except (ValueError, TypeError):
+            matches = False
+        if not matches and round_i != 0:
             raise ValueError("shared PHC report does not match the round parameter snapshot")
-        sealed_shared = dest / shared.name
-        shutil.copy2(shared, sealed_shared)
-        entry["shared_phc"] = {"name": shared.name, "sha": qa_session.file_sha256(sealed_shared)}
+        if matches:
+            sealed_shared = dest / shared.name
+            shutil.copy2(shared, sealed_shared)
+            entry["shared_phc"] = {"name": shared.name, "sha": qa_session.file_sha256(sealed_shared)}
     if score.get("input_integrity") is not None:
         entry["input_integrity"] = score["input_integrity"]
     if score.get("timings"):
@@ -173,7 +179,8 @@ def request_finish(run, *, hold_id, user_id=None):
     """Pin an operator's decision to finish this exact, successfully scored series."""
     from .calib_state_io import write_json
     journal = load_journal(run)
-    if not journal or [int(row["round"]) for row in journal] != list(range(1, len(journal) + 1)):
+    updates = [row for row in journal if int(row["round"]) > 0]
+    if not updates or [int(row["round"]) for row in updates] != list(range(1, len(updates) + 1)):
         raise ValueError("PHC の連続した評価記録がありません。未完了ラウンドを確認してください。")
     if any(not row.get("ok") or not width_ok(row.get("width")) for row in journal):
         raise ValueError("PHC の幅評価が未完了なので、正常終了できません。")
@@ -208,7 +215,16 @@ def adaptive_progress(journal, *, patience=DEFAULT_PATIENCE, max_rounds=DEFAULT_
     best_round = None
     without_improvement = 0
     comparisons = compare_candidates(journal)
-    for entry in comparisons:
+    for index, entry in enumerate(comparisons):
+        if journal and (journal[0].get("scoring_context") or {}).get("version") == 3:
+            from . import phc_quality
+            selected = phc_quality.select_candidate(comparisons[:index + 1], journal[0]["scoring_context"])
+            if selected is not None and selected["round"] != best_round:
+                best_round, best_width = selected["round"], selected["width"]
+                without_improvement = 0
+            elif entry["round"] > 0 and selected is not None:
+                without_improvement += 1
+            continue
         width = entry.get("width")
         if not entry["comparable"] or not width_ok(width):
             continue
@@ -248,7 +264,8 @@ def pick_round(journal: list[dict[str, Any]], adopt: str) -> int:
     candidates = [row for row in compare_candidates(journal) if row["comparable"]]
     if not candidates:
         raise ValueError("PHC auto adopt: no comparable candidate; review summary or restart/re-evaluate the series")
-    return min(candidates, key=lambda row: row["width"])["round"]
+    from . import phc_quality
+    return phc_quality.select_candidate(candidates, journal[0].get("scoring_context") or {})["round"]
 
 
 #_____________________________________________________________________________
@@ -281,6 +298,9 @@ def restore_round(run: int, round_i: int, suffix: str) -> Path:
         shared_data = json.loads(sealed_shared.read_text())
         if shared_data.get("param_sha") != selected["param_sha"]:
             raise ValueError("shared PHC report has a different parameter hash")
+    from .calib_state_io import write_json
+    write_json(rounds_dir(run) / "adoption_validation.json",
+               {"round": int(round_i), "matches": None, "status": "pending_decode", "restored_at": _utc_now()})
     from .param import exclusive_param_lock
     with exclusive_param_lock(dest):
         descriptor, temporary = tempfile.mkstemp(prefix=dest.name + ".", dir=dest.parent)
@@ -294,9 +314,10 @@ def restore_round(run: int, round_i: int, suffix: str) -> Path:
                 os.unlink(temporary)
     if shared_data is not None:
         phc_shared.write_report(run, suffix, shared_data)
-    from .calib_state_io import write_json
-    write_json(rounds_dir(run) / "adoption_validation.json",
-               {"round": int(round_i), "matches": None, "status": "pending_decode", "restored_at": _utc_now()})
+    elif round_i == 0:
+        from . import phc_shared
+        phc_shared.write_report(run, suffix, {"decision": "retained_initial", "detectors": [],
+                                             "param_sha": selected["param_sha"]})
     return dest
 
 
@@ -323,7 +344,7 @@ def score_differences(expected, actual):
         for key in ("width", "n_entries", "n_seg"):
             if key != "width" or not empty_detector:
                 compare(f"{detector}.{key}", values.get(key), current.get(key))
-        if (expected.get("scoring_context") or {}).get("version") == 2:
+        if (expected.get("scoring_context") or {}).get("version") in (2, 3):
             for key in ("tof_edges", "global_tof", "time_validity"):
                 if values.get(key) != current.get(key):
                     differences.append(f"{detector}.{key}: recorded profile/validity changed")
@@ -358,7 +379,7 @@ def write_summary(run: int, adopted: Optional[int] = None) -> Path:
         f"{'round':>5}  {'width':>10}  {'n_entries':>12}  {'ok':>3}  param_sha",
     ]
     comparisons = {row["round"]: row for row in compare_candidates(rows)}
-    if rows and (rows[0].get("scoring_context") or {}).get("version") == 2:
+    if rows and (rows[0].get("scoring_context") or {}).get("version") in (2, 3):
         settings = rows[0]["scoring_context"]["quality_policy"]
         lines.insert(1, "metric: fixed-population global native TOF profile half68 (bin interpolation)")
         lines.insert(2, f"flow allowance: max({settings['flow_count_floor']:g} fill, {100*settings['flow_fraction']:g}%); "
@@ -379,11 +400,12 @@ def write_summary(run: int, adopted: Optional[int] = None) -> Path:
                      f"statistics decreased={comparison['statistics_decreased']}, "
                      f"flow increased={comparison['flow_increased']}, "
                      f"reference minimum entries={comparison['reference_min_entries']}")
-        if (entry.get("scoring_context") or {}).get("version") == 2:
+        if (entry.get("scoring_context") or {}).get("version") in (2, 3):
             from . import phc_quality
             lines.append(f"  allowed small flow migrations: {len(comparison.get('allowed_flow_changes', []))} histograms")
             lines.extend("  " + line for line in phc_quality.summary_lines(comparison))
         lines.extend("    " + reason for reason in comparison["reasons"])
+        lines.extend("    NOTE: " + warning for warning in comparison.get("warnings", []))
         for segment in comparison["segments"]:
             lines.append(f"    {segment['histogram']}: entries={segment['n_entries']} "
                          f"(reference {segment['reference_entries']}), total={segment['n_total']} "
@@ -397,7 +419,11 @@ def write_summary(run: int, adopted: Optional[int] = None) -> Path:
     comparison_path = rounds_dir(run) / "comparison.json"
     comparison_path.write_text(json.dumps(list(comparisons.values()), indent=2) + "\n", encoding="utf-8")
     if adopted is not None:
-        lines.append(f"adopted: round {int(adopted)}")
+        lines.append("adopted: initial correction retained" if adopted == 0 else f"adopted: round {int(adopted)}")
     path = summary_path(run)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def round_label(index):
+    return "更新前の値" if int(index) == 0 else f"第{int(index)}ラウンド"

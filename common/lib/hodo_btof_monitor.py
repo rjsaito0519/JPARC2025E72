@@ -100,6 +100,7 @@ def _score_btof_impl(
     root_path: Path | None = None,
     scoring_version: int = 2,
     quality_policy: dict | None = None,
+    parameter_files: dict | None = None,
 ) -> dict[str, Any]:
     """Score global BTOF/FTOF width; version 1 preserves historical segment medians."""
     path = Path(root_path) if root_path is not None else hodo_root(run)
@@ -125,10 +126,10 @@ def _score_btof_impl(
         }
 
     from . import phc_quality
-    if scoring_version not in (1, 2):
+    if scoring_version not in (1, 2, 3):
         root.close()
         raise ValueError("unknown PHC scoring version")
-    validity = _time_validity(root, dets, particle) if scoring_version == 2 else {}
+    validity = _time_validity(root, dets, particle, include_energy=scoring_version == 3) if scoring_version in (2, 3) else {}
     all_keys = list(root.keys())
     widths: list[float] = []
     total_n = 0.0
@@ -163,7 +164,7 @@ def _score_btof_impl(
                 "n_both_flow": float(np.sum(flow_values[np.ix_([0, -1], [0, -1])])),
                 "axes_sha": axes_sha,
             })
-            if scoring_version == 2:
+            if scoring_version in (2, 3):
                 edges = hist.axes[1].edges().tolist()
                 if tof_edges is not None and edges != tof_edges:
                     profiles_consistent = False
@@ -179,7 +180,7 @@ def _score_btof_impl(
             "n_entries": seg_n,
             "segments": segments,
         }
-        if scoring_version == 2:
+        if scoring_version in (2, 3):
             per_det[det]["tof_edges"] = tof_edges if profiles_consistent else None
             per_det[det]["time_validity"] = validity.get(det)
             try:
@@ -193,12 +194,21 @@ def _score_btof_impl(
     root.close()
     context = {"version": scoring_version, "particle": particle, "ftof": bool(ftof),
                "required_detectors": list(dets)}
-    if scoring_version == 2:
+    if scoring_version in (2, 3):
         primary = ["BHT", "CVC"] if ftof else ["BHT"]
-        context.update(primary_detectors=primary, quality_policy=phc_quality.policy(quality_policy))
+        context.update(primary_detectors=primary, quality_policy=phc_quality.policy(quality_policy, version=scoring_version))
+        if scoring_version == 3:
+            context["fixed_parameters"] = _fixed_parameters(path, parameter_files)
+            from . import beam_selection
+            selection = beam_selection.check(run, particle, path, parameter_files=parameter_files)
+            if selection is not None:
+                context["beam_selection"] = selection
         widths = [(per_det.get(det, {}).get("global_tof") or {}).get("half68") for det in primary]
         if any(value is None or not np.isfinite(value) for value in widths):
             widths = []
+    if (context.get("beam_selection") or {}).get("ok") is False:
+        return {"ok": False, "width": float("nan"), "n_entries": total_n,
+                "message": "beam_selection_mismatch", "scoring_context": context, "per_det": per_det}
     if not widths:
         return {
             "ok": False,
@@ -210,7 +220,7 @@ def _score_btof_impl(
         }
     return {
         "ok": True,
-        "width": float(np.mean(widths) if scoring_version == 2 else np.median(widths)),
+        "width": float(np.mean(widths) if scoring_version in (2, 3) else np.median(widths)),
         "n_entries": total_n,
         "message": "ok",
         "scoring_context": context,
@@ -218,7 +228,7 @@ def _score_btof_impl(
     }
 
 
-def _time_validity(root, detectors, particle):
+def _time_validity(root, detectors, particle, *, include_energy=False):
     """Track non-finite corrected times by event and ordinal, without a TOF cut."""
     import awkward as ak
     result = {}
@@ -226,6 +236,13 @@ def _time_validity(root, detectors, particle):
         tree = root["hodo"]
         fields = ["event_number", "beam_flag"] + [
             det.lower() + suffix for det in detectors for suffix in ("_cmt", "_mt", "_hit_seg")]
+        tree_names = set(tree.keys())
+        energy_fields = {det: [det.lower() + side for side in ("_de_u", "_de_d", "_de")
+                               if det.lower() + side in tree_names] for det in detectors}
+        if include_energy:
+            if any(not names for names in energy_fields.values()):
+                return {}
+            fields += [name for names in energy_fields.values() for name in names]
         arrays = tree.arrays(fields, library="ak")
         arrays = arrays[arrays.beam_flag == (2 if particle == "K" else 1)]
         for det in detectors:
@@ -244,6 +261,14 @@ def _time_validity(root, detectors, particle):
                 np.asarray(ak.to_numpy(ak.flatten(arrays[det.lower() + "_hit_seg"], axis=None)), dtype="<i8"),
                 np.asarray(ak.to_numpy(ak.flatten(ak.num(raw_mt, axis=2), axis=None)), dtype="<i8"),
             ]
+            if include_energy:
+                for name in energy_fields[det]:
+                    energy = arrays[name]
+                    raw_energy = np.asarray(ak.to_numpy(ak.flatten(energy, axis=None)), dtype="<f8").copy()
+                    raw_energy[np.isnan(raw_energy)] = np.nan
+                    raw_signature.update(name.encode())
+                    raw_signature.update(np.asarray(ak.to_numpy(ak.num(energy, axis=1)), dtype="<i8").tobytes())
+                    raw_signature.update(raw_energy.tobytes())
             raw_times = np.asarray(ak.to_numpy(ak.flatten(raw_mt, axis=None)), dtype="<f8").copy()
             raw_times[np.isnan(raw_times)] = np.nan
             for part in [*raw_parts, raw_times]:
@@ -257,9 +282,9 @@ def _time_validity(root, detectors, particle):
 
 
 def score_btof(run, *, particle_suffix="Pi", ftof=False, root_path=None,
-               scoring_version=2, quality_policy=None):
+               scoring_version=2, quality_policy=None, parameter_files=None):
     return _score_btof_impl(run, particle_suffix=particle_suffix, ftof=ftof, root_path=root_path,
-                           scoring_version=scoring_version, quality_policy=quality_policy)
+                           scoring_version=scoring_version, quality_policy=quality_policy, parameter_files=parameter_files)
 
 
 def initial_integrity(run, *, particle_suffix="Pi", ftof=False, root_path=None):
@@ -269,3 +294,68 @@ def initial_integrity(run, *, particle_suffix="Pi", ftof=False, root_path=None):
     if score.get("scoring_context", {}).get("version") != 2 or not score.get("per_det"):
         return None
     return phc_quality.integrity_from_score(score)
+
+
+def _fixed_parameters(path, parameter_files=None):
+    """Hash non-PHC inputs so ADC/T0/window changes cannot alter a running series."""
+    result = {}
+    with uproot.open(path) as root:
+        for name in ("HDPRM", "USER", "CMAP", "DIGIT", "UNPACK"):
+            key = "param/" + name
+            if key in root:
+                item = root[key]
+                content = "\n".join(str(line) for line in item.member("fLines")) if item.classname == "TMacro" else str(item)
+            elif (parameter_files or {}).get(name):
+                content = "\n".join(Path(parameter_files[name]).read_text().splitlines())
+            else:
+                result[name] = None
+                continue
+            result[name] = hashlib.sha256(content.encode()).hexdigest()
+    return result
+
+
+def initial_candidate(run, *, particle_suffix="Pi", ftof=False, root_path=None, parameter_files=None):
+    """Read the initial correction before any update, without consuming a fit score."""
+    from . import phc_quality
+    score = _score_btof_impl(run, particle_suffix=particle_suffix, ftof=ftof,
+                            root_path=root_path, scoring_version=3, parameter_files=parameter_files)
+    if score.get("scoring_context") and score.get("per_det"):
+        score["input_integrity"] = phc_quality.integrity_from_score(score)
+    return score
+
+
+def parameters_from_runlist(path):
+    """Resolve the actual Hodo inputs when skipped ROOT entries omit param macros."""
+    import yaml
+    from . import decode_run
+    path = Path(path)
+    if not path.is_file():
+        return {}
+    document = yaml.safe_load(path.read_text())
+    if not isinstance(document, dict) or not isinstance(document.get("RUN"), dict):
+        raise ValueError(f"Invalid calibration runlist: {path}")
+    directory = decode_run._workdir(document)
+    defaults = document.get("DEFAULT") or {}
+    files = {}
+    for entry in document["RUN"].values():
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("conf", defaults.get("conf"))
+        if not name:
+            continue
+        conf = Path(str(name)).expanduser()
+        if not conf.is_absolute():
+            conf = directory / conf
+        for line in conf.read_text().splitlines():
+            fields = line.split("#", 1)[0].split()
+            if len(fields) < 2 or fields[0].rstrip(":") not in ("HDPRM", "USER", "CMAP", "DIGIT", "UNPACK"):
+                continue
+            key = fields[0].rstrip(":")
+            parameter = Path(fields[1]).expanduser()
+            if not parameter.is_absolute():
+                parameter = directory / parameter
+            parameter = parameter.resolve()
+            if key in files and files[key] != parameter:
+                raise ValueError(f"Ambiguous {key} inputs in Hodo runlist")
+            files[key] = parameter
+    return files

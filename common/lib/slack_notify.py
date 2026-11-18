@@ -361,7 +361,10 @@ def post_hodo_qa(
         total = meta.get("hdphc_rounds")
         adopted = meta.get("adopted_round")
         denominator = f"/{total}" if total else ""
-        if adopted is not None:
+        if adopted == 0:
+            caption += "\n【更新前の値を維持】中心ピークに明確な改善がないため、保存した更新前の補正へ戻しました。"
+            caption += "再decode済みのQAです。fit曲線は再fit診断で、今回の適用値ではありません。"
+        elif adopted is not None:
             caption += f"\n【採用後 QA】第{adopted}{denominator}ラウンドを採用。"
         elif round_i is not None:
             caption += f"\n【PHC 第{round_i}ラウンド" + (f"・最大{total}回" if total else "") + "】"
@@ -371,6 +374,10 @@ def post_hodo_qa(
                 caption += "有効な更新結果なし・未適用で停止。round は未完了です。"
             elif meta.get("fit_rc") == 3:
                 caption += "要確認です。後続のレンジ確認または確認ボタンから判断してください。"
+    if mode == "hdphc" and meta.get("phc_quality_lines"):
+        caption += "\n" + "\n".join(meta["phc_quality_lines"])
+    if mode == "hdphc" and meta.get("phc_quality_warnings"):
+        caption += "\n小さな裾・軸外変化は許容範囲内です。中心ピークと総hit数を確認して採用しました。"
     if mode == "hdphc" and meta.get("phc_shared"):
         from . import phc_shared
         caption += "\n" + "\n".join(

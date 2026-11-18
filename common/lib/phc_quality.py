@@ -15,9 +15,16 @@ DEFAULT_POLICY = {
 }
 
 
-def policy(values=None):
-    result = dict(DEFAULT_POLICY if values is None else values)
-    if set(result) != set(DEFAULT_POLICY) or any(
+CORE_POLICY = {**DEFAULT_POLICY, "flow_fraction": .005, "tail_fraction": .005,
+               "center_floor_ns": .05, "warning_fraction": .001,
+               "minimum_width_gain": .01, "minimum_center_gain_ns": .05,
+               "maximum_width_loss": .02}
+
+
+def policy(values=None, *, version=2):
+    defaults = CORE_POLICY if version == 3 else DEFAULT_POLICY
+    result = dict(defaults if values is None else values)
+    if set(result) != set(defaults) or any(
             isinstance(value, bool) or not isinstance(value, (int, float))
             or not math.isfinite(value) or value < 0 for value in result.values()):
         raise ValueError("invalid PHC quality policy")
@@ -28,6 +35,13 @@ def active(segment):
     try:
         return (math.isfinite(float(segment["width"])) and float(segment["width"]) >= 0
                 and math.isfinite(float(segment["n_entries"])) and float(segment["n_entries"]) > 0)
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
+def available(segment):
+    try:
+        return math.isfinite(float(segment["n_total"])) and float(segment["n_total"]) > 0
     except (TypeError, ValueError, KeyError):
         return False
 
@@ -100,13 +114,18 @@ def compare(journal):
         return []
     first = journal[0]
     context = first.get("scoring_context") or {}
-    settings = policy(context.get("quality_policy"))
+    version = context.get("version")
+    settings = policy(context.get("quality_policy"), version=version)
     detectors = context.get("required_detectors") or []
     primary = context.get("primary_detectors") or []
     population = {det: {row["histogram"]: row for row in first.get("per_det", {}).get(det, {}).get("segments", [])
-                        if active(row)} for det in detectors}
+                        if (available(row) if version == 3 else active(row))} for det in detectors}
     initial = first.get("input_integrity")
     common_reasons = []
+    if (context.get("beam_selection") or {}).get("ok") is False:
+        common_reasons.append("declared particle/BAC selection requirement is not met")
+    if version == 3 and not all((context.get("fixed_parameters") or {}).get(name) for name in ("HDPRM", "USER")):
+        common_reasons.append("fixed ADC/TDC/USER parameters unavailable")
     if not detectors or not primary or any(det not in detectors for det in primary):
         common_reasons.append("primary detector definition unavailable")
     if not initial or initial.get("scoring_context") != context:
@@ -130,7 +149,7 @@ def compare(journal):
             reasons.append("evaluation incomplete")
         if entry.get("scoring_context") != context:
             reasons.append("particle/detector/scoring policy changed")
-        details, quality, allowed = [], {}, []
+        details, quality, allowed, warnings = [], {}, [], []
         widths = []
         totals_changed = set()
         blocked_flows = set()
@@ -180,7 +199,7 @@ def compare(journal):
                     detail["reference_" + key] = previous.get(key)
                     detail[key] = value.get(key)
                 details.append(detail)
-                if not active(value):
+                if not (available(value) if version == 3 else active(value)):
                     reasons.append(f"{name}: missing/empty/invalid fixed segment")
                     continue
                 if not previous.get("axes_sha") or value.get("axes_sha") != previous.get("axes_sha"):
@@ -198,11 +217,16 @@ def compare(journal):
                 after_y = value.get("n_tof_flow", 0.) + value.get("n_both_flow", 0.)
                 delta = after_y - before_y
                 tolerance = max(settings["flow_count_floor"], settings["flow_fraction"] * previous["n_total"])
+                if version == 3:
+                    tolerance = max(tolerance, settings["flow_fraction"] *
+                                    baseline.get(det, {}).get("n_total", previous["n_total"]))
                 if delta > tolerance + 1.e-9:
                     reasons.append(f"{name}: TOF flow increase exceeds allowance")
                     blocked_flows.add(name)
                 elif delta > 0:
                     allowed.append({"histogram": name, "delta": delta, "allowance": tolerance})
+                    if version == 3 and delta > max(settings["flow_count_floor"], settings["warning_fraction"] * previous["n_total"]):
+                        warnings.append(f"{name}: small TOF flow increase; raw fills unchanged")
             if not population[det] and det not in primary:
                 quality[det] = {"status": "no_evaluable_population_in_first_round"}
                 continue
@@ -220,6 +244,11 @@ def compare(journal):
                     if (reference["tail_fraction"] is not None and
                             current_global["tail_fraction"] - reference["tail_fraction"] > tail_limit + 1.e-12):
                         reasons.append(f"{det}: global TOF tail fraction worsened ({label})")
+                    if version == 3:
+                        if current_global["tof_flow"] - reference["tof_flow"] > max(settings["flow_count_floor"], settings["warning_fraction"] * total):
+                            warnings.append(f"{det}: small TOF flow increase ({label})")
+                        if reference["tail_fraction"] is not None and current_global["tail_fraction"] - reference["tail_fraction"] > max(settings["warning_fraction"], settings["tail_count_floor"] / total if total else 1.):
+                            warnings.append(f"{det}: small tail increase ({label})")
                     center_limit = settings["center_floor_ns"]
                     if reference["median"] is not None:
                         if current_global["median"] is None:
@@ -245,9 +274,10 @@ def compare(journal):
         width = mean(widths) if len(widths) == len(primary) and primary else None
         reasons = list(dict.fromkeys(reasons))
         results.append({"round": int(entry["round"]), "comparable": not reasons and width is not None,
-                        "width": width, "reasons": reasons, "segments": details, "quality": quality,
+                        "width": width, "reasons": reasons, "warnings": list(dict.fromkeys(warnings)),
+                        "segments": details, "quality": quality,
                         "allowed_flow_changes": allowed, "reference_round": int(first["round"]),
-                        "missing_segments": sum(not active(row) for row in details),
+                        "missing_segments": sum(not (available(row) if version == 3 else active(row)) for row in details),
                         "statistics_decreased": len(totals_changed), "flow_increased": len(blocked_flows),
                         "reference_min_entries": min((row["reference_entries"] for row in details), default=None),
                         "required_segments": sum(map(len, population.values()))})
@@ -266,3 +296,40 @@ def summary_lines(comparison):
         tail = f"{100 * current['tail_fraction']:.2f}%" if current.get("tail_fraction") is not None else "不明"
         lines.append(f"{detector}: 中心 {number(current.get('median'))} ns / 幅 {width} ns / 裾 {tail}")
     return lines
+
+
+def select_candidate(comparisons, context):
+    """Prefer the initial correction when a refit offers no material peak gain."""
+    eligible = [row for row in comparisons if row["comparable"]]
+    if not eligible:
+        return None
+    if context.get("version") != 3:
+        return min(eligible, key=lambda row: (row["width"], row["round"]))
+    initial = next((row for row in eligible if row["round"] == 0), None)
+    if initial is None:
+        return min(eligible, key=lambda row: (row["width"], row["round"]))
+    settings = policy(context.get("quality_policy"), version=3)
+    candidates = []
+    primary = context["primary_detectors"]
+    for row in eligible:
+        if row["round"] == 0 or row["width"] > initial["width"] * (1 + settings["maximum_width_loss"]):
+            continue
+        center_gain = mean(abs(initial["quality"][det]["current"]["median"]) -
+                           abs(row["quality"][det]["current"]["median"]) for det in primary)
+        if (row["width"] <= initial["width"] * (1 - settings["minimum_width_gain"])
+                or center_gain >= settings["minimum_center_gain_ns"]):
+            candidates.append(row)
+    return min(candidates, key=lambda row: (row["width"], row["round"])) if candidates else initial
+
+
+def stable_input(score):
+    """Keep only quantities that a PHC correction is not allowed to change."""
+    audit = integrity_from_score(score)
+    for detector in audit["per_det"].values():
+        validity = detector.get("time_validity") or {}
+        detector["time_validity"] = {key: validity.get(key)
+                                     for key in ("raw_hit_signature", "n_cmt", "n_events")}
+        for row in detector["segments"]:
+            row.pop("tof_counts", None)
+        detector["segments"].sort(key=lambda row: row["histogram"])
+    return audit

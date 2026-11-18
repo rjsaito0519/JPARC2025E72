@@ -173,6 +173,11 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
     dets = config.hodo_detectors(mode, args.ftof)
     bins = runner.require_bins(*[f"{d}_{bin_suffix}" for d in dets])
     root = runner.input_root(run, "Hodo", suffix, args.force)
+    from common.lib import beam_selection, hodo_btof_monitor
+    if beam_selection.requirement(run, suffix) is not None:
+        runlist = config.ANALYZER_DIR / "runmanager/runlist" / config.SUB_DIR / f"hodo_run{run:05d}.yml"
+        beam_selection.require(run, suffix, root,
+                               parameter_files=hodo_btof_monitor.parameters_from_runlist(runlist))
     meta = {
         "family": "hodo",
         "mode": mode,
@@ -185,6 +190,13 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
     adopted = getattr(args, "adopted_round", None)
     if adopted is not None:
         meta["adopted_round"] = int(adopted)
+        meta["phc_adoption"] = "retained_initial" if adopted == 0 else "updated"
+        from common.lib import hodo_hdphc_rounds, phc_quality
+        comparisons = hodo_hdphc_rounds.compare_candidates(hodo_hdphc_rounds.load_journal(run))
+        selected_quality = next((row for row in comparisons if row["round"] == int(adopted)), None)
+        if selected_quality is not None:
+            meta["phc_quality_lines"] = phc_quality.summary_lines(selected_quality)
+            meta["phc_quality_warnings"] = selected_quality.get("warnings", [])
     session = qa_session.begin(
         run,
         f"hodo_{mode}",
@@ -253,6 +265,11 @@ def do_hdphc(run, suffix, args):
 def do_t0(run, suffix, args):
     (exe,) = runner.require_bins("T0_Offset")
     root = runner.input_root(run, "Hodo", suffix, args.force)
+    from common.lib import beam_selection, hodo_btof_monitor
+    if beam_selection.requirement(run, suffix) is not None:
+        runlist = config.ANALYZER_DIR / "runmanager/runlist" / config.SUB_DIR / f"hodo_run{run:05d}.yml"
+        beam_selection.require(run, suffix, root,
+                               parameter_files=hodo_btof_monitor.parameters_from_runlist(runlist))
     session = qa_session.begin(
         run,
         "hodo_t0",
@@ -330,7 +347,7 @@ def main():
     parser.add_argument("--hdphc-rounds", type=int, default=None,
                         help="hdphc: planned round count for QA captions")
     parser.add_argument("--adopted-round", type=int, default=None,
-                        help="with --qa-only: 1-based hdphc round recorded in QA manifest")
+                        help="with --qa-only: hdphc round; 0 means retain initial correction")
     args = parser.parse_args()
     for name in ("hdphc_round", "hdphc_rounds"):
         value = getattr(args, name)
@@ -340,8 +357,8 @@ def main():
         runner.fail("--qa-only is only for hdphc")
     if args.qa_only and args.skip_qa:
         runner.fail("--qa-only cannot be combined with --skip-qa")
-    if args.adopted_round is not None and args.adopted_round < 1:
-        runner.fail("--adopted-round must be >= 1")
+    if args.adopted_round is not None and args.adopted_round < 0:
+        runner.fail("--adopted-round must be >= 0")
     if args.adopted_round is not None and not args.qa_only:
         runner.fail("--adopted-round requires --qa-only")
     suffix = runner.suffix_of(args)

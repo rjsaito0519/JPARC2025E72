@@ -513,11 +513,14 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertFalse((self.root / 'next').exists())
 
     def test_resume_retries_failed_step(self):
-        first = self.run_chain('raise SystemExit(1)\n')
+        retry_log = self.root / "retry_flags"
+        body = ("import os\n"
+                f"with open({str(retry_log)!r}, 'a') as stream: stream.write(os.environ.get('E72_CALIB_STEP_RETRY', '?') + '\\n')\n")
+        first = self.run_chain(body + 'raise SystemExit(1)\n')
         self.assertEqual(first.returncode, 1, first.stderr)
         self.assertEqual(self.read_primary_state()['status'], 'stopped')
         (self.scripts / "iterate_hodo_chain.py").write_text(
-            self._hodo_stub("pass\n"),
+            self._hodo_stub(body + "pass\n"),
         )
         proc = self.dispatch_async("resume")
         rc = self.drive_until_done(proc)
@@ -527,6 +530,7 @@ p.write_text(json.dumps(st) + '\\n')
         self.assertEqual(state['status'], 'awaiting_final_approval')
         self.assertTrue((self.root / 'next').exists())
         self.assertEqual([e['index'] for e in state['steps']], [0, 0, 1])
+        self.assertEqual(["0", "1"], retry_log.read_text().splitlines())
 
     def test_resume_after_cooperative_stop_continues_next(self):
         lane_state = str(self.lane_state_path("hodo"))
