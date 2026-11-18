@@ -117,7 +117,7 @@ def parse_args():
     p.add_argument("--hdphc-patience", type=int, default=hodo_hdphc_rounds.DEFAULT_PATIENCE,
                    help="stop after this many rounds without a new best width (default 3)")
     p.add_argument("--adopt", default="auto",
-                   help="auto (min CBTOF width) or 1-based round index to keep")
+                   help="auto (best comparable global TOF width) or 1-based round index to keep")
     p.add_argument("--skip-hdphc-adopt", action="store_true",
                    help="leave the last hdphc write as-is (no restore/final decode)")
     p.add_argument("--local", action="store_true",
@@ -214,6 +214,17 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
     )
     prepared = time.monotonic()
     hodo_path = hodo_btof_monitor.hodo_root(a.run)
+    input_integrity = None
+    scoring_options = {}
+    if prior:
+        context = prior[0].get("scoring_context") or {}
+        if context.get("version") != 2:
+            scoring_options["scoring_version"] = 1
+        elif context.get("quality_policy") is not None:
+            scoring_options["quality_policy"] = context["quality_policy"]
+    else:
+        input_integrity = hodo_btof_monitor.initial_integrity(
+            a.run, particle_suffix=suffix, ftof=a.ftof, root_path=hodo_path)
     runner.step(f"iterate_hodo_chain hdphc {round_i}")
     run_hodo_ok(
         a.run,
@@ -227,8 +238,10 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
     decode_run.run_decode(runlist, local=a.local)
     decoded = time.monotonic()
     score = hodo_btof_monitor.score_btof(
-        a.run, particle_suffix=suffix, ftof=a.ftof, root_path=hodo_path,
+        a.run, particle_suffix=suffix, ftof=a.ftof, root_path=hodo_path, **scoring_options,
     )
+    if input_integrity is not None and score.get("scoring_context", {}).get("version") == 2:
+        score["input_integrity"] = input_integrity
     score["timings"] = {"prepare_decode_seconds": prepared-started, "fit_update_seconds": fitted-prepared,
                         "evaluation_decode_seconds": decoded-fitted, "score_seconds": time.monotonic()-decoded}
     entry = hodo_hdphc_rounds.snapshot_round(
@@ -276,6 +289,19 @@ def run_hdphc_adopt_stage(a):
         adopt = "auto" if hodo_hdphc_rounds.finish_requested(a.run, journal) else a.adopt
         chosen = hodo_hdphc_rounds.pick_round(journal, adopt)
     except ValueError as exc:
+        if journal and adopt == "auto" and not any(
+                row["comparable"] for row in hodo_hdphc_rounds.compare_candidates(journal)):
+            from common.lib import calib_anomaly
+            reason = "phc_no_comparable_candidate: " + str(exc)
+            calib_anomaly.remember_check_reason(a.run, reason)
+            runner.warn(reason)
+            run_hodo_ok(
+                a.run, hodo_cmd(a.run, "hdphc", a.kaon, a.ftof, a.force, qa_only=True,
+                               hdphc_round=max(int(entry["round"]) for entry in journal),
+                               hdphc_rounds=max(int(entry["round"]) for entry in journal)),
+                "hdphc[qa-only no comparable candidate]",
+            )
+            sys.exit(runner.EXIT_CHECK)
         runner.fail(str(exc))
     comparison = next(row for row in hodo_hdphc_rounds.compare_candidates(journal) if row["round"] == chosen)
     if not comparison["comparable"]:
@@ -286,9 +312,12 @@ def run_hdphc_adopt_stage(a):
         a.run, a.kaon, "hdphc", local=a.local, dry_run=False,
     )
     hodo_path = hodo_btof_monitor.hodo_root(a.run)
-    actual = hodo_btof_monitor.score_btof(a.run, particle_suffix=suffix, ftof=a.ftof,
-                                        root_path=hodo_path)
     expected = next(entry for entry in journal if int(entry["round"]) == chosen)
+    context = expected.get("scoring_context") or {}
+    scoring_options = ({"scoring_version": 1} if context.get("version") != 2
+                       else {"quality_policy": context.get("quality_policy")})
+    actual = hodo_btof_monitor.score_btof(a.run, particle_suffix=suffix, ftof=a.ftof,
+                                        root_path=hodo_path, **scoring_options)
     differences = hodo_hdphc_rounds.score_differences(expected, actual)
     from common.lib.calib_state_io import write_json
     write_json(hodo_hdphc_rounds.rounds_dir(a.run) / "adoption_validation.json",

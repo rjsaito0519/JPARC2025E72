@@ -156,7 +156,7 @@ class MonitorTests(unittest.TestCase):
                     root[name] = (np.ones((2, 3))*count,
                                   np.array([0., 1., 2.]), np.array([-1., 0., 1., 2.]))
             with mock.patch.object(monitor.config, "hodo_detectors", return_value=["BHT"]):
-                score = monitor.score_btof(1, root_path=path)
+                score = monitor.score_btof(1, root_path=path, scoring_version=1)
             self.assertEqual(score["per_det"]["BHT"]["n_seg"], 1)
             segment = score["per_det"]["BHT"]["segments"][0]
             self.assertEqual(segment["n_entries"], 12.)

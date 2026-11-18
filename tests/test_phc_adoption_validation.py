@@ -30,6 +30,22 @@ class PhcAdoptionValidationTests(unittest.TestCase):
                 prepare.assert_called_once_with(1,False,'hdphc',local=True,dry_run=False)
                 qa.assert_called_once()
 
+    def test_no_eligible_candidate_sends_qa_and_stops_check_without_restoring(self):
+        live=self.completed_series()
+        args=SimpleNamespace(run=1,kaon=False,ftof=False,force=False,local=True,adopt='auto')
+        with patch.object(rounds,'compare_candidates',return_value=[{'round':1,'comparable':False}]), \
+             patch.object(rounds,'write_summary'), \
+             patch.object(rounds,'restore_round') as restore, \
+             patch.object(iterator,'stage_prepare_and_decode') as decode, \
+             patch.object(iterator,'run_hodo_ok') as qa:
+            with self.assertRaises(SystemExit) as stopped:
+                iterator.run_hdphc_adopt_stage(args)
+            self.assertEqual(iterator.runner.EXIT_CHECK,stopped.exception.code)
+            restore.assert_not_called()
+            decode.assert_not_called()
+            qa.assert_called_once()
+        self.assertEqual('round3',live.read_text())
+
     def test_correct_adoption_regenerates_conf_and_records_verified_score(self):
         self.adopt(fixtures.comparable_score(1.))
         validation=json.loads((rounds.rounds_dir(1)/'adoption_validation.json').read_text())

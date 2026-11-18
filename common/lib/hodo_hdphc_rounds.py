@@ -136,6 +136,8 @@ def snapshot_round(
         sealed_shared = dest / shared.name
         shutil.copy2(shared, sealed_shared)
         entry["shared_phc"] = {"name": shared.name, "sha": qa_session.file_sha256(sealed_shared)}
+    if score.get("input_integrity") is not None:
+        entry["input_integrity"] = score["input_integrity"]
     if score.get("timings"):
         entry["timings"] = score["timings"]
     with journal_path(run).open("a", encoding="utf-8") as fh:
@@ -321,6 +323,10 @@ def score_differences(expected, actual):
         for key in ("width", "n_entries", "n_seg"):
             if key != "width" or not empty_detector:
                 compare(f"{detector}.{key}", values.get(key), current.get(key))
+        if (expected.get("scoring_context") or {}).get("version") == 2:
+            for key in ("tof_edges", "global_tof", "time_validity"):
+                if values.get(key) != current.get(key):
+                    differences.append(f"{detector}.{key}: recorded profile/validity changed")
         if "segments" in values:
             recorded_segments = {segment["histogram"]: segment for segment in values["segments"]}
             current_segments = {segment["histogram"]: segment for segment in current.get("segments", [])}
@@ -333,6 +339,8 @@ def score_differences(expected, actual):
                 for key in ("n_tof_flow", "n_de_flow", "n_both_flow"):
                     if key in segment:
                         compare(f"{name}.{key}", segment[key], decoded_segment.get(key))
+                if "tof_counts" in segment and segment["tof_counts"] != decoded_segment.get("tof_counts"):
+                    differences.append(f"{name}: recorded TOF profile changed")
                 if "axes_sha" in segment and segment["axes_sha"] != decoded_segment.get("axes_sha"):
                     differences.append(f"{name}: histogram axes changed")
                 empty_segment = (segment.get("n_entries") == decoded_segment.get("n_entries") == 0
@@ -350,6 +358,11 @@ def write_summary(run: int, adopted: Optional[int] = None) -> Path:
         f"{'round':>5}  {'width':>10}  {'n_entries':>12}  {'ok':>3}  param_sha",
     ]
     comparisons = {row["round"]: row for row in compare_candidates(rows)}
+    if rows and (rows[0].get("scoring_context") or {}).get("version") == 2:
+        settings = rows[0]["scoring_context"]["quality_policy"]
+        lines.insert(1, "metric: fixed-population global native TOF profile half68 (bin interpolation)")
+        lines.insert(2, f"flow allowance: max({settings['flow_count_floor']:g} fill, {100*settings['flow_fraction']:g}%); "
+                        f"tail allowance: max(1 fill, {100*settings['tail_fraction']:g} percentage points)")
     for entry in rows:
         mark = " *" if adopted is not None and int(entry["round"]) == int(adopted) else ""
         width = entry.get("width")
@@ -366,6 +379,10 @@ def write_summary(run: int, adopted: Optional[int] = None) -> Path:
                      f"statistics decreased={comparison['statistics_decreased']}, "
                      f"flow increased={comparison['flow_increased']}, "
                      f"reference minimum entries={comparison['reference_min_entries']}")
+        if (entry.get("scoring_context") or {}).get("version") == 2:
+            from . import phc_quality
+            lines.append(f"  allowed small flow migrations: {len(comparison.get('allowed_flow_changes', []))} histograms")
+            lines.extend("  " + line for line in phc_quality.summary_lines(comparison))
         lines.extend("    " + reason for reason in comparison["reasons"])
         for segment in comparison["segments"]:
             lines.append(f"    {segment['histogram']}: entries={segment['n_entries']} "

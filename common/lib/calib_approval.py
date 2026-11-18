@@ -859,6 +859,13 @@ def gate_context(run: int, step: str, index: int, *, lane="") -> str:
                          f"欠損 {latest_comparison['missing_segments']} / "
                          f"統計減 {latest_comparison['statistics_decreased']} / "
                          f"範囲外増 {latest_comparison['flow_increased']}")
+            if latest_comparison.get("quality"):
+                from . import phc_quality
+                lines.append("*全体TOFの評価（ns、幅はhalf68）*")
+                lines.extend(phc_quality.summary_lines(latest_comparison))
+                allowed = len(latest_comparison.get("allowed_flow_changes", []))
+                if allowed:
+                    lines.append(f"許容内の微小な軸外移動: {allowed}ヒストグラム（総hit数は不変）")
             if not latest_comparison["comparable"]:
                 lines.append("*候補比較: 要確認（自動採用の対象外）*")
                 lines.extend("• " + reason for reason in latest_comparison["reasons"][:3])
