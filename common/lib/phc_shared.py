@@ -189,22 +189,45 @@ def preserve_bh2_reference(rows, previous, reports):
         return None
     counts = {(item["segment"], item["side"]): item.get("counts", 0.) for item in detector["channels"]}
     sources = set(detector["models"]["U"]["sources"]) & set(detector["models"]["D"]["sources"])
+    def pivot(value):
+        try:
+            kind = float(value[0])
+            if kind == 0:
+                return 0.
+            if kind != 1 or len(value) < 5 or float(value[1]) != 3:
+                return None
+            a, b, c = map(float, value[2:5])
+            if not np.isfinite([a, b, c]).all() or abs(1. - b) <= 1.e-8:
+                return None
+            return float(-a / np.sqrt(abs(1. - b)) + c)
+        except (ValueError, TypeError, IndexError):
+            return None
     candidates = []
     for segment in sources:
         keys = [f"3-0-{segment}-{side}" for side in (0, 1)]
-        if all(key in rows and key in previous for key in keys):
-            values = [float(v) for mapping in (previous, rows) for key in keys for v in mapping[key][:5]]
-            if (len(values) == 20 and np.isfinite(values).all()
-                    and all(float(mapping[key][0]) == 1 and float(mapping[key][1]) == 3
-                            and abs(1. - float(mapping[key][3])) > 1.e-8
-                            for mapping in (previous, rows) for key in keys)):
-                candidates.append(segment)
+        if (all(key in rows and key in previous for key in keys)
+                and all(pivot(mapping[key]) is not None
+                        for mapping in (previous, rows) for key in keys)):
+            candidates.append(segment)
     if not candidates:
-        raise RuntimeError("no usable BH2 reference for simultaneous BHT/BH2 update")
+        # A one-sided sparse fit cannot define a stable two-sided clock.
+        # Keep BH2's previous corrections while the independent BHT update proceeds.
+        for key in list(rows):
+            if key.startswith("3-0-"):
+                del rows[key]
+        for channel in detector["channels"]:
+            channel["candidate_mode"] = channel["mode"]
+            channel["mode"] = "unresolved"
+            channel["reason"] = "no_usable_clock_reference"
+            if "parameters" in channel:
+                channel["candidate_parameters"] = channel.pop("parameters")
+        detector["counts"] = {mode: sum(row["mode"] == mode for row in detector["channels"])
+                              for mode in ("individual", "shared", "shared_prediction", "unresolved")}
+        record = {"detector": "BH2", "status": "retained", "segment": None,
+                  "reason": "no_usable_clock_reference"}
+        detector["reference_anchor"] = record
+        return record
     anchor = max(candidates, key=lambda segment: (min(counts.get((segment, side), 0.) for side in "UD"), -segment))
-    def pivot(value):
-        a, b, c = map(float, value[2:5])
-        return -a / np.sqrt(abs(1. - b)) + c
     keys = [f"3-0-{anchor}-{side}" for side in (0, 1)]
     old = float(np.mean([pivot(previous[key]) for key in keys]))
     fitted = float(np.mean([pivot(rows[key]) for key in keys]))
@@ -260,7 +283,10 @@ def summary_line(report):
     origin = {"manual": "手動設定", "automatic": "自動選択",
               "session_automatic": "今回のみ採用"}.get(report.get("range_origin"), "不明")
     reference = report.get("reference_anchor")
-    reference_note = f"; 基準 seg{reference['segment']} 固定" if reference else ""
+    reference_note = ""
+    if reference:
+        reference_note = ("; BH2前回値保持（基準不足）" if reference.get("status") == "retained"
+                          else f"; 基準 seg{reference['segment']} 固定")
     return (f"{report.get('detector', '?')}: 個別 {counts.get('individual', 0)} / "
             f"共有 {counts.get('shared', 0)} / 予測のみ {counts.get('shared_prediction', 0)} / "
             f"未解決 {counts.get('unresolved', 0)} "
@@ -292,7 +318,10 @@ def render_pdf(report, source_root, output, execution_id=""):
             lines.append(f"  Source range: {detector['range_origin']} {detector['source_range']}")
             if detector.get("reference_anchor"):
                 anchor = detector["reference_anchor"]
-                lines.append(f"  Clock reference: BH2 seg{anchor['segment']} at 1 MIP; common shift {anchor['common_shift_ns']:+.4f} ns")
+                if anchor.get("status") == "retained":
+                    lines.append("  BH2 retained: no reliable two-sided clock reference; no BH2 update applied.")
+                else:
+                    lines.append(f"  Clock reference: BH2 seg{anchor['segment']} at 1 MIP; common shift {anchor['common_shift_ns']:+.4f} ns")
             for side, model in detector["models"].items():
                 lines.append(f"  {side}: {model['reason']}; sources {model['sources']}")
         lines += ["", "Native raw-time histograms; fit region 0.6--1.4 MIP; U/D and detectors separate.",

@@ -248,7 +248,10 @@ def collect_phc(a, dets, inputs, *, previous_rows=None):
                 except RuntimeError as error:
                     runner.fail(f"{error}; nothing written")
                 if reference:
-                    print(f"      BH2 reference seg{reference['segment']} at 1 MIP retained; common shift {reference['common_shift_ns']:+.4f} ns")
+                    if reference.get("status") == "retained":
+                        runner.warn("BH2: no reliable two-sided clock reference; previous parameters retained")
+                    else:
+                        print(f"      BH2 reference seg{reference['segment']} at 1 MIP retained; common shift {reference['common_shift_ns']:+.4f} ns")
             phc_shared.write_report(a.run, a.suffix, {
                 "version": 1, "run": int(a.run), "suffix": a.suffix,
                 "created_at_ns": time.time_ns(), "decision": decision,

@@ -162,6 +162,30 @@ class ReferenceClockTests(unittest.TestCase):
         self.assertEqual(rows["3-0-6-0"][2:4], [3., -.4])
         self.assertEqual(rows["1-0-0-0"], [1, 3, 1., -.2, 1.])
 
+    def test_uncalibrated_type_zero_is_a_valid_zero_correction_reference(self):
+        previous = {"3-0-5-0": [0, 0], "3-0-5-1": [0, 3, 0., 0., 0.]}
+        rows = {"1-0-0-0": [1, 3, 1., -.2, 1.],
+                "3-0-5-0": [1, 3, 2., -.2, 1.6], "3-0-5-1": [1, 3, 2., -.2, 1.6]}
+        report = {"detector": "BH2", "channels": [],
+                  "models": {"U": {"sources": [5]}, "D": {"sources": [5]}}}
+        record = shared.preserve_bh2_reference(rows, previous, [report])
+        self.assertEqual(record["previous_mean_correction_ns"], 0.)
+        value = rows["3-0-5-0"]
+        self.assertAlmostEqual(-value[2] / np.sqrt(abs(1. - value[3])) + value[4], 0.)
+
+    def test_sparse_reference_retains_bh2_and_allows_bht_update(self):
+        rows = {"1-0-0-0": [1, 3, 1., -.2, 1.], "3-0-5-0": [1, 3, 2., -.2, 1.6]}
+        report = {"detector": "BH2",
+                  "channels": [{"segment": 5, "side": "U", "mode": "individual", "counts": 400.}],
+                  "models": {"U": {"sources": [5]}, "D": {"sources": [6]}}}
+        record = shared.preserve_bh2_reference(rows, {}, [report])
+        self.assertEqual(record["status"], "retained")
+        self.assertEqual(set(rows), {"1-0-0-0"})
+        self.assertEqual(report["counts"]["unresolved"], 1)
+        self.assertEqual(report["channels"][0]["candidate_mode"], "individual")
+        self.assertEqual(report["channels"][0]["reason"], "no_usable_clock_reference")
+        self.assertIn("前回値保持", shared.summary_line(report))
+
     def test_single_detector_update_has_no_clock_adjustment(self):
         rows = {"3-0-5-0": [1, 3, 2., -.2, 1.6]}
         self.assertIsNone(shared.preserve_bh2_reference(rows, {}, []))
