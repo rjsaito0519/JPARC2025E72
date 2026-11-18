@@ -7,12 +7,16 @@ Hand ranges live in calibration/scripts/phc_conf.py.
 """
 from __future__ import annotations
 
+import ast
 import json
+import os
+import tempfile
 import re
 from pathlib import Path
 from typing import Any, Optional
 
 from . import config
+from .param import exclusive_param_lock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PHC_CONF_PATH = PROJECT_ROOT / "calibration" / "scripts" / "phc_conf.py"
@@ -175,6 +179,57 @@ def row_has_suggest(row: dict[str, Any]) -> bool:
 
 
 #_____________________________________________________________________________
+def _hand_range_nodes(text: str, path: Path):
+    """Parse literal limits_dict without executing configuration code."""
+    try:
+        tree = ast.parse(text, filename=str(path))
+    except SyntaxError as error:
+        raise ValueError(f"Invalid PHC configuration: {path}") from error
+    dictionaries = []
+    for node in tree.body:
+        names = node.targets if isinstance(node, ast.Assign) else (
+            [node.target] if isinstance(node, ast.AnnAssign) else []
+        )
+        if any(isinstance(name, ast.Name) and name.id == "limits_dict" for name in names):
+            dictionaries.append(node.value)
+    if len(dictionaries) != 1 or not isinstance(dictionaries[0], ast.Dict):
+        raise ValueError(f"PHC configuration requires one literal limits_dict: {path}")
+    mapping = dictionaries[0]
+    # Updates or indexed assignments would differ from a literal declaration.
+    for node in tree.body:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is mapping:
+            continue
+        if any(isinstance(name, ast.Name) and name.id == "limits_dict"
+               for name in ast.walk(node)):
+            raise ValueError(f"Dynamic limits_dict updates are not supported: {path}")
+    entries = {}
+    for key_node, value_node in zip(mapping.keys, mapping.values):
+        try:
+            key = ast.literal_eval(key_node)
+            value = ast.literal_eval(value_node)
+        except (ValueError, TypeError) as error:
+            raise ValueError(f"PHC ranges must be literal values: {path}") from error
+        if not isinstance(key, str) or key in entries:
+            raise ValueError(f"Invalid or duplicate PHC range key: {path}")
+        if value is not None and (
+            not isinstance(value, (list, tuple)) or len(value) != 2
+            or any(type(bound) is not int for bound in value)
+            or value[0] > value[1]
+        ):
+            raise ValueError(f"Invalid PHC range for {key}: {path}")
+        entries[key] = (None if value is None else tuple(value), value_node)
+    return mapping, entries
+
+
+#_____________________________________________________________________________
+def _source_offset(data: bytes, node, *, end=False) -> int:
+    lines = data.splitlines(keepends=True)
+    line = node.end_lineno if end else node.lineno
+    column = node.end_col_offset if end else node.col_offset
+    return sum(len(value) for value in lines[:line-1]) + column
+
+
+#_____________________________________________________________________________
 def read_hand_range(
     run: int,
     suffix: str,
@@ -182,22 +237,12 @@ def read_hand_range(
     *,
     path: Path | None = None,
 ) -> Optional[tuple[int, int]]:
-    """Inclusive hand range from phc_conf.py, or None if unset."""
+    """Read the explicit range; invalid configuration is not an automatic choice."""
     conf_path = Path(path) if path is not None else PHC_CONF_PATH
     if not conf_path.is_file():
         return None
-    try:
-        text = conf_path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    key = conf_key(run, suffix, det)
-    match = re.search(
-        rf'"{re.escape(key)}"\s*:\s*\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]',
-        text,
-    )
-    if not match:
-        return None
-    return int(match.group(1)), int(match.group(2))
+    _, entries = _hand_range_nodes(conf_path.read_text(encoding="utf-8"), conf_path)
+    return entries.get(conf_key(run, suffix, det), (None, None))[0]
 
 
 #_____________________________________________________________________________
@@ -231,31 +276,56 @@ def upsert_phc_conf(
     *,
     path: Path | None = None,
 ) -> str:
-    """Insert or replace limits_dict entry. Returns the conf key written."""
-    conf_path = Path(path) if path is not None else PHC_CONF_PATH
+    """Persist an explicit user range without replacing unrelated settings."""
+    conf_path = (Path(path) if path is not None else PHC_CONF_PATH).resolve()
     if not conf_path.is_file():
         raise FileNotFoundError(f"phc_conf not found: {conf_path}")
     if int(first) > int(last):
         raise ValueError(f"first ({first}) > last ({last})")
     key = conf_key(run, suffix, det)
-    new_line = f'    "{key}" : [{int(first):2d}, {int(last):2d}],\n'
-    text = conf_path.read_text(encoding="utf-8")
-    pat = re.compile(
-        rf'^[ \t]*"{re.escape(key)}"\s*:\s*\[[^\]]*\]\s*,?[ \t]*\n',
-        re.MULTILINE,
-    )
-    if pat.search(text):
-        text = pat.sub(new_line, text, count=1)
-    else:
-        # Insert before the closing brace of limits_dict.
-        close = text.rfind("}")
-        if close < 0:
-            raise ValueError(f"no closing brace in {conf_path}")
-        insert_at = close
-        # Keep a blank line before } when the previous line is not blank.
-        prefix = text[:insert_at].rstrip() + "\n\n"
-        text = prefix + new_line + text[insert_at:]
-    conf_path.write_text(text, encoding="utf-8")
+    value = f"[{int(first):2d}, {int(last):2d}]".encode("utf-8")
+    with exclusive_param_lock(conf_path):
+        text = conf_path.read_text(encoding="utf-8")
+        mapping, entries = _hand_range_nodes(text, conf_path)
+        data = text.encode("utf-8")
+        if key in entries:
+            node = entries[key][1]
+            start = _source_offset(data, node)
+            end = _source_offset(data, node, end=True)
+            updated = data[:start] + value + data[end:]
+        else:
+            close = _source_offset(data, mapping, end=True) - 1
+            if mapping.values:
+                end = _source_offset(data, mapping.values[-1], end=True)
+                remainder = b"\n".join(line.split(b"#", 1)[0]
+                                         for line in data[end:close].splitlines())
+                if b"," not in remainder:
+                    data = data[:end] + b"," + data[end:]
+                    close += 1
+            line_start = data.rfind(b"\n", 0, close) + 1
+            indentation = data[line_start:close]
+            entry = json.dumps(key).encode("utf-8") + b" : " + value + b",\n"
+            if not indentation.strip():
+                updated = data[:line_start] + indentation + b"    " + entry + data[line_start:]
+            else:
+                indentation = b" " * mapping.col_offset
+                updated = data[:close] + b"\n" + indentation + b"    " + entry + indentation + data[close:]
+        _hand_range_nodes(updated.decode("utf-8"), conf_path)
+        if updated == text.encode("utf-8"):
+            return key
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=conf_path.parent, prefix=conf_path.name + ".",
+                                             suffix=".tmp", delete=False) as stream:
+                temporary_path = Path(stream.name)
+                os.fchmod(stream.fileno(), conf_path.stat().st_mode & 0o777)
+                stream.write(updated)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_path, conf_path)
+        finally:
+            if temporary_path is not None and temporary_path.exists():
+                temporary_path.unlink()
     return key
 
 
@@ -496,11 +566,8 @@ def conf_keys_on_disk(*, path: Path | None = None) -> set[str]:
     conf_path = Path(path) if path is not None else PHC_CONF_PATH
     if not conf_path.is_file():
         return set()
-    try:
-        text = conf_path.read_text(encoding="utf-8")
-    except OSError:
-        return set()
-    return set(re.findall(r'"(\d{5}_[^"]+)"\s*:', text))
+    _, entries = _hand_range_nodes(conf_path.read_text(encoding="utf-8"), conf_path)
+    return {key for key, (value, _) in entries.items() if value is not None}
 
 
 #_____________________________________________________________________________
