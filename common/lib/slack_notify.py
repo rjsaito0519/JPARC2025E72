@@ -371,6 +371,12 @@ def post_hodo_qa(
                 caption += "有効な更新結果なし・未適用で停止。round は未完了です。"
             elif meta.get("fit_rc") == 3:
                 caption += "要確認です。後続のレンジ確認または確認ボタンから判断してください。"
+    if mode == "hdphc" and meta.get("phc_shared"):
+        from . import phc_shared
+        caption += "\n" + "\n".join(
+            phc_shared.summary_line(detector)
+            for detector in meta["phc_shared"].get("detectors", [])
+        )
     return post_pdf(
         run,
         mode,

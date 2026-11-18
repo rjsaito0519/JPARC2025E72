@@ -195,6 +195,13 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
     qa_session.attach_params(
         session, [hodo_param_path(run, mode, suffix)], role="fit_input",
     )
+    shared_before = None
+    shared_pdf_before = None
+    if mode == "hdphc" and not qa_only:
+        from common.lib import phc_shared
+        shared_before = qa_session.snapshot_hash(phc_shared.report_path(run, suffix))
+        shared_pdf = hodo_qa_pdf.img_dir(run) / f"run{run:05d}_PHC_Shared_{suffix}.pdf"
+        shared_pdf_before = qa_session.snapshot_hash(shared_pdf)
     runner.step(f"run{run:05d}: {bin_suffix} fit for {dets}")
     import os
     from common.lib import fit_overrides
@@ -216,6 +223,19 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
                 run, "phc_no_update: no finite usable PHC fit parameters; check fit/statistics",
             )
             rc = runner.EXIT_CHECK
+    if mode == "hdphc" and not qa_only:
+        import json
+        report_file = phc_shared.report_path(run, suffix)
+        current_hash = qa_session.snapshot_hash(report_file)
+        if current_hash is not None and current_hash != shared_before:
+            report = json.loads(report_file.read_text())
+            if report.get("input_token") != session["input_token"]:
+                runner.fail("shared PHC report does not match this decode")
+            phc_shared.render_pdf(report, root, shared_pdf, session["exec_id"])
+            session["meta"]["phc_shared"] = report
+            session["meta"]["extra_qa_paths"] = [str(shared_pdf)]
+            session["expected"].append(str(shared_pdf))
+            session["before"][shared_pdf.name] = shared_pdf_before
     return after_qa_merge(run, mode, args, rc, session=session)
 
 

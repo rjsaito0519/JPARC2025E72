@@ -138,7 +138,7 @@ class PhcRangeGateTests(unittest.TestCase):
         from common.lib import calib_ops, channel_flags
         for run, success in ((35, True), (36, False)):
             self.gate.write_proposal(run, {"run": run, "suffix": "Pi",
-                                          "proposals": [{"det": "BHT"}]})
+                                          "proposals": [{"det": "BHT", "first": 1, "last": 10}]})
             for source, channel, reason, det in (
                 ("auto", "seg1", "phc_range_proposal:BHT[None,None]", "BHT"),
                 ("human", "seg2", "phc_range_proposal:manual", "BHT"),

@@ -1,15 +1,9 @@
-"""HDPHC rows {"CId-PlId-SegId-UorD": [type, npar, p0, p1, p2]} from a *_PHC fit output.
+"""HDPHC rows from native individual fits and a shared raw-data fallback.
 
-The detector is given by the caller (update_param.py); its CId comes from lib/config.py.
-Which segments are usable:
-  - hand range (phc_conf.py limits_dict "RUN_SUFFIX_det": [first, last]) if the caller gives one;
-  - otherwise automatic: a segment is not used if a side has fewer than MIN_FIT_ENTRIES entries in
-    the fit or no fit at all (ndf 0). chi2/ndf is not used as a cut: it grows with the statistics
-    because the PHC function does not follow the profile exactly.
-  - In both modes, fit_status (when present), finite parameters, and chi2_ndf >= 0 are required.
-    Failed / non-finite fits keep the previous parameter (not written) and do not enter the mean.
-Segments not used (out of range / low stats) get the mean parameters of the used segments of the
-same side when at least one valid fit exists; otherwise nothing is written for them.
+BHT/BH2/CVC retain valid individual sides. Unusable or manually excluded
+sides use a shared shape fitted to native histograms, with channel offsets.
+If that fit cannot be identified, the previous parameter is left unchanged.
+Other detectors retain their existing update policy.
 """
 import statistics
 import sys
@@ -19,7 +13,7 @@ import numpy as np
 import uproot
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, fit_validity  # noqa: E402
+from common.lib import config, fit_validity, phc_shared  # noqa: E402
 
 PHC_TYPE, PHC_NPAR = 1, 3
 MIN_FIT_ENTRIES = 300
@@ -85,18 +79,48 @@ def auto_bad_segments(tree):
 
 
 #_____________________________________________________________________________
-def make_dictdata(root_file_path, det, good_ch_range=None):
+def make_dictdata(root_file_path, det, good_ch_range=None, *, source_root=None, suffix=None, report=None):
     """(rows, not-used segments). good_ch_range = hand range, or None for automatic.
 
     Hand range selects which segments are intended; fit validity still applies
     inside that range (failed fits are not written and do not seed the mean).
     """
-    tree = uproot.open(root_file_path)["tree"].arrays(library="np")
+    with uproot.open(root_file_path) as fit_file:
+        tree = fit_file["tree"].arrays(library="np")
     cid = config.DETECTOR_I_LIST[det]
     if "n_fit" not in tree:
         raise RuntimeError(
             "fit output without n_fit/chi2_ndf: fit again with the current *_PHC binary"
         )
+
+    if det in phc_shared.SUPPORTED:
+        channels = [int(ch) for ch in tree["ch"]]
+        data, donor_sides = {}, set()
+        sides = len(tree["p0_val"][0]) if channels else 0
+        for i, ch in enumerate(channels):
+            if good_ch_range is not None and not good_ch_range[0] <= ch <= good_ch_range[1]:
+                continue
+            n, chi, statuses, pars_by_ud = _side_arrays(tree, i)
+            for side, pars in enumerate(pars_by_ud):
+                status = None if statuses is None else statuses[side]
+                if side_fit_usable(n[side], chi[side], status, pars):
+                    data[f"{cid}-0-{ch}-{side}"] = [PHC_TYPE, PHC_NPAR] + pars
+                    donor_sides.add((ch, side))
+        native = None
+        try:
+            if source_root is not None:
+                native = uproot.open(source_root)
+            fallback, details = phc_shared.fallback_rows(
+                native, det, suffix, channels, sides, donor_sides, good_ch_range)
+        finally:
+            if native is not None:
+                native.close()
+        for (ch, side), pars in fallback.items():
+            data[f"{cid}-0-{ch}-{side}"] = [PHC_TYPE, PHC_NPAR] + pars
+        if report is not None:
+            report.update(details)
+        unused = [ch for ch in channels if any((ch, side) not in donor_sides for side in range(sides))]
+        return data, unused
 
     out_of_range = set()
     if good_ch_range is not None:

@@ -24,6 +24,8 @@ class AutomaticCalibrationTests(unittest.TestCase):
         self.patch(mock.patch.object(config, "OUTPUT_DIR", self.output))
         self.patch(mock.patch.dict("os.environ", {"E72_CALIB_DISPATCH": "1", "E72_CALIB_AUTO": "1"}))
         self.patch(mock.patch.object(update.phc_conf, "limits_dict", {}))
+        self.patch(mock.patch.object(phc_range_gate, "read_hand_range",
+                                    side_effect=lambda run, suffix, det: update.phc_conf.limits_dict.get(f"{run:05d}_{suffix}_{det.lower()}")))
         self.patch(mock.patch.object(update, "fresh_outputs", return_value={"BHT": self.output / "fit.root"}))
         self.patch(mock.patch.object(update.calib_anomaly, "decide_ratio", return_value="unused segment ratio high"))
         self.flags = self.patch(mock.patch.object(update.calib_anomaly, "dump_candidates"))
@@ -32,6 +34,10 @@ class AutomaticCalibrationTests(unittest.TestCase):
         fake = mock.MagicMock()
         fake.__getitem__.return_value.arrays.return_value = {"ch": np.array([0, 1, 2, 3])}
         self.patch(mock.patch("uproot.open", return_value=fake))
+        self.fit = self.output / "fit.root"
+        self.fit.write_bytes(b"fit")
+        self.source = self.output / "hodo.root"
+        self.source.write_bytes(b"source")
         self.args = SimpleNamespace(run=1, suffix="Pi", ftof=False)
 
     def patch(self, patcher):
@@ -39,13 +45,14 @@ class AutomaticCalibrationTests(unittest.TestCase):
         return patcher.start()
 
     def collect(self):
-        return update.collect_phc(self.args, ["BHT"], [])
+        return update.collect_phc(self.args, ["BHT"], [self.source])
 
     def test_auto_selects_valid_span_and_leaves_no_confirmation(self):
         result, states = self.collect()
         self.assertEqual(result, self.values)
         self.assertEqual(states, [])
-        self.assertEqual(self.make.call_args.kwargs["good_ch_range"], [2, 2])
+        self.assertIsNone(self.make.call_args.kwargs["good_ch_range"])
+        self.assertEqual(self.make.call_args.kwargs["source_root"], self.source)
         self.assertFalse(phc_range_gate.pending_phc_ask(1))
         self.assertFalse(phc_range_gate.is_range_confirmed(1))
         journal = self.output / "calib/run00001/auto_decisions.jsonl"
@@ -70,7 +77,7 @@ class AutomaticCalibrationTests(unittest.TestCase):
         self.assertFalse(phc_range_gate.pending_phc_ask(1))
 
     def test_nonfinite_selected_fit_is_rejected(self):
-        self.make.side_effect = [(self.values, [0, 1, 3]), ({"1-0-2-0": [float("nan")]}, [])]
+        self.make.return_value = ({"1-0-2-0": [float("nan")]}, [0, 1, 3])
         with self.assertRaises(SystemExit):
             self.collect()
 

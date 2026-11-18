@@ -109,6 +109,8 @@ def merge(run, mode, kaon=False, ftof=False, dry_run=False, session=None):
             names = ", ".join(p.name for p in missing)
             return False, f"missing PDF(s): {names}", out
 
+    if session is not None:
+        sources = [Path(p) for p in (session.get("meta") or {}).get("extra_qa_paths", [])] + sources
     if mode == "hdphc":
         sources, btof_note = prepend_btof0_source(
             run, sources, kaon=kaon, force=True,

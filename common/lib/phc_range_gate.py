@@ -108,7 +108,7 @@ def clear_proposal(run: int) -> bool:
 
 
 #_____________________________________________________________________________
-def is_range_confirmed(run: int) -> bool:
+def is_range_confirmed(run: int, *, suffix: str | None = None) -> bool:
     """True after Go in this calib session (survives resume, not restart)."""
     path = confirmed_path(run)
     if not path.is_file():
@@ -117,12 +117,13 @@ def is_range_confirmed(run: int) -> bool:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return isinstance(data, dict) and data.get("confirmed") is True
+    return (isinstance(data, dict) and data.get("confirmed") is True
+            and (suffix is None or data.get("suffix") in (None, suffix)))
 
 
 #_____________________________________________________________________________
-def set_range_confirmed(run: int) -> Path:
-    """Mark PHC hand ranges confirmed for this session (after Go)."""
+def set_range_confirmed(run: int, *, suffix: str | None = None, ranges: dict | None = None) -> Path:
+    """Confirm selected ranges for this session without changing hand settings."""
     from datetime import datetime, timezone
 
     path = confirmed_path(run)
@@ -132,6 +133,9 @@ def set_range_confirmed(run: int) -> Path:
         "confirmed": True,
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    if suffix is not None:
+        payload["suffix"] = suffix
+        payload["ranges"] = ranges or {}
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -171,6 +175,29 @@ def clear_phc_ask_state(run: int) -> None:
     clear_proposal(run)
     clear_range_confirmed(run)
     retire_proposal_flags(run)
+
+
+#_____________________________________________________________________________
+def session_range(run: int, suffix: str, det: str):
+    """A Go-approved automatic range, valid only for this session and particle."""
+    path = confirmed_path(run)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("confirmed") is not True or payload.get("suffix") != suffix:
+        return None
+    ranges = payload.get("ranges") or {}
+    if not isinstance(ranges, dict):
+        return None
+    value = ranges.get(det)
+    if (not isinstance(value, list) or len(value) != 2
+            or any(type(v) is not int for v in value)
+            or not 0 <= value[0] <= value[1] < config.NUM_OF_CH.get(det, 0)):
+        return None
+    return value
 
 
 #_____________________________________________________________________________
@@ -259,7 +286,7 @@ def format_proposal_line(row: dict[str, Any]) -> str:
         return (
             f":large_orange_circle: *`{det}`*  "
             f"_hint_ `{row.get('first')}`–`{row.get('last')}`  "
-            f"— Custom で確定"
+            f"— 自動案（今回のみ採用可）"
         )
     return (
         f":red_circle: *`{det}`*  "
@@ -331,10 +358,13 @@ def upsert_phc_conf(
 
 #_____________________________________________________________________________
 def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
-    """Block Kit Custom + Go (refit when every det has a hand range)."""
+    """Block Kit editor and session-only adoption of displayed source ranges."""
     run_s = str(int(run))
     lines = [format_proposal_line(row) for row in proposals if isinstance(row, dict)]
     body = "\n".join(lines) if lines else "(no proposals)"
+    summaries = [row["shared_summary"] for row in proposals if row.get("shared_summary")]
+    if summaries:
+        body += "\n" + "\n".join(summaries)
     result = str((read_proposal(run) or {}).get("qa_exec_id") or "").split("_")[-1]
     if result:
         body += f"\n対象PDFの結果ID: {result}"
@@ -347,7 +377,8 @@ def phc_range_action_blocks(run: int, proposals: list[dict[str, Any]]) -> list:
                     f"*run{int(run):05d}* 【確認待ち】PHC 使用範囲\n"
                     "直前のPHC PDFを確認してください。このラウンドの更新はまだ適用していません。\n"
                     f"{body}\n"
-                    "範囲を変更する場合は『範囲を編集』、この範囲で再計算する場合は『範囲を確定して再実行』を選んでください。"
+                    "『範囲を確定して再実行』は自動案を今回のみ採用します（phc_conf.pyは更新しません）。"
+                    "設定を保存・変更する場合だけ『範囲を編集』を選んでください。"
                 ),
             },
         },

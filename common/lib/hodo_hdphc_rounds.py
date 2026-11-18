@@ -127,6 +127,15 @@ def snapshot_round(
         "per_det": score.get("per_det") or {},
         "scoring_context": score.get("scoring_context"),
     }
+    from . import phc_shared
+    shared = phc_shared.report_path(run, suffix)
+    if shared.is_file():
+        shared_data = json.loads(shared.read_text())
+        if shared_data.get("decision") != "written" or shared_data.get("param_sha") != param_sha:
+            raise ValueError("shared PHC report does not match the round parameter snapshot")
+        sealed_shared = dest / shared.name
+        shutil.copy2(shared, sealed_shared)
+        entry["shared_phc"] = {"name": shared.name, "sha": qa_session.file_sha256(sealed_shared)}
     if score.get("timings"):
         entry["timings"] = score["timings"]
     with journal_path(run).open("a", encoding="utf-8") as fh:
@@ -260,6 +269,16 @@ def restore_round(run: int, round_i: int, suffix: str) -> Path:
                      if int(entry["round"]) == int(round_i)), None)
     if not selected or qa_session.file_sha256(src) != selected.get("param_sha"):
         raise ValueError(f"round {round_i} parameter snapshot does not match its journal")
+    shared_data = None
+    if selected.get("shared_phc"):
+        from . import phc_shared
+        record = selected["shared_phc"]
+        sealed_shared = round_dir(run, round_i) / record["name"]
+        if not sealed_shared.is_file() or qa_session.file_sha256(sealed_shared) != record.get("sha"):
+            raise ValueError("shared PHC report snapshot does not match its journal")
+        shared_data = json.loads(sealed_shared.read_text())
+        if shared_data.get("param_sha") != selected["param_sha"]:
+            raise ValueError("shared PHC report has a different parameter hash")
     from .param import exclusive_param_lock
     with exclusive_param_lock(dest):
         descriptor, temporary = tempfile.mkstemp(prefix=dest.name + ".", dir=dest.parent)
@@ -271,6 +290,8 @@ def restore_round(run: int, round_i: int, suffix: str) -> Path:
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
+    if shared_data is not None:
+        phc_shared.write_report(run, suffix, shared_data)
     from .calib_state_io import write_json
     write_json(rounds_dir(run) / "adoption_validation.json",
                {"round": int(round_i), "matches": None, "status": "pending_decode", "restored_at": _utc_now()})

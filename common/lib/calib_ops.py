@@ -394,7 +394,7 @@ def apply_phc_go(
     timeout_s: float = 30.0,
     user_id: Optional[str] = None,
 ) -> tuple[bool, str]:
-    """Refit hdphc after every ask-list det has a hand range in phc_conf."""
+    """Refit using manual ranges first, otherwise this session's displayed proposal."""
     from . import phc_range_gate
 
     proposal = phc_range_gate.read_proposal(run)
@@ -407,7 +407,22 @@ def apply_phc_go(
     if not isinstance(rows, list) or not rows:
         return False, "proposal has no detectors"
     rows = [r for r in rows if isinstance(r, dict)]
-    missing = phc_range_gate.missing_proposal_dets(run, suffix, rows)
+    if not rows:
+        return False, "proposal has no valid detectors"
+    ranges, missing = {}, []
+    for row in rows:
+        det = str(row.get("det") or "")
+        try:
+            hand = phc_range_gate.read_hand_range(run, suffix, det)
+        except (OSError, ValueError) as error:
+            return False, f"invalid PHC configuration: {error}"
+        first, last = row.get("first"), row.get("last")
+        if hand is not None:
+            ranges[det] = list(hand)
+        elif type(first) is int and type(last) is int and 0 <= first <= last < config.NUM_OF_CH.get(det, 0):
+            ranges[det] = [first, last]
+        else:
+            missing.append(det)
     if missing:
         phc_range_gate.update_phc_ask_slack(run)
         return False, (
@@ -417,8 +432,12 @@ def apply_phc_go(
     # Clear ask + mark session-confirmed so later iters skip range UI;
     # restart / round1 clear drops confirmed so a re-run asks again.
     was_confirmed = phc_range_gate.is_range_confirmed(run)
+    previous_confirmation = (
+        phc_range_gate.confirmed_path(run).read_text()
+        if phc_range_gate.confirmed_path(run).is_file() else None
+    )
     phc_range_gate.clear_proposal(run)
-    phc_range_gate.set_range_confirmed(run)
+    phc_range_gate.set_range_confirmed(run, suffix=suffix, ranges=ranges)
     from . import channel_flags
     detectors = {str(row.get("det") or "") for row in rows}
     resolved_flags = [
@@ -445,7 +464,9 @@ def apply_phc_go(
                 reason=row["reason"], status=row["status"],
             )
         phc_range_gate.write_proposal(run, proposal)
-        if not was_confirmed:
+        if previous_confirmation is not None:
+            phc_range_gate.confirmed_path(run).write_text(previous_confirmation)
+        elif not was_confirmed:
             phc_range_gate.clear_range_confirmed(run)
     return ok, f"phc-go; {msg}"
 

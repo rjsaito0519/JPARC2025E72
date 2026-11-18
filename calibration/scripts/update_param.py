@@ -209,7 +209,10 @@ def collect_htofprm(a, pf):
 
 def phc_range(a, det):
     """Hand range of phc_conf.py; None = automatic choice in update_phc (HTOF: every segment)."""
-    rng = phc_conf.limits_dict.get(f"{a.run:05d}_{a.suffix}_{det.lower()}")
+    from common.lib import phc_range_gate
+    rng = phc_range_gate.read_hand_range(a.run, a.suffix, det)
+    if rng is None:
+        rng = phc_range_gate.session_range(a.run, a.suffix, det)
     return [-np.inf, np.inf] if rng is None and det == "HTOF" else rng
 
 
@@ -222,7 +225,7 @@ def htof_phc_report(path):
                       "TOF of this segment is off", "red"))
 
 
-def collect_phc(a, dets, inputs):
+def collect_phc(a, dets, inputs, *, previous_rows=None):
     """Fit outputs → HDPHC/HTOFPHC rows, or SETTLED with a full-set range ask.
 
     On unused-seg anomaly (no hand range), or hand ranges present but not yet
@@ -230,22 +233,53 @@ def collect_phc(a, dets, inputs):
     detector in `dets` (current conf + optional suggest). Slack notify is
     deferred to run_hodo after the QA PDF (hdphc); HTOF-only notifies here.
     """
-    from common.lib import phc_range_gate
+    from common.lib import phc_range_gate, phc_shared, qa_session
 
     found = fresh_outputs(a.run, [(d, d, "PHC", a.suffix) for d in dets], inputs)
     data = {}
     by_det = {}
+    shared_reports = []
+    def save_shared(decision):
+        if shared_reports:
+            import time
+            if decision == "rows_prepared" and previous_rows is not None:
+                try:
+                    reference = phc_shared.preserve_bh2_reference(data, previous_rows, shared_reports)
+                except RuntimeError as error:
+                    runner.fail(f"{error}; nothing written")
+                if reference:
+                    print(f"      BH2 reference seg{reference['segment']} at 1 MIP retained; common shift {reference['common_shift_ns']:+.4f} ns")
+            phc_shared.write_report(a.run, a.suffix, {
+                "version": 1, "run": int(a.run), "suffix": a.suffix,
+                "created_at_ns": time.time_ns(), "decision": decision,
+                "input_token": qa_session.input_token(inputs[0]),
+                "source_root": str(inputs[0].resolve()), "detectors": shared_reports,
+            })
     anomaly_triggered = False
-    range_confirmed = phc_range_gate.is_range_confirmed(a.run)
+    range_confirmed = phc_range_gate.is_range_confirmed(a.run, suffix=a.suffix)
     automatic = calib_auto.enabled()
     for det, path in found.items():
-        hand_rng = phc_conf.limits_dict.get(
-            f"{a.run:05d}_{a.suffix}_{det.lower()}"
-        )
-        rng = phc_range(a, det)
+        hand_rng = phc_range_gate.read_hand_range(a.run, a.suffix, det)
+        rng = hand_rng
+        if rng is None:
+            rng = phc_range_gate.session_range(a.run, a.suffix, det)
+        if rng is None and det == "HTOF":
+            rng = [-np.inf, np.inf]
         try:
-            d, not_used = update_phc.make_dictdata(str(path), det, good_ch_range=rng)
-        except RuntimeError as e:
+            if det in phc_shared.SUPPORTED:
+                shared_report = {}
+                d, not_used = update_phc.make_dictdata(
+                    str(path), det, good_ch_range=rng, source_root=inputs[0],
+                    suffix=a.suffix, report=shared_report)
+                if shared_report:
+                    if hand_rng is None and rng is not None:
+                        shared_report["range_origin"] = "session_automatic"
+                    shared_report["fit_input_token"] = qa_session.input_token(path)
+                    shared_reports.append(shared_report)
+                    print("      " + phc_shared.summary_line(shared_report))
+            else:
+                d, not_used = update_phc.make_dictdata(str(path), det, good_ch_range=rng)
+        except (RuntimeError, OSError, ValueError) as e:
             runner.fail(f"{det}: {e}; nothing written")
         cur_f = cur_l = None
         if hand_rng is not None:
@@ -270,7 +304,7 @@ def collect_phc(a, dets, inputs):
                 }
                 ok(
                     f"{det:<6}", len(d),
-                    f" (hand range {hand_rng}; mean of used segments for {not_used})",
+                    f" (hand range {hand_rng}; fallback needed for {not_used})",
                 )
                 if det == "HTOF":
                     htof_phc_report(str(path))
@@ -292,6 +326,11 @@ def collect_phc(a, dets, inputs):
                 f" (hand range {hand_rng}; awaiting session confirm)",
             )
             continue
+        if range_confirmed and phc_range_gate.session_range(a.run, a.suffix, det) is not None:
+            data.update(d)
+            by_det[det] = {"det": det, "anomaly": False, "first": rng[0], "last": rng[1]}
+            ok(f"{det:<6}", len(d), f" (session automatic range {rng}; config unchanged)")
+            continue
         import uproot
         tree = uproot.open(str(path))["tree"].arrays(library="np")
         ch_list = [int(c) for c in tree["ch"]]
@@ -301,19 +340,25 @@ def collect_phc(a, dets, inputs):
             f"phc/{det}", bad, total, calib_anomaly.PHC_BAD_RATIO, labels,
         )
         proposed = phc_range_gate.propose_from_good(ch_list, not_used)
+        if det in phc_shared.SUPPORTED and shared_report:
+            individual = [row["segment"] for row in shared_report["channels"] if row["mode"] == "individual"]
+            proposed = (min(individual), max(individual)) if individual else None
         sug_f = sug_l = None
         if proposed is not None:
             sug_f, sug_l = proposed
         if reason and automatic and phc_range_gate.needs_range_ask(det):
             if proposed is None:
                 runner.fail(f"auto PHC {det}: no valid segment range; no parameters written")
-            selected, unused = update_phc.make_dictdata(str(path), det, good_ch_range=list(proposed))
+            if det in phc_shared.SUPPORTED:
+                selected, unused = d, not_used
+            else:
+                selected, unused = update_phc.make_dictdata(str(path), det, good_ch_range=list(proposed))
             if not selected or not all(math.isfinite(float(value)) for row in selected.values() for value in row):
                 runner.fail(f"auto PHC {det}: no finite usable fits; no parameters written")
             data.update(selected)
             calib_auto.note(a.run, "phc_range", det=det, selection="valid_fit_span",
                             first=int(proposed[0]), last=int(proposed[1]), skipped=[int(ch) for ch in unused])
-            ok(f"{det:<6}", len(selected), f" (auto range {proposed}; invalid fits excluded)")
+            ok(f"{det:<6}", len(selected), f" (auto source range {proposed}; individual/shared decisions recorded)")
             continue
         if reason:
             if not phc_range_gate.needs_range_ask(det):
@@ -360,10 +405,11 @@ def collect_phc(a, dets, inputs):
             "first": sug_f,
             "last": sug_l,
         }
-        ok(f"{det:<6}", len(d), f" (automatic; mean of used segments for {not_used})")
+        ok(f"{det:<6}", len(d), f" (automatic; fallback needed for {not_used})")
         if det == "HTOF":
             htof_phc_report(str(path))
     if not anomaly_triggered:
+        save_shared("rows_prepared")
         return data, []
 
     # Full-set ask: hdphc/htofphc set minus single-seg skips (T1).
@@ -373,9 +419,7 @@ def collect_phc(a, dets, inputs):
         if det in by_det:
             proposals.append(by_det[det])
             continue
-        hand_rng = phc_conf.limits_dict.get(
-            f"{a.run:05d}_{a.suffix}_{det.lower()}"
-        )
+        hand_rng = phc_range_gate.read_hand_range(a.run, a.suffix, det)
         cur_f = cur_l = None
         if hand_rng is not None:
             cur_f, cur_l = int(hand_rng[0]), int(hand_rng[1])
@@ -391,6 +435,7 @@ def collect_phc(a, dets, inputs):
             "last": cur_l,
         })
     if not proposals:
+        save_shared("rows_prepared")
         return data, []
     payload = {
         "run": int(a.run),
@@ -398,6 +443,11 @@ def collect_phc(a, dets, inputs):
         "ftof": bool(getattr(a, "ftof", False)),
         "proposals": proposals,
     }
+    for proposal in proposals:
+        details = next((r for r in shared_reports if r["detector"] == proposal["det"]), None)
+        if details is not None:
+            proposal["shared_summary"] = phc_shared.summary_line(details)
+    save_shared("range_confirmation_pending")
     phc_range_gate.write_proposal(a.run, payload)
     dets_s = ",".join(str(p["det"]) for p in proposals)
     ranges_s = "; ".join(
@@ -432,12 +482,13 @@ def collect_phc(a, dets, inputs):
         )
         if not ok_slack:
             runner.warn(f"PHC range Slack note failed: {slack_msg}")
-    # Nothing written until Custom fills phc_conf and Go refits.
+    # No parameter update until the displayed choice is approved and refitted.
     return {}, [conv.SETTLED]
 
 
 def collect_hdphc(a, pf):
-    return collect_phc(a, config.hodo_detectors("hdphc", a.ftof), [decode(a.run, "Hodo")])
+    return collect_phc(a, config.hodo_detectors("hdphc", a.ftof), [decode(a.run, "Hodo")],
+                       previous_rows=pf.get_data_dict(key_len=4))
 
 
 def collect_htofphc(a, pf):
@@ -759,6 +810,9 @@ def main():
                 )
             pf.write()
             after_disk = conv.file_sha256(target)
+            if a.ptype == "hdphc":
+                from common.lib import phc_shared
+                phc_shared.mark_written(a.run, a.suffix, target)
             for rec in pending:
                 key = rec.get("apply_key") or rec.get("fit_token")
                 conv.record(

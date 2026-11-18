@@ -66,6 +66,7 @@ class PhcUpdateTests(unittest.TestCase):
             # Bypass ROOT I/O: patch open to return our arrays.
             fake = mock.MagicMock()
             fake.__getitem__.return_value.arrays.return_value = tree
+            fake.__enter__.return_value = fake
             with mock.patch.object(self.phc.uproot, "open", return_value=fake), \
                  mock.patch.object(self.phc.config, "DETECTOR_I_LIST", {"BHT": 1}):
                 data, unused = self.phc.make_dictdata(
