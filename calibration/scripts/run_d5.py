@@ -41,6 +41,7 @@ from common.lib import (  # noqa: E402
     calib_anomaly,
     config,
     fit_validity,
+    input_check,
     d5_qa_slack,
     qa_session,
     runner,
@@ -449,7 +450,7 @@ def check_pos_inputs(run, s, force):
         runner.fail(f"{ref_dcgeo_path(run, s)} does not match {dcgeo_path(run, s).name} "
                     f"(DCGEO changed after ref): run 'run_d5.py {run} ref' and decode again")
     for root in (d5_root(run, s), d5_root(run, s, TAG)):
-        runner.checked_root(root, s, force)
+        runner.checked_root(root, s, force, keys=input_check.D5_TRACKING_PARAM_KEYS)
 
 
 def do_pos(args, s):

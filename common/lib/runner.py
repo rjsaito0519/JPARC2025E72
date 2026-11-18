@@ -96,14 +96,15 @@ def require_bins(*names):
     return paths
 
 
-def checked_root(path, suffix, force):
+def checked_root(path, suffix, force, *, keys=None):
     """path if it exists and passes check_input; stops otherwise."""
     if not Path(path).exists():
         fail(f"{path} not found")
     from . import calib_lanes
+    key_options = {} if keys is None else {"keys": keys}
     if not force and (os.environ.get("E72_CALIB_DISPATCH")
                       or calib_lanes.active_lane()):
-        newer = stale_params(path, suffix)
+        newer = stale_params(path, suffix, **key_options)
         if newer:
             from . import calib_anomaly
             reason = "stale_input: decode again before refit; " + "; ".join(newer)
@@ -112,7 +113,7 @@ def checked_root(path, suffix, force):
                 calib_anomaly.remember_check_reason(int(run_match[1]), reason)
             warn(reason)
             sys.exit(EXIT_CHECK)
-    if not check_input(path, suffix, force):
+    if not check_input(path, suffix, force, **key_options):
         sys.exit(EXIT_FAIL)
     info(f"input: {path}")
     return Path(path)

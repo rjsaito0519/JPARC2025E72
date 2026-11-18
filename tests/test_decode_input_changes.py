@@ -55,6 +55,51 @@ class DecodeInputChangesTests(unittest.TestCase):
         self.assertEqual(1,self.calls)
         self.assertIn('--local',shell.call_args.args[0])
 
+    def d5_inputs(self):
+        self.conf.write_text(
+            'USER: UserParam\nHDPRM: HodoParam\nHDPHC: HodoPHCParam\n'
+            'DCGEO: DCGeomParam\nD5MTX: D5Matrix\n'
+        )
+        for name in ('HodoParam', 'HodoPHCParam', 'DCGeomParam', 'D5Matrix'):
+            (self.directory/name).write_text('v1\n')
+        text = self.runlist.read_text()
+        if '  bin: ./bin/D5Tracking\n' not in text:
+            text = text.replace('DEFAULT:\n', 'DEFAULT:\n  bin: ./bin/D5Tracking\n')
+        self.runlist.write_text(text)
+
+    def test_d5_hodo_parameter_changes_do_not_repeat_an_independent_decode(self):
+        self.d5_inputs()
+        def myrun(*args, **kwargs):
+            for name in ('HodoParam', 'HodoPHCParam'):
+                (self.directory/name).write_text('v2\n')
+            return self.decode()
+        with patch.object(decode_run.runner, 'sh', side_effect=myrun):
+            self.assertEqual(0, decode_run.run_decode(self.runlist))
+        self.assertEqual(1, self.calls)
+
+    def test_d5_tracking_inputs_still_require_a_fresh_decode(self):
+        for name in ('UserParam', 'DCGeomParam', 'D5Matrix'):
+            with self.subTest(parameter=name):
+                self.d5_inputs()
+                self.calls = 0
+                def myrun(*args, **kwargs):
+                    if self.calls == 0:
+                        (self.directory/name).write_text('v2\n')
+                    return self.decode()
+                with patch.object(decode_run.runner, 'sh', side_effect=myrun):
+                    self.assertEqual(0, decode_run.run_decode(self.runlist))
+                self.assertEqual(2, self.calls)
+
+    def test_mixed_d5_and_hodo_runlist_retains_hodo_dependencies(self):
+        self.d5_inputs()
+        with self.runlist.open('a') as stream:
+            stream.write('  hodo:\n    bin: ./bin/Hodoscope\n'
+                         '    conf: analyzer.conf\n    root: hodo.root\n')
+        before = decode_run.calibration_inputs(self.runlist)
+        (self.directory/'HodoPHCParam').write_text('v2\n')
+        after = decode_run.calibration_inputs(self.runlist)
+        self.assertNotEqual(before, after)
+
     def test_dry_run_does_not_read_inputs_or_start_jobs(self):
         self.runlist.unlink()
         with patch.object(decode_run.runner,'sh') as shell,patch.object(decode_run,'calibration_inputs') as snapshot:

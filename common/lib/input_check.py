@@ -18,6 +18,8 @@ from termcolor import colored
 from . import config
 
 CALIB_PARAM_KEYS = ("HDPRM", "HDPHC", "DCGEO", "DCTDC", "DCDRFT")
+# D5Tracking uses raw BHT/BAC windows for beam flags, not corrected Hodo times.
+D5_TRACKING_PARAM_KEYS = ("USER", "DCGEO", "DCTDC", "DCDRFT", "D5MTX")
 RUNLIST_DIR = config.ANALYZER_DIR / "runmanager" / "runlist"
 _OTHER_SUFFIX = {"K": "Pi", "Pi": "K"}
 

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from . import config, runner
+from . import config, input_check, runner
 
 MTIME_SLACK_SEC = 2.0
 STAT_DIR = config.ANALYZER_DIR / "runmanager" / "stat"
@@ -168,9 +168,12 @@ def calibration_inputs(yml):
         paths.add(conf)
         if not conf.is_file():
             continue
+        binary = Path(str(entry.get("bin", defaults.get("bin", "")))).name
+        entry_keys = (set(input_check.D5_TRACKING_PARAM_KEYS)
+                      if binary == "D5Tracking" else keys)
         for line in conf.read_text().splitlines():
             fields = line.split()
-            if len(fields) >= 2 and fields[0].rstrip(":") in keys:
+            if len(fields) >= 2 and fields[0].rstrip(":") in entry_keys:
                 parameter = Path(fields[1]).expanduser()
                 paths.add(parameter if parameter.is_absolute() else wd / parameter)
     snapshot = {}
