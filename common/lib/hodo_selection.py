@@ -104,6 +104,31 @@ def cover_pdf(run, particle, mode, root_path):
         figure.text(.08, .9, "\n\n".join(lines), va="top", fontsize=13)
         pdf.savefig(figure)
         plt.close(figure)
+        if mode in ("t0", "hdphc"):
+            # Native T0 pages zoom to the fitted Gaussian. Keep a full-axis
+            # overview too, so a second population stays visible.
+            import uproot
+            with uproot.open(root_path) as root:
+                figure, axes = plt.subplots(4, 4, figsize=(11.7, 8.3))
+                figure.suptitle(f"run{run:05d} / All input / full raw T0 distributions")
+                for segment, ax in enumerate(axes.flat):
+                    name = f"T0_seg{segment}_TimeOffset"
+                    if segment >= config.NUM_OF_CH["BH2"] or name not in root:
+                        ax.set_visible(False)
+                        continue
+                    histogram = root[name]
+                    counts, edges = histogram.to_numpy(flow=False)
+                    flow = histogram.values(flow=True)
+                    ax.stairs(counts, edges, color="black", linewidth=.7)
+                    if entry.get("t0_fit_window_ns"):
+                        ax.axvspan(*entry["t0_fit_window_ns"], color="tab:orange", alpha=.2)
+                    ax.set_title(f"BH2 {segment}: total {flow.sum():.0f}, flow {flow[0]+flow[-1]:.0f}", fontsize=8)
+                    ax.set_xlabel("raw time difference [ns]", fontsize=7)
+                    ax.set_yscale("symlog", linthresh=1.)
+                    ax.tick_params(labelsize=6)
+                figure.tight_layout(rect=(0., 0., 1., .96))
+                pdf.savefig(figure)
+                plt.close(figure)
     return output
 
 

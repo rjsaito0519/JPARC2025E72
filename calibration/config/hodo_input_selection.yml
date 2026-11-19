@@ -4,3 +4,7 @@
     histograms: All
     peak_window_ns: [-1.5, 1.5]
     t0_fit_window_ns: [0.0, 3.0]
+    fit_time_windows_ns:
+      BHT: [-2.0, 1.0]
+      BH2: [-0.5, 2.0]
+      T1: [-2.0, 0.8]
