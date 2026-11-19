@@ -261,8 +261,18 @@ def run_hdphc_one_round(a, round_i, *, clear_journal):
             current_input = hodo_btof_monitor.initial_candidate(
                 a.run, particle_suffix=suffix, ftof=a.ftof, root_path=hodo_path,
                 parameter_files=scoring_options["parameter_files"])
-            if phc_quality.stable_input(current_input) != phc_quality.stable_input(prior[0]):
-                reason = "phc_input_changed: ADC/TDC/USER or raw hit population changed; restart the PHC series"
+            initial_input = phc_quality.stable_input(prior[0])
+            prepared_input = phc_quality.stable_input(current_input)
+            if prepared_input != initial_input:
+                original_parameters = initial_input.get("scoring_context", {}).get("fixed_parameters", {})
+                current_parameters = prepared_input.get("scoring_context", {}).get("fixed_parameters", {})
+                changed_parameters = sorted(name for name in original_parameters.keys() | current_parameters.keys()
+                                            if original_parameters.get(name) != current_parameters.get(name))
+                changed_detectors = sorted(name for name in initial_input["per_det"].keys() | prepared_input["per_det"].keys()
+                                           if initial_input["per_det"].get(name) != prepared_input["per_det"].get(name))
+                reason = ("phc_input_changed: ADC/TDC/USER or raw hit population changed; "
+                          f"parameters={','.join(changed_parameters) or 'unchanged'}, "
+                          f"detectors={','.join(changed_detectors) or 'unchanged'}; restart the PHC series")
                 calib_anomaly.remember_check_reason(a.run, reason)
                 runner.warn(reason)
                 sys.exit(runner.EXIT_CHECK)

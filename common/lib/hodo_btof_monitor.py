@@ -7,6 +7,8 @@ projection (summed over dE). No Gaussian auto-fit.
 from __future__ import annotations
 
 import hashlib
+import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -296,6 +298,33 @@ def initial_integrity(run, *, particle_suffix="Pi", ftof=False, root_path=None):
     return phc_quality.integrity_from_score(score)
 
 
+def _stable_unpack_content(content):
+    """Normalize only runmanager's generated schema directory."""
+    attribute = r"""(?P<attribute>\b(?:[A-Za-z_]\w*:)?noNamespaceSchemaLocation\s*=\s*)(?P<quote>["'])(?P<path>[^"']+)(?P=quote)"""
+
+    def replace_schema_path(match):
+        schema = re.sub(r"(/runmanager/tmp/)tmp[^/]+/", r"\1<generated>/", match["path"])
+        return match["attribute"] + match["quote"] + schema + match["quote"]
+
+    return re.sub(attribute, replace_schema_path, content)
+
+
+def _unpack_schema_hash(parameter_files):
+    """Fingerprint the schema copied by runmanager before it removes its scratch files."""
+    unpack = (parameter_files or {}).get("UNPACK")
+    if unpack is None:
+        return None
+    unpack = Path(unpack)
+    root = ET.parse(unpack).getroot()
+    schema = root.get("{http://www.w3.org/2001/XMLSchema-instance}noNamespaceSchemaLocation")
+    if schema is None:
+        return None
+    path = Path(schema)
+    if not path.is_absolute():
+        path = unpack.parent / path
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _fixed_parameters(path, parameter_files=None):
     """Hash non-PHC inputs so ADC/T0/window changes cannot alter a running series."""
     result = {}
@@ -310,7 +339,10 @@ def _fixed_parameters(path, parameter_files=None):
             else:
                 result[name] = None
                 continue
+            if name == "UNPACK":
+                content = _stable_unpack_content(content)
             result[name] = hashlib.sha256(content.encode()).hexdigest()
+    result["UNPACK_SCHEMA"] = _unpack_schema_hash(parameter_files)
     return result
 
 
