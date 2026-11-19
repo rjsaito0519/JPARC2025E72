@@ -8,6 +8,7 @@
 #include <TROOT.h>
 
 #include "ana_helper.h"
+#include "hodo_input.h"
 
 //_____________________________________________________________________________
 int
@@ -43,12 +44,13 @@ main(
         TH1::AddDirectory(kFALSE);
         TFile input(argv[1], "READ");
         const std::string particle = argv[2];
+        const std::string input_suffix = hodo_input::histogram_suffix(particle.c_str()).Data();
         const int segment = std::stoi(argv[3]);
         const std::string side = argv[4];
         if (input.IsZombie() || (particle != "Pi" && particle != "K")
             || segment < 0 || segment >= 15 || (side != "U" && side != "D"))
             throw std::runtime_error("invalid preview input");
-        const std::string name = "BH2_ADC_seg" + std::to_string(segment) + side + "_" + particle;
+        const std::string name = "BH2_ADC_seg" + std::to_string(segment) + side + input_suffix;
         auto* source = dynamic_cast<TH1D*>(input.Get(name.c_str()));
         if (!source) throw std::runtime_error("missing histogram: " + name);
         std::unique_ptr<TH1D> histogram(static_cast<TH1D*>(source->Clone("mip_preview")));
@@ -63,7 +65,7 @@ main(
         ana_helper::MipFitState state;
         TCanvas canvas("mip_canvas", "", 800, 600);
         if (argc == 6 || (settings.function == "mean" && settings.range_mode == "auto")) {
-            const std::string typical_name = "BH2_ADC_seg6U_" + particle;
+            const std::string typical_name = "BH2_ADC_seg6U" + input_suffix;
             auto* typical_source = dynamic_cast<TH1D*>(input.Get(typical_name.c_str()));
             if (!typical_source) throw std::runtime_error("missing typical BH2 histogram");
             std::unique_ptr<TH1D> typical(static_cast<TH1D*>(typical_source->Clone("mip_typical")));

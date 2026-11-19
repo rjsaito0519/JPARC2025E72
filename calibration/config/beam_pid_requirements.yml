@@ -1,5 +1,2 @@
-# Explicit calibration requirements; these validate tags and never change PID.
-# Low-momentum pion declaration supplied by the operator (0.3 GeV/c).
-2514:
-  Pi:
-    bac: veto
+# Optional native PID requirements. Run2514 uses explicit All Hodo input instead.
+{}

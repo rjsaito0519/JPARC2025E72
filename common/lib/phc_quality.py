@@ -77,6 +77,22 @@ def profile_metrics(counts, edges):
             "tail_fraction": tails / total, "tof_flow": counts[0] + counts[-1]}
 
 
+
+def peak_profile_metrics(counts, edges, window):
+    """Rank the declared peak while retaining the full population and tails."""
+    full = profile_metrics(counts, edges)
+    lower, upper = window
+    first = max(0, sum(edge <= lower for edge in edges) - 1)
+    last = min(len(edges) - 2, sum(edge <= upper for edge in edges) - 1)
+    selected = [0.] + [weight if first <= index <= last else 0.
+                       for index, weight in enumerate(counts[1:-1])] + [0.]
+    core = profile_metrics(selected, edges)
+    full.update(median=core["median"], half68=core["half68"],
+                peak_entries=core["n_total"], peak_window=list(window),
+                peak_effective_edges=[edges[first], edges[last + 1]])
+    return full
+
+
 def aggregate(detector, names=None):
     rows = detector.get("segments") or []
     if names is not None:
@@ -94,11 +110,12 @@ def aggregate(detector, names=None):
             raise ValueError("TOF profile counts disagree with fill total")
         for index, value in enumerate(values):
             counts[index] += value
-    return profile_metrics(counts, edges)
+    window = detector.get("peak_window")
+    return peak_profile_metrics(counts, edges, window) if window else profile_metrics(counts, edges)
 
 
 def integrity_from_score(score):
-    return {"scoring_context": score.get("scoring_context"),
+    result = {"scoring_context": score.get("scoring_context"),
             "per_det": {det: {"time_validity": item.get("time_validity"),
                              "tof_edges": item.get("tof_edges"),
                              "segments": [{"histogram": row["histogram"], "n_total": row.get("n_total"),
@@ -107,6 +124,11 @@ def integrity_from_score(score):
                                            "tof_counts": row.get("tof_counts")}
                                           for row in item.get("segments", [])]}
                         for det, item in score.get("per_det", {}).items()}}
+
+    for detector, item in score.get("per_det", {}).items():
+        if item.get("peak_window"):
+            result["per_det"][detector]["peak_window"] = list(item["peak_window"])
+    return result
 
 
 def compare(journal):
@@ -159,6 +181,8 @@ def compare(journal):
             current = {row["histogram"]: row for row in current_rows}
             if len(current) != len(current_rows):
                 reasons.append(f"{det}: duplicate histogram records")
+            if item.get("peak_window") != first.get("per_det", {}).get(det, {}).get("peak_window"):
+                reasons.append(f"{det}: declared peak window changed")
             if item.get("tof_edges") != first.get("per_det", {}).get(det, {}).get("tof_edges"):
                 reasons.append(f"{det}: TOF profile edges changed")
             original = (initial or {}).get("per_det", {}).get(det, {})
@@ -238,6 +262,12 @@ def compare(journal):
                                          ("before first update", input_baseline[det])):
                     total = reference["n_total"]
                     flow_limit = max(settings["flow_count_floor"], settings["flow_fraction"] * total)
+                    if "peak_entries" in reference:
+                        peak_loss = reference["peak_entries"] - current_global.get("peak_entries", 0.)
+                        if peak_loss > flow_limit + 1.e-9:
+                            reasons.append(f"{det}: main-peak population loss exceeds allowance ({label})")
+                        elif version == 3 and peak_loss > max(settings["flow_count_floor"], settings["warning_fraction"] * total):
+                            warnings.append(f"{det}: small main-peak population decrease ({label})")
                     if current_global["tof_flow"] - reference["tof_flow"] > flow_limit + 1.e-9:
                         reasons.append(f"{det}: aggregate TOF flow increase exceeds allowance ({label})")
                     tail_limit = max(settings["tail_fraction"], settings["tail_count_floor"] / total) if total else 1.
@@ -295,6 +325,8 @@ def summary_lines(comparison):
         width = f"{current['half68']:.3f}" if current.get("half68") is not None else "不明"
         tail = f"{100 * current['tail_fraction']:.2f}%" if current.get("tail_fraction") is not None else "不明"
         lines.append(f"{detector}: 中心 {number(current.get('median'))} ns / 幅 {width} ns / 裾 {tail}")
+        if "peak_entries" in current:
+            lines.append(f"  主ピーク内 {current['peak_entries']:.0f} / 全体 {current['n_total']:.0f} hit（All）")
     return lines
 
 

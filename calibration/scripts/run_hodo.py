@@ -74,6 +74,12 @@ def after_qa_merge(run, mode, args, rc, session=None):
         if phc_ask:
             _notify_phc_ask_after_pdf(run)
         return rc
+    from common.lib import hodo_selection, hodo_btof_monitor
+    suffix = "K" if args.kaon else "Pi"
+    if session is not None and hodo_selection.selection(run, suffix):
+        session["meta"].update(hodo_selection.metadata(run, suffix))
+        cover = hodo_selection.cover_pdf(run, suffix, mode, hodo_btof_monitor.hodo_root(run))
+        session["meta"].setdefault("extra_qa_paths", []).insert(0, str(cover))
     ok, message, out = hodo_qa_pdf.merge(
         run, mode, kaon=args.kaon, ftof=args.ftof, dry_run=False, session=session,
     )
@@ -173,7 +179,10 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
     dets = config.hodo_detectors(mode, args.ftof)
     bins = runner.require_bins(*[f"{d}_{bin_suffix}" for d in dets])
     root = runner.input_root(run, "Hodo", suffix, args.force)
-    from common.lib import beam_selection, hodo_btof_monitor
+    from common.lib import beam_selection, hodo_btof_monitor, hodo_selection
+    hodo_selection.require_sources(run, suffix, mode, root, args.ftof)
+    if hodo_selection.selection(run, suffix):
+        runner.info(f"Hodo input=All (no beam PID selection), output parameter={suffix}")
     if beam_selection.requirement(run, suffix) is not None:
         runlist = config.ANALYZER_DIR / "runmanager/runlist" / config.SUB_DIR / f"hodo_run{run:05d}.yml"
         beam_selection.require(run, suffix, root,
@@ -185,6 +194,7 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
         "ftof": bool(args.ftof),
         "qa_kind": "post_adopt" if qa_only else "fit",
     }
+    meta.update(hodo_selection.metadata(run, suffix))
     if mode == "hdphc":
         meta.update(phc_round_metadata(run, args))
     adopted = getattr(args, "adopted_round", None)
@@ -221,7 +231,7 @@ def fit_and_update(run, suffix, args, mode, bin_suffix):
     os.environ["E72_FIT_OVERRIDE"] = str(flat)
     os.environ["E72_MIP_FIT_OVERRIDE"] = str(fit_overrides.write_flat_mip_fit(run))
     for b in bins:
-        runner.sh(f"{b} {root} {suffix}")
+        runner.sh(f"{b} {root} {suffix}", env=hodo_selection.environment(run, suffix, detector=Path(b).name.split("_")[0]))
     if qa_only:
         runner.info("--qa-only: params not written")
         rc = runner.EXIT_OK
@@ -265,7 +275,10 @@ def do_hdphc(run, suffix, args):
 def do_t0(run, suffix, args):
     (exe,) = runner.require_bins("T0_Offset")
     root = runner.input_root(run, "Hodo", suffix, args.force)
-    from common.lib import beam_selection, hodo_btof_monitor
+    from common.lib import beam_selection, hodo_btof_monitor, hodo_selection
+    hodo_selection.require_sources(run, suffix, "t0", root, False)
+    if hodo_selection.selection(run, suffix):
+        runner.info(f"Hodo input=All (no beam PID selection), output parameter={suffix}")
     if beam_selection.requirement(run, suffix) is not None:
         runlist = config.ANALYZER_DIR / "runmanager/runlist" / config.SUB_DIR / f"hodo_run{run:05d}.yml"
         beam_selection.require(run, suffix, root,
@@ -289,7 +302,7 @@ def do_t0(run, suffix, args):
     import os
     from common.lib import fit_overrides
     overrides = fit_overrides.write_flat_t0_fit(run)
-    runner.sh(f"{exe} {root} {suffix}", env={**os.environ, "E72_T0_FIT_OVERRIDE": str(overrides)})
+    runner.sh(f"{exe} {root} {suffix}", env={**hodo_selection.environment(run, suffix), "E72_T0_FIT_OVERRIDE": str(overrides)})
     rc = runner.update_param(run, suffix, "t0", debug=args.debug)
     return after_qa_merge(run, "t0", args, rc, session=session)
 

@@ -1,0 +1,6 @@
+# Run-specific calibration input. Particle keys name output parameter sets, not PID selection.
+2514:
+  Pi:
+    histograms: All
+    peak_window_ns: [-1.5, 1.5]
+    t0_fit_window_ns: [0.0, 3.0]

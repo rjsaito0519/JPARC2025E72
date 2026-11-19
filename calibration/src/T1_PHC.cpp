@@ -25,18 +25,23 @@
 // Custom headers
 #include "config.h"
 #include "ana_helper.h"
+#include "hodo_input.h"
 #include "paths.h"
 
 Config& conf = Config::getInstance();
 
-void analyze(TString path, TString particle){    
+void analyze(TString path, TString particle){
+    const TString input_suffix = hodo_input::histogram_suffix(particle);
+
+    hodo_input::configure_phc(conf);
+
     // +---------+
     // | setting |
     // +---------+
     gROOT->GetColor(kBlue)->SetRGB(0.12156862745098039, 0.4666666666666667, 0.7058823529411765);
     gROOT->GetColor(kOrange)->SetRGB(1.0, 0.4980392156862745, 0.054901960784313725);
     gROOT->GetColor(kGreen)->SetRGB(44.0/256, 160.0/256, 44.0/256);
-    
+
     gStyle->SetOptStat(0);
     gStyle->SetLabelSize(0.06, "XY");
     gStyle->SetTitleSize(0.06, "x"); // x軸のタイトルサイズ
@@ -75,8 +80,8 @@ void analyze(TString path, TString particle){
     TH2D *h_t1_tof_vs_de[1][conf.num_of_ch.at("t1")];
     TH2D *h_t1_ctof_vs_de[1][conf.num_of_ch.at("t1")];
     for (Int_t i = 0; i < conf.num_of_ch.at("t1"); i++ ) {
-        h_t1_tof_vs_de[0][i]  = (TH2D*)f->Get(Form("T1_seg%dU_TOF_vs_DeltaE_%s", i, particle.Data()));
-        h_t1_ctof_vs_de[0][i] = (TH2D*)f->Get(Form("T1_seg%dU_CTOF_vs_DeltaE_%s", i, particle.Data()));
+        h_t1_tof_vs_de[0][i]  = (TH2D*)f->Get(Form("T1_seg%dU_TOF_vs_DeltaE%s", i, input_suffix.Data()));
+        h_t1_ctof_vs_de[0][i] = (TH2D*)f->Get(Form("T1_seg%dU_CTOF_vs_DeltaE%s", i, input_suffix.Data()));
         // If single ended without U suffix, one might need to adjust here. But assuming U is used for single side.
     }
     
@@ -129,6 +134,7 @@ void analyze(TString path, TString particle){
     // | Write |
     // +-------+
     ana_helper::write_phc_tree({phc_up}, fout);
+    hodo_input::write_metadata(fout, particle);
     fout->Close(); 
 }
 

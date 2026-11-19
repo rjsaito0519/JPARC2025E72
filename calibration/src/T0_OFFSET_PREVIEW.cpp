@@ -8,6 +8,7 @@
 #include <TROOT.h>
 
 #include "ana_helper.h"
+#include "hodo_input.h"
 
 //_____________________________________________________________________________
 int
@@ -36,10 +37,11 @@ main(
             if (argc != 6 && argc != 7) throw std::runtime_error("invalid T0 preview arguments");
             TFile input(argv[1], "READ");
             const std::string particle = argv[2];
+        const std::string input_suffix = hodo_input::histogram_suffix(particle.c_str()).Data();
             const int segment = std::stoi(argv[3]);
             if (input.IsZombie() || (particle != "Pi" && particle != "K") || segment < 0 || segment >= 15
                 || std::string(argv[4]) != "T0") throw std::runtime_error("invalid T0 preview input");
-            const std::string name = "T0_seg"+std::to_string(segment)+"_TimeOffset_"+particle;
+            const std::string name = "T0_seg"+std::to_string(segment)+"_TimeOffset"+input_suffix;
             auto* source = dynamic_cast<TH1D*>(input.Get(name.c_str()));
             if (!source) throw std::runtime_error("missing histogram: "+name);
             std::unique_ptr<TH1D> histogram(static_cast<TH1D*>(source->Clone("t0_preview")));
@@ -51,7 +53,7 @@ main(
             std::unique_ptr<TH1D> sum(static_cast<TH1D*>(source->Clone("t0_sum")));
             sum->Reset();
             for (int channel = 0; channel < 15; ++channel) {
-                auto* hist = dynamic_cast<TH1D*>(input.Get(Form("T0_seg%d_TimeOffset_%s", channel, particle.c_str())));
+                auto* hist = dynamic_cast<TH1D*>(input.Get(Form("T0_seg%d_TimeOffset%s", channel, input_suffix.c_str())));
                 if (!hist) throw std::runtime_error("missing T0 input segment");
                 sum->Add(hist);
             }

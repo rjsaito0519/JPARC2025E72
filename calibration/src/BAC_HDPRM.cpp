@@ -26,6 +26,7 @@
 // Custom headers
 #include "config.h"
 #include "ana_helper.h"
+#include "hodo_input.h"
 #include "cherenkov_npe_qa.h"
 #include "paths.h"
 #include "params.h"
@@ -43,7 +44,13 @@ Bool_t has_narrow_pedestal(TH1D *h) {
     return h->GetBinContent(b_max) >= param::bac_spike_min_contrast*std::max(side, 1.0);
 }
 
-void analyze(TString path, TString particle){    
+//_____________________________________________________________________________
+void
+analyze(
+    TString path,
+    TString particle
+)
+{
     // +---------+
     // | setting |
     // +---------+
@@ -92,6 +99,8 @@ void analyze(TString path, TString particle){
     // For Cherenkov, we prefer all-event histograms (no suffix) for pedestals
     auto get_h = [&](TFile* f, TString base_name, TString part) -> TH1D* {
         TH1D* h = (TH1D*)f->Get(base_name); // Try no-suffix first
+        if (!h && hodo_input::all_histograms())
+            throw std::runtime_error("Missing All histogram: " + std::string(base_name.Data()));
         if (!h && part != "") h = (TH1D*)f->Get(base_name + "_" + part);
         return h;
     };
@@ -212,6 +221,7 @@ void analyze(TString path, TString particle){
     
     fout->cd();
     tree->Write();
+    hodo_input::write_metadata(fout, particle);
     fout->Close(); 
 }
 

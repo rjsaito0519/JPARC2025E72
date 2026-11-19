@@ -13,7 +13,7 @@ import numpy as np
 import uproot
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from common.lib import config, fit_validity, phc_shared  # noqa: E402
+from common.lib import config, fit_validity, phc_shared, hodo_selection  # noqa: E402
 
 PHC_TYPE, PHC_NPAR = 1, 3
 MIN_FIT_ENTRIES = 300
@@ -79,7 +79,7 @@ def auto_bad_segments(tree):
 
 
 #_____________________________________________________________________________
-def make_dictdata(root_file_path, det, good_ch_range=None, *, source_root=None, suffix=None, report=None):
+def make_dictdata(root_file_path, det, good_ch_range=None, *, source_root=None, suffix=None, report=None, run=None):
     """(rows, not-used segments). good_ch_range = hand range, or None for automatic.
 
     Hand range selects which segments are intended; fit validity still applies
@@ -111,7 +111,9 @@ def make_dictdata(root_file_path, det, good_ch_range=None, *, source_root=None, 
             if source_root is not None:
                 native = uproot.open(source_root)
             fallback, details = phc_shared.fallback_rows(
-                native, det, suffix, channels, sides, donor_sides, good_ch_range)
+                native, det, suffix, channels, sides, donor_sides, good_ch_range,
+                input_selection=(hodo_selection.selection(run, suffix)
+                                 if run is not None else None))
         finally:
             if native is not None:
                 native.close()

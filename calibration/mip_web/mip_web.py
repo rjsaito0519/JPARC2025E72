@@ -23,7 +23,7 @@ import uproot
 
 PROJECT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT))
-from common.lib import config, fit_overrides  # noqa: E402
+from common.lib import config, fit_overrides, hodo_selection  # noqa: E402
 from common.lib.calib_state_io import locked_path, write_json  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -72,7 +72,7 @@ class App:
                    param / "HDPRM" / config.SUB_DIR / f"HodoParam_run{self.run:05d}_{self.particle}",
                    param / "HDPHC" / config.SUB_DIR / f"HodoPHCParam_run{self.run:05d}_{self.particle}",
                    param / "USER" / config.SUB_DIR / f"UserParam_run{self.run:05d}", self.binary,
-                   PROJECT / "common/include/params.h"]
+                   PROJECT / "common/include/params.h", hodo_selection.SELECTIONS]
         fit_root = self.fit_output()
         fit_stat = fit_root.stat() if fit_root.is_file() else None
         record = [str(resolved), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns,
@@ -157,7 +157,9 @@ class App:
                                                       if hold.get("source") == "final_review" else "")}
         except (ValueError, OSError) as error:
             gate = {"hold_id": None, "reason": str(error)}
-        return {"run": self.run, "particle": self.particle, "mode": self.mode, "fingerprint": doc["fingerprint"],
+        return {"run": self.run, "particle": self.particle, "mode": self.mode,
+                "input_selection": hodo_selection.histogram_particle(self.run, self.particle),
+                "fingerprint": doc["fingerprint"],
                 "revision": doc["revision"], "staged": doc["staged"], "notice": doc.get("notice", ""),
                 "job": doc.get("job"), "gate": gate}
 
@@ -184,7 +186,7 @@ class App:
                 command = [str(self.binary), "--curve", str(settings_path), f"{key}:{self.particle}", str(output)]
             else:
                 command += [str(settings_path)]
-        environment = dict(os.environ)
+        environment = hodo_selection.environment(self.run, self.particle)
         environment["E72_FIT_OVERRIDE"] = str(fit_overrides.flat_override_path(self.run))
         try:
             with self.preview_lock:
@@ -201,7 +203,8 @@ class App:
         return Path(config.OUTPUT_DIR) / "root" / f"run{self.run:05d}" / f"run{self.run:05d}_{kind}_{self.particle}.root"
 
     def histogram_name(self, segment, side):
-        return f"T0_seg{segment}_TimeOffset_{self.particle}" if self.mode == "t0" else f"BH2_ADC_seg{segment}{side}_{self.particle}"
+        base = f"T0_seg{segment}_TimeOffset" if self.mode == "t0" else f"BH2_ADC_seg{segment}{side}"
+        return hodo_selection.histogram_name(base, self.run, self.particle)
 
     def channel_keys(self):
         return [f"bh2-{segment}-{side}" for segment in range(config.NUM_OF_CH["BH2"])
@@ -275,6 +278,7 @@ class App:
             fit_root = self.fit_output()
             snapshot = None
             if fit_root.is_file():
+                hodo_selection.require_fit(fit_root, self.run, self.particle)
                 with uproot.open(fit_root) as output:
                     tree_name = "t0_fit" if self.mode == "t0" else "mip_fit"
                     if tree_name in output:
@@ -512,8 +516,8 @@ class Portal:
                     readiness = self.result_headers.get(stamp)
                 if readiness is None:
                     particle = match[3]
-                    required = ([f"T0_seg{segment}_TimeOffset_{particle}" for segment in range(config.NUM_OF_CH["BH2"])]
-                                if mode == "t0" else [f"BH2_ADC_seg{segment}{side}_{particle}"
+                    required = ([hodo_selection.histogram_name(f"T0_seg{segment}_TimeOffset", run, particle) for segment in range(config.NUM_OF_CH["BH2"])]
+                                if mode == "t0" else [hodo_selection.histogram_name(f"BH2_ADC_seg{segment}{side}", run, particle)
                                     for segment in range(config.NUM_OF_CH["BH2"]) for side in ("U", "D")])
                     with uproot.open(path) as source:
                         ready = all(name in source for name in required)
@@ -522,7 +526,9 @@ class Portal:
                         self.result_headers[stamp] = readiness
             except (OSError, ValueError):
                 readiness = (False, "結果ファイルを読み取れません")
-            rows.append({"run": run, "particle": match[3], "mode": mode, "ready": readiness[0], "reason": readiness[1]})
+            rows.append({"run": run, "particle": match[3], "mode": mode,
+                         "input_selection": hodo_selection.histogram_particle(run, match[3]),
+                         "ready": readiness[0], "reason": readiness[1]})
         return sorted(rows, key=lambda row: (-row["run"], row["particle"], row["mode"]))
 
     def infer_particle(self, run, mode):

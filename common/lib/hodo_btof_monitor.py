@@ -80,7 +80,7 @@ def _pick_keys(all_keys: list[str], prefix: str, tof_tag: str, particle: str) ->
             # unsuffixed: ..._CBTOF_vs_DeltaE
             if not name.endswith("_Pi") and not name.endswith("_K"):
                 base.append(name)
-    return list(dict.fromkeys(suffixed if suffixed else base))
+    return list(dict.fromkeys(base if particle == "All" else suffixed if suffixed else base))
 
 
 #_____________________________________________________________________________
@@ -115,6 +115,9 @@ def _score_btof_impl(
             "per_det": {},
         }
     particle = "K" if particle_suffix in ("K", "kaon") else "Pi"
+    from . import hodo_selection
+    input_selection = hodo_selection.selection(run, particle)
+    histogram_particle = hodo_selection.histogram_particle(run, particle)
     dets = config.hodo_detectors("hdphc", ftof)
     try:
         root = uproot.open(path)
@@ -131,7 +134,7 @@ def _score_btof_impl(
     if scoring_version not in (1, 2, 3):
         root.close()
         raise ValueError("unknown PHC scoring version")
-    validity = _time_validity(root, dets, particle, include_energy=scoring_version == 3) if scoring_version in (2, 3) else {}
+    validity = _time_validity(root, dets, histogram_particle, include_energy=scoring_version == 3) if scoring_version in (2, 3) else {}
     all_keys = list(root.keys())
     widths: list[float] = []
     total_n = 0.0
@@ -142,7 +145,7 @@ def _score_btof_impl(
             per_det[det] = {"width": float("nan"), "n_seg": 0, "n_entries": 0.0}
             continue
         prefix, tof_tag = spec
-        names = _pick_keys(all_keys, prefix, tof_tag, particle)
+        names = _pick_keys(all_keys, prefix, tof_tag, histogram_particle)
         seg_w = []
         seg_n = 0.0
         segments = []
@@ -185,6 +188,8 @@ def _score_btof_impl(
         if scoring_version in (2, 3):
             per_det[det]["tof_edges"] = tof_edges if profiles_consistent else None
             per_det[det]["time_validity"] = validity.get(det)
+            if input_selection and det in ("BHT", "BH2", "CVC"):
+                per_det[det]["peak_window"] = input_selection["peak_window_ns"]
             try:
                 per_det[det]["global_tof"] = phc_quality.aggregate(per_det[det])
             except (ValueError, TypeError, KeyError):
@@ -196,6 +201,8 @@ def _score_btof_impl(
     root.close()
     context = {"version": scoring_version, "particle": particle, "ftof": bool(ftof),
                "required_detectors": list(dets)}
+    if input_selection:
+        context["input_selection"] = input_selection
     if scoring_version in (2, 3):
         primary = ["BHT", "CVC"] if ftof else ["BHT"]
         context.update(primary_detectors=primary, quality_policy=phc_quality.policy(quality_policy, version=scoring_version))
@@ -246,7 +253,8 @@ def _time_validity(root, detectors, particle, *, include_energy=False):
                 return {}
             fields += [name for names in energy_fields.values() for name in names]
         arrays = tree.arrays(fields, library="ak")
-        arrays = arrays[arrays.beam_flag == (2 if particle == "K" else 1)]
+        if particle != "All":
+            arrays = arrays[arrays.beam_flag == (2 if particle == "K" else 1)]
         for det in detectors:
             values = ak.flatten(arrays[det.lower() + "_cmt"], axis=2)
             numbers = ak.broadcast_arrays(arrays.event_number, values)[0]

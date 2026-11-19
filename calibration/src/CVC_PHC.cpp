@@ -25,18 +25,23 @@
 // Custom headers
 #include "config.h"
 #include "ana_helper.h"
+#include "hodo_input.h"
 #include "paths.h"
 
 Config& conf = Config::getInstance();
 
-void analyze(TString path, TString particle){    
+void analyze(TString path, TString particle){
+    const TString input_suffix = hodo_input::histogram_suffix(particle);
+
+    hodo_input::configure_phc(conf);
+
     // +---------+
     // | setting |
     // +---------+
     gROOT->GetColor(kBlue)->SetRGB(0.12156862745098039, 0.4666666666666667, 0.7058823529411765);
     gROOT->GetColor(kOrange)->SetRGB(1.0, 0.4980392156862745, 0.054901960784313725);
     gROOT->GetColor(kGreen)->SetRGB(44.0/256, 160.0/256, 44.0/256);
-    
+
     gStyle->SetOptStat(0);
     gStyle->SetLabelSize(0.06, "XY");
     gStyle->SetTitleSize(0.06, "x"); // x軸のタイトルサイズ
@@ -75,10 +80,10 @@ void analyze(TString path, TString particle){
     TH2D *h_cvc_ftof_vs_de[2][conf.num_of_ch.at("cvc")];
     TH2D *h_cvc_cftof_vs_de[2][conf.num_of_ch.at("cvc")];
     for (Int_t i = 0; i < conf.num_of_ch.at("cvc"); i++ ) {
-        h_cvc_ftof_vs_de[0][i]  = (TH2D*)f->Get(Form("CVC_seg%dU_FTOF_vs_DeltaE_%s", i, particle.Data()));
-        h_cvc_ftof_vs_de[1][i]  = (TH2D*)f->Get(Form("CVC_seg%dD_FTOF_vs_DeltaE_%s", i, particle.Data()));
-        h_cvc_cftof_vs_de[0][i] = (TH2D*)f->Get(Form("CVC_seg%dU_CFTOF_vs_DeltaE_%s", i, particle.Data()));
-        h_cvc_cftof_vs_de[1][i] = (TH2D*)f->Get(Form("CVC_seg%dD_CFTOF_vs_DeltaE_%s", i, particle.Data()));
+        h_cvc_ftof_vs_de[0][i]  = (TH2D*)f->Get(Form("CVC_seg%dU_FTOF_vs_DeltaE%s", i, input_suffix.Data()));
+        h_cvc_ftof_vs_de[1][i]  = (TH2D*)f->Get(Form("CVC_seg%dD_FTOF_vs_DeltaE%s", i, input_suffix.Data()));
+        h_cvc_cftof_vs_de[0][i] = (TH2D*)f->Get(Form("CVC_seg%dU_CFTOF_vs_DeltaE%s", i, input_suffix.Data()));
+        h_cvc_cftof_vs_de[1][i] = (TH2D*)f->Get(Form("CVC_seg%dD_CFTOF_vs_DeltaE%s", i, input_suffix.Data()));
     }
     
     // +--------------+
@@ -132,6 +137,7 @@ void analyze(TString path, TString particle){
     // | Write |
     // +-------+
     ana_helper::write_phc_tree({phc_up, phc_down}, fout);
+    hodo_input::write_metadata(fout, particle);
     fout->Close(); 
 }
 

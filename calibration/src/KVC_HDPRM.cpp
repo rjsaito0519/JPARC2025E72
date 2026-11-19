@@ -26,20 +26,27 @@
 // Custom headers
 #include "config.h"
 #include "ana_helper.h"
+#include "hodo_input.h"
 #include "cherenkov_npe_qa.h"
 #include "paths.h"
 #include "params.h"
 
 Config& conf = Config::getInstance();
 
-void analyze(TString path, TString particle){    
+//_____________________________________________________________________________
+void
+analyze(
+    TString path,
+    TString particle
+)
+{
     // +---------+
     // | setting |
     // +---------+
     gROOT->GetColor(kBlue)->SetRGB(0.12156862745098039, 0.4666666666666667, 0.7058823529411765);
     gROOT->GetColor(kOrange)->SetRGB(1.0, 0.4980392156862745, 0.054901960784313725);
     gROOT->GetColor(kGreen)->SetRGB(44.0/256, 160.0/256, 44.0/256);
-    
+
     gStyle->SetOptStat(0);
     gStyle->SetLabelSize(0.06, "XY");
     gStyle->SetTitleSize(0.06, "x"); // x軸のタイトルサイズ
@@ -81,6 +88,8 @@ void analyze(TString path, TString particle){
     // For Cherenkov, we prefer all-event histograms (no suffix) for pedestals
     auto get_h = [&](TFile* f, TString base_name, TString part) -> TH1D* {
         TH1D* h = (TH1D*)f->Get(base_name); // Try no-suffix first
+        if (!h && hodo_input::all_histograms())
+            throw std::runtime_error("Missing All histogram: " + std::string(base_name.Data()));
         if (!h && part != "") h = (TH1D*)f->Get(base_name + "_" + part);
         return h;
     };
@@ -216,6 +225,7 @@ void analyze(TString path, TString particle){
     
     fout->cd();
     tree->Write();
+    hodo_input::write_metadata(fout, particle);
     fout->Close(); 
 }
 

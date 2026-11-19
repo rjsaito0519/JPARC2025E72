@@ -32,12 +32,12 @@ def histogram_name(det, segment, side, suffix):
     return f"{prefix}_seg{segment}{'UD'[side]}_{kind}_vs_DeltaE_{suffix}"
 
 
-def cells(histogram, det):
+def cells(histogram, det, time_window=None):
     """Native time-window bins and the studied 0.6--1.4 MIP fit interval."""
     counts, x_edges, y_edges = histogram.to_numpy(flow=False)
     x = (x_edges[:-1] + x_edges[1:]) * .5
     y = (y_edges[:-1] + y_edges[1:]) * .5
-    lo, hi = SUPPORTED[det][2]
+    lo, hi = time_window or SUPPORTED[det][2]
     # ROOT FindBin endpoints are inclusive in the native ProfileX.
     first = np.searchsorted(y_edges, lo, side="right") - 1
     last = np.searchsorted(y_edges, hi, side="right") - 1
@@ -118,18 +118,24 @@ def fit_shape(samples):
             "energy_range": list(ENERGY_RANGE), "huber_ns": HUBER_NS}
 
 
-def fallback_rows(root, det, suffix, channels, sides, donor_sides, good_ch_range=None):
+def fallback_rows(root, det, suffix, channels, sides, donor_sides, good_ch_range=None, *, input_selection=None):
     """Return fallback parameters and an auditable per-side decision report."""
     output = {}
     report = {"detector": det, "range_origin": "manual" if good_ch_range is not None else "automatic",
               "source_range": list(good_ch_range) if good_ch_range is not None else None,
               "models": {}, "channels": []}
+    if input_selection:
+        report["input_selection"] = input_selection
     for side in range(sides):
         samples = {}
         for ch in channels:
             name = histogram_name(det, ch, side, suffix)
+            if input_selection:
+                name = name.removesuffix("_" + suffix)
             if root is not None and name in root:
-                samples[ch] = cells(root[name], det)
+                samples[ch] = cells(root[name], det,
+                    (input_selection.get("fit_time_windows_ns", {}).get(det, input_selection["peak_window_ns"])
+                     if input_selection else None))
         donors = {}
         for ch in channels:
             if (ch, side) not in donor_sides or ch not in samples:
@@ -336,6 +342,8 @@ def render_pdf(report, source_root, output, execution_id=""):
                 fig, axes = plt.subplots(4, 2, figsize=(11.7, 12))
                 for ax, row in zip(axes.flat, rows[first:first + 8]):
                     name = histogram_name(detector["detector"], row["segment"], "UD".index(row["side"]), report["suffix"])
+                    if detector.get("input_selection"):
+                        name = name.removesuffix("_" + report["suffix"])
                     hist = root[name]
                     counts, xedges, yedges = hist.to_numpy(flow=False)
                     ax.pcolormesh(xedges, yedges, np.ma.masked_less_equal(counts.T, 0), norm=LogNorm(), rasterized=True)
@@ -347,7 +355,8 @@ def render_pdf(report, source_root, output, execution_id=""):
                             fa, fb, fc = row["fit_parameters"]
                             ax.plot(x, -fa / np.sqrt(abs(x - fb)) + fc, color="gray", ls="--", label="raw fit")
                             ax.legend(fontsize=7)
-                    ax.set(xlim=(0, 3), ylim=SUPPORTED[detector["detector"]][2],
+                    ax.set(xlim=(0, 3), ylim=(detector["input_selection"].get("fit_time_windows_ns", {}).get(detector["detector"], detector["input_selection"]["peak_window_ns"])
+                                 if detector.get("input_selection") else SUPPORTED[detector["detector"]][2]),
                            title=f"{detector['detector']} {row['segment']}{row['side']} -- {row['mode']} (n={row['counts']:g})",
                            xlabel="DeltaE [MIP]", ylabel="reference - raw time [ns]")
                 for ax in list(axes.flat)[len(rows[first:first + 8]):]:

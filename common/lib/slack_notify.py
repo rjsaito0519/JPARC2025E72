@@ -356,6 +356,12 @@ def post_hodo_qa(
     mid = f"{mode}_ftof" if ftof and mode in ("hdprm", "hdphc") else mode
     caption = f"run{run:05d} hodo {mid} ({suffix})"
     meta = (manifest or {}).get("meta") or {}
+    if meta.get("input_selection") == "All":
+        caption += f"\n入力: All（PID選別なし） / 出力param: {suffix}"
+        if mode == "t0":
+            caption += f"\nT0 raw Fit範囲: {meta.get('input_t0_fit_window_ns')} ns（Web手動設定を優先）"
+        if mode == "hdphc":
+            caption += f"\nBHT/BH2主ピーク評価: {meta.get('input_peak_window_ns')} ns / raw Fit: {meta.get('input_fit_time_windows_ns', {})}（全hit数・範囲外も監査）"
     if mode == "hdphc":
         round_i = meta.get("hdphc_round")
         total = meta.get("hdphc_rounds")

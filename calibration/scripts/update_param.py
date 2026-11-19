@@ -106,6 +106,13 @@ def fresh_outputs(run, items, inputs, required=False):
         elif path.stat().st_mtime < t_input:
             problems.append(f"{label}: {path.name} is older than the decode (fit again)")
         else:
+            if kind in ("HDPRM", "PHC") or det == "T0_Offset":
+                from common.lib import hodo_selection
+                try:
+                    hodo_selection.require_fit(path, run, suffix)
+                except ValueError as error:
+                    problems.append(str(error))
+                    continue
             found[label] = path
     if problems:
         runner.fail("nothing written:\n  " + "\n  ".join(problems))
@@ -273,7 +280,7 @@ def collect_phc(a, dets, inputs, *, previous_rows=None):
                 shared_report = {}
                 d, not_used = update_phc.make_dictdata(
                     str(path), det, good_ch_range=rng, source_root=inputs[0],
-                    suffix=a.suffix, report=shared_report)
+                    suffix=a.suffix, report=shared_report, run=a.run)
                 if shared_report:
                     if hand_rng is None and rng is not None:
                         shared_report["range_origin"] = "session_automatic"

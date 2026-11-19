@@ -9,14 +9,14 @@
 <p class="hint">ここから選ぶ場合は、保存済みのFit結果がある対象を選んでください。開くだけでは較正の再実行や採用は行いません。</p>
 <p id="error" class="error" role="alert">__ERROR__</p>
 <label>runで絞り込む <input id="filter" type="search" placeholder="例: 2977" inputmode="numeric"></label>
-<label>粒子 <select id="particle"><option value="">すべて</option><option value="Pi">Pi</option><option value="K">K</option></select></label>
+<label>較正の基準粒子 <select id="particle"><option value="">すべて</option><option value="Pi">Pi</option><option value="K">K</option></select></label>
 <button id="refresh">一覧を更新</button><p id="summary" role="status">読み込み中…</p>
 <div id="results"><table><thead><tr><th>run</th><th>粒子</th><th>較正段階</th></tr></thead><tbody id="rows"></tbody></table></div>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);let runs=[];const initialParticle=new URLSearchParams(location.search).get('particle');if(initialParticle==='Pi'||initialParticle==='K')$('particle').value=initialParticle;
 if($('error').textContent==='__ERROR__')$('error').hidden=true;
-function draw(){const search=$('filter').value.trim(),particle=$('particle').value;const chosen=runs.filter(row=>(!search||String(row.run).includes(search))&&(!particle||row.particle===particle));$('rows').replaceChildren();for(const row of chosen){const tr=document.createElement('tr');for(const text of ['run'+String(row.run).padStart(5,'0'),row.particle]){const td=document.createElement('td');td.textContent=text;tr.append(td);}const td=document.createElement('td'),link=document.createElement('a');link.href='/?'+new URLSearchParams({run:row.run,particle:row.particle,mode:row.mode});link.textContent=row.mode==='t0'?'BH2 T0 offset':'BH2 ADC MIP';if(row.ready){td.append(link);}else{td.textContent=link.textContent+'（'+row.reason+'）';td.className='hint';}tr.append(td);$('rows').append(tr);}$('summary').textContent=chosen.length?chosen.length+'件の結果':'表示できる結果がありません。先に較正を実行するか、絞り込み条件を確認してください。';}
+function draw(){const search=$('filter').value.trim(),particle=$('particle').value;const chosen=runs.filter(row=>(!search||String(row.run).includes(search))&&(!particle||row.particle===particle));$('rows').replaceChildren();for(const row of chosen){const tr=document.createElement('tr');for(const text of ['run'+String(row.run).padStart(5,'0'),row.particle+(row.input_selection==='All'?' / 入力 All':'')]){const td=document.createElement('td');td.textContent=text;tr.append(td);}const td=document.createElement('td'),link=document.createElement('a');link.href='/?'+new URLSearchParams({run:row.run,particle:row.particle,mode:row.mode});link.textContent=row.mode==='t0'?'BH2 T0 offset':'BH2 ADC MIP';if(row.ready){td.append(link);}else{td.textContent=link.textContent+'（'+row.reason+'）';td.className='hint';}tr.append(td);$('rows').append(tr);}$('summary').textContent=chosen.length?chosen.length+'件の結果':'表示できる結果がありません。先に較正を実行するか、絞り込み条件を確認してください。';}
 async function load(){$('refresh').disabled=true;try{const response=await fetch('/runs',{cache:'no-store'});const result=await response.json();if(!response.ok)throw Error(result.error||'一覧を取得できませんでした');runs=result.runs;draw();}catch(error){$('error').textContent=error.message;$('error').hidden=false;$('summary').textContent='接続を確認してください';}finally{$('refresh').disabled=false;}}
 $('filter').oninput=draw;$('particle').onchange=draw;$('refresh').onclick=load;load();
 </script></body></html>

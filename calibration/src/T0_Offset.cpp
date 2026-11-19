@@ -27,18 +27,21 @@
 // Custom headers
 #include "config.h"
 #include "ana_helper.h"
+#include "hodo_input.h"
 #include "paths.h"
 
 Config& conf = Config::getInstance();
 
-void analyze(TString path, TString particle){    
+void analyze(TString path, TString particle){
+    const TString input_suffix = hodo_input::histogram_suffix(particle);
+
     // +---------+
     // | setting |
     // +---------+
     gROOT->GetColor(kBlue)->SetRGB(0.12156862745098039, 0.4666666666666667, 0.7058823529411765);
     gROOT->GetColor(kOrange)->SetRGB(1.0, 0.4980392156862745, 0.054901960784313725);
     gROOT->GetColor(kGreen)->SetRGB(44.0/256, 160.0/256, 44.0/256);
-    
+
     gStyle->SetOptStat(0);
     gStyle->SetLabelSize(0.06, "XY");
     gStyle->SetTitleSize(0.06, "x"); // x軸のタイトルサイズ
@@ -76,7 +79,7 @@ void analyze(TString path, TString particle){
     // +-------------------+    
     // -- tdc ----------
     TH1D *h_t0_offset[conf.num_of_ch.at("bh2")];
-    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_t0_offset[i] = (TH1D*)f->Get(Form("T0_seg%d_TimeOffset_%s", i, particle.Data()));
+    for (Int_t i = 0; i < conf.num_of_ch.at("bh2"); i++ ) h_t0_offset[i] = (TH1D*)f->Get(Form("T0_seg%d_TimeOffset%s", i, input_suffix.Data()));
 
     fout->cd();
     for (Int_t segment = 0; segment < conf.num_of_ch.at("bh2"); ++segment)
@@ -118,11 +121,33 @@ void analyze(TString path, TString particle){
         const char* override_path = std::getenv("E72_T0_FIT_OVERRIDE");
         const std::string key = "bh2-"+std::to_string(i)+"-t0:"+particle.Data();
         const bool manual = override_path && ana_helper::read_mip_settings(override_path, key, settings);
+        // All can contain several populations. Seed the explicitly selected raw
+        // T0 peak; manual Web settings still take precedence.
+        bool selected_peak = false;
+        if (hodo_input::all_histograms() && !manual) {
+            const auto window = hodo_input::t0_window();
+            auto* histogram = h_t0_offset[i];
+            const int lower = histogram->FindBin(window.first);
+            const int upper = histogram->FindBin(window.second);
+            if (histogram->Integral(lower, upper) >= 100.) {
+                histogram->GetXaxis()->SetRange(lower, upper);
+                const double center = histogram->GetBinCenter(histogram->GetMaximumBin());
+                const double half = std::min(.8, (window.second-window.first)*.5);
+                settings.lower = std::max(window.first, center-half);
+                settings.upper = std::min(window.second, center+half);
+                settings.function = "gaussian";
+                settings.range_mode = "auto";
+                settings.parameters = {{histogram->Integral(lower, upper)*histogram->GetBinWidth(1)*3.,
+                    center, .3, 0.}};
+                histogram->GetXaxis()->UnZoom();
+                selected_peak = true;
+            }
+        }
         ana_helper::MipFitState snapshot;
         FitResult result = ana_helper::t0_offset_fit(h_t0_offset[i], c_t0, nth_pad,
-            manual ? &settings : nullptr, &snapshot);
-        if (manual && !snapshot.success)
-            throw std::runtime_error("manual T0 fit failed for "+key);
+            manual || selected_peak ? &settings : nullptr, &snapshot);
+        if ((manual || selected_peak) && !snapshot.success)
+            throw std::runtime_error("selected T0 fit failed for "+key);
         snapshots.push_back(snapshot);
         t0_offset.push_back(result);
         nth_pad++;
@@ -181,6 +206,7 @@ void analyze(TString path, TString particle){
     }
     fit_tree.Write();
     fit_tree.SetDirectory(nullptr);
+    hodo_input::write_metadata(fout, particle);
     fout->Close(); 
 }
 
