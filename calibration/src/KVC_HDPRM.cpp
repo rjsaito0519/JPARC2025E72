@@ -193,6 +193,10 @@ analyze(
     std::vector<Double_t> adc_p0_err; 
     std::vector<Double_t> tdc_p0_val; 
     std::vector<Double_t> tdc_p0_err;
+    std::vector<Int_t> adc_p0_fit_status, adc_p0_fit_valid, adc_p0_fit_covariance_status;
+    std::vector<std::string> adc_p0_fit_method;
+    std::vector<Int_t> tdc_fit_status, tdc_fit_valid, tdc_fit_covariance_status;
+    std::vector<std::string> tdc_fit_method;
     Int_t tdc_ok;
 
     tree->Branch("ch", &ch, "ch/I");
@@ -201,6 +205,14 @@ analyze(
     tree->Branch("tdc_p0_val", &tdc_p0_val);
     tree->Branch("tdc_p0_err", &tdc_p0_err);
     tree->Branch("tdc_ok", &tdc_ok, "tdc_ok/I"); // 0: too few hits around the peak, not written
+    tree->Branch("adc_p0_fit_status", &adc_p0_fit_status);
+    tree->Branch("adc_p0_fit_valid", &adc_p0_fit_valid);
+    tree->Branch("adc_p0_fit_method", &adc_p0_fit_method);
+    tree->Branch("adc_p0_fit_covariance_status", &adc_p0_fit_covariance_status);
+    tree->Branch("tdc_fit_status", &tdc_fit_status);
+    tree->Branch("tdc_fit_valid", &tdc_fit_valid);
+    tree->Branch("tdc_fit_method", &tdc_fit_method);
+    tree->Branch("tdc_fit_covariance_status", &tdc_fit_covariance_status);
     
     for (Int_t i = 0; i < num_ch; i++) {
         ch = i;
@@ -208,16 +220,26 @@ analyze(
         adc_p0_err.clear();
         tdc_p0_val.clear();
         tdc_p0_err.clear();
+        adc_p0_fit_status.clear(); adc_p0_fit_valid.clear(); adc_p0_fit_method.clear(); adc_p0_fit_covariance_status.clear();
+        tdc_fit_status.clear(); tdc_fit_valid.clear(); tdc_fit_method.clear(); tdc_fit_covariance_status.clear();
 
         // -- pedestal (5 values) -----
         for(int j=0; j<5; ++j){
             adc_p0_val.push_back(adc_res[i][j].par[1]);
             adc_p0_err.push_back(adc_res[i][j].err[1]);
+            adc_p0_fit_status.push_back(adc_res[i][j].migrad_stats);
+            adc_p0_fit_valid.push_back(adc_res[i][j].fit_valid);
+            adc_p0_fit_method.push_back(adc_res[i][j].fit_method);
+            adc_p0_fit_covariance_status.push_back(adc_res[i][j].covariance_status);
         }
 
         // -- tdc (1 value) -----
         tdc_p0_val.push_back(tdc_res[i].par[1]);
         tdc_p0_err.push_back(tdc_res[i].err[1]);
+        tdc_fit_status.push_back(tdc_res[i].migrad_stats);
+        tdc_fit_valid.push_back(tdc_res[i].fit_valid);
+        tdc_fit_method.push_back(tdc_res[i].fit_method);
+        tdc_fit_covariance_status.push_back(tdc_res[i].covariance_status);
         tdc_ok = static_cast<Int_t>(tdc_res[i].additional.at(0));
 
         tree->Fill();

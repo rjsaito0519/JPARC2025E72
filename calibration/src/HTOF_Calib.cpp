@@ -901,15 +901,26 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
         TTree* tree = new TTree("tree", "");
         Int_t ch;
         std::vector<Double_t> tdc_p0_val, tdc_p0_err;
+        std::vector<Int_t> tdc_fit_status, tdc_fit_valid, tdc_fit_covariance_status;
+        std::vector<std::string> tdc_fit_method;
         tree->Branch("ch", &ch, "ch/I");
         tree->Branch("tdc_p0_val", &tdc_p0_val);
         tree->Branch("tdc_p0_err", &tdc_p0_err);
+        tree->Branch("tdc_fit_status", &tdc_fit_status);
+        tree->Branch("tdc_fit_valid", &tdc_fit_valid);
+        tree->Branch("tdc_fit_method", &tdc_fit_method);
+        tree->Branch("tdc_fit_covariance_status", &tdc_fit_covariance_status);
         for (Int_t i = 0; i < n_seg; i++) {
             ch = i;
             tdc_p0_val.clear(); tdc_p0_err.clear();
+            tdc_fit_status.clear(); tdc_fit_valid.clear(); tdc_fit_method.clear(); tdc_fit_covariance_status.clear();
             for (Int_t s = 0; s < 3; s++) {
                 tdc_p0_val.push_back(tdc_result[s][i].par[1]);
                 tdc_p0_err.push_back(tdc_result[s][i].err[1]);
+                tdc_fit_status.push_back(tdc_result[s][i].migrad_stats);
+                tdc_fit_valid.push_back(tdc_result[s][i].fit_valid);
+                tdc_fit_method.push_back(tdc_result[s][i].fit_method);
+                tdc_fit_covariance_status.push_back(tdc_result[s][i].covariance_status);
             }
             tree->Fill();
         }
@@ -924,6 +935,10 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
         std::vector<Double_t> adc_p0_val, adc_p1_val, adc_p0_err, adc_p1_err, adc_chi2;
         // fit quality (U, D, S): flag bits documented at ana_helper::htof_adc_fit
         std::vector<Int_t> adc_flag, adc_ndf;
+        std::vector<Int_t> adc_ped_fit_status, adc_ped_fit_valid, adc_ped_fit_covariance_status;
+        std::vector<std::string> adc_ped_fit_method;
+        std::vector<Int_t> adc_mip_fit_status, adc_mip_fit_valid, adc_mip_fit_covariance_status;
+        std::vector<std::string> adc_mip_fit_method;
         tree->Branch("ch", &ch, "ch/I");
         tree->Branch("adc_p0_val", &adc_p0_val);
         tree->Branch("adc_p1_val", &adc_p1_val);
@@ -932,10 +947,20 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
         tree->Branch("adc_flag", &adc_flag);
         tree->Branch("adc_chi2", &adc_chi2);
         tree->Branch("adc_ndf", &adc_ndf);
+        tree->Branch("adc_ped_fit_status", &adc_ped_fit_status);
+        tree->Branch("adc_ped_fit_valid", &adc_ped_fit_valid);
+        tree->Branch("adc_ped_fit_method", &adc_ped_fit_method);
+        tree->Branch("adc_ped_fit_covariance_status", &adc_ped_fit_covariance_status);
+        tree->Branch("adc_mip_fit_status", &adc_mip_fit_status);
+        tree->Branch("adc_mip_fit_valid", &adc_mip_fit_valid);
+        tree->Branch("adc_mip_fit_method", &adc_mip_fit_method);
+        tree->Branch("adc_mip_fit_covariance_status", &adc_mip_fit_covariance_status);
         for (Int_t i = 0; i < n_seg; i++) {
             ch = i;
             adc_p0_val.clear(); adc_p1_val.clear(); adc_p0_err.clear(); adc_p1_err.clear();
             adc_flag.clear(); adc_chi2.clear(); adc_ndf.clear();
+            adc_ped_fit_status.clear(); adc_ped_fit_valid.clear(); adc_ped_fit_method.clear(); adc_ped_fit_covariance_status.clear();
+            adc_mip_fit_status.clear(); adc_mip_fit_valid.clear(); adc_mip_fit_method.clear(); adc_mip_fit_covariance_status.clear();
             for (Int_t s = 0; s < 3; s++) {
                 const FitResult& r = adc_result[s][i];
                 adc_p0_val.push_back(r.par[1]); adc_p0_err.push_back(r.err[1]);   // pedestal
@@ -943,6 +968,14 @@ Bool_t analyze(std::vector<TString> hodo_paths, std::vector<TString> dst_paths, 
                 adc_flag.push_back(static_cast<Int_t>(r.additional[0]));
                 adc_chi2.push_back(r.chi_square);
                 adc_ndf.push_back(r.ndf);
+                adc_ped_fit_status.push_back(r.pedestal_fit_status);
+                adc_ped_fit_valid.push_back(r.pedestal_fit_valid);
+                adc_ped_fit_method.push_back(r.pedestal_fit_method);
+                adc_ped_fit_covariance_status.push_back(r.pedestal_covariance_status);
+                adc_mip_fit_status.push_back(r.migrad_stats);
+                adc_mip_fit_valid.push_back(r.fit_valid);
+                adc_mip_fit_method.push_back(r.fit_method);
+                adc_mip_fit_covariance_status.push_back(r.covariance_status);
             }
             tree->Fill();
         }

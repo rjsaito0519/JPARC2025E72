@@ -181,19 +181,25 @@ void analyze(TString path, TString particle){
     fout->cd();
     tree->Write();
     TTree fit_tree("t0_fit", "Saved T0 Gaussian and fit range");
-    Int_t segment, status, covariance, ndf;
+    Int_t segment, ch_fit, status, covariance, ndf;
     Bool_t success;
+    Bool_t valid;
+    std::string method;
     Double_t parameters[3], range[2], chi_square;
     fit_tree.Branch("seg", &segment);
+    fit_tree.Branch("ch", &ch_fit);
     fit_tree.Branch("parameters", parameters, "parameters[3]/D");
     fit_tree.Branch("range", range, "range[2]/D");
     fit_tree.Branch("status", &status);
     fit_tree.Branch("covariance", &covariance);
     fit_tree.Branch("ndf", &ndf);
     fit_tree.Branch("success", &success);
+    fit_tree.Branch("valid", &valid);
+    fit_tree.Branch("method", &method);
     fit_tree.Branch("chi_square", &chi_square);
     for (segment = 0; segment < conf.num_of_ch.at("bh2"); ++segment) {
         const auto& snapshot = snapshots[segment];
+        ch_fit = segment;
         std::copy_n(snapshot.parameters.begin(), 3, parameters);
         range[0] = snapshot.lower;
         range[1] = snapshot.upper;
@@ -201,6 +207,8 @@ void analyze(TString path, TString particle){
         covariance = snapshot.covariance;
         ndf = snapshot.ndf;
         success = snapshot.success;
+        valid = snapshot.success || (snapshot.function == "moments" && snapshot.statistics.valid);
+        method = snapshot.function;
         chi_square = snapshot.chi_square;
         fit_tree.Fill();
     }

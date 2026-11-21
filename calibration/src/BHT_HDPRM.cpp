@@ -159,6 +159,10 @@ void analyze(TString path, TString particle){
     Int_t ch;
     std::vector<Double_t> adc_p0_val, adc_p1_val, tdc_p0_val; 
     std::vector<Double_t> adc_p0_err, adc_p1_err, tdc_p0_err; 
+    std::vector<Int_t> tdc_fit_status, tdc_fit_valid, tdc_fit_covariance_status;
+    std::vector<std::string> tdc_fit_method;
+    std::vector<Int_t> tot_fit_status, tot_fit_valid, tot_fit_covariance_status;
+    std::vector<std::string> tot_fit_method;
     tree->Branch("ch", &ch, "ch/I");
     tree->Branch("adc_p0_val", &adc_p0_val);
     tree->Branch("adc_p1_val", &adc_p1_val);
@@ -166,11 +170,21 @@ void analyze(TString path, TString particle){
     tree->Branch("adc_p0_err", &adc_p0_err);
     tree->Branch("adc_p1_err", &adc_p1_err);
     tree->Branch("tdc_p0_err", &tdc_p0_err);
+    tree->Branch("tdc_fit_status", &tdc_fit_status);
+    tree->Branch("tdc_fit_valid", &tdc_fit_valid);
+    tree->Branch("tdc_fit_method", &tdc_fit_method);
+    tree->Branch("tdc_fit_covariance_status", &tdc_fit_covariance_status);
+    tree->Branch("tot_fit_status", &tot_fit_status);
+    tree->Branch("tot_fit_valid", &tot_fit_valid);
+    tree->Branch("tot_fit_method", &tot_fit_method);
+    tree->Branch("tot_fit_covariance_status", &tot_fit_covariance_status);
     
     for (Int_t i = 0; i < conf.num_of_ch.at("bht"); i++) {
         ch = i;
         adc_p0_val.clear(); adc_p1_val.clear(); tdc_p0_val.clear();
         adc_p0_err.clear(); adc_p1_err.clear(); tdc_p0_err.clear();
+        tdc_fit_status.clear(); tdc_fit_valid.clear(); tdc_fit_method.clear(); tdc_fit_covariance_status.clear();
+        tot_fit_status.clear(); tot_fit_valid.clear(); tot_fit_method.clear(); tot_fit_covariance_status.clear();
 
         // -- pedestal -----
         adc_p0_val.push_back(0.0);
@@ -183,12 +197,24 @@ void analyze(TString path, TString particle){
         adc_p1_val.push_back(adc_down[i].par[1]);
         adc_p1_err.push_back(adc_up[i].err[1]);
         adc_p1_err.push_back(adc_down[i].err[1]);
+        for (const auto* fit : {&adc_up[i], &adc_down[i]}) {
+            tot_fit_status.push_back(fit->migrad_stats);
+            tot_fit_valid.push_back(fit->fit_valid);
+            tot_fit_method.push_back(fit->fit_method);
+            tot_fit_covariance_status.push_back(fit->covariance_status);
+        }
     
         // -- tdc -----
         tdc_p0_val.push_back(tdc_up[i].par[1]);
         tdc_p0_val.push_back(tdc_down[i].par[1]);
         tdc_p0_err.push_back(tdc_up[i].err[1]);
         tdc_p0_err.push_back(tdc_down[i].err[1]);
+        for (const auto* fit : {&tdc_up[i], &tdc_down[i]}) {
+            tdc_fit_status.push_back(fit->migrad_stats);
+            tdc_fit_valid.push_back(fit->fit_valid);
+            tdc_fit_method.push_back(fit->fit_method);
+            tdc_fit_covariance_status.push_back(fit->covariance_status);
+        }
     
         tree->Fill();
     }

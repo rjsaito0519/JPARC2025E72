@@ -188,6 +188,10 @@ analyze(
     std::vector<Double_t> adc_p0_err; 
     std::vector<Double_t> tdc_p0_val; 
     std::vector<Double_t> tdc_p0_err;
+    std::vector<Int_t> tdc_fit_status, tdc_fit_valid, tdc_fit_covariance_status;
+    std::vector<std::string> tdc_fit_method;
+    std::vector<Int_t> adc_ped_fit_status, adc_ped_fit_valid, adc_ped_fit_covariance_status;
+    std::vector<std::string> adc_ped_fit_method;
     Int_t adc_ok;
 
     tree->Branch("ch", &ch, "ch/I");
@@ -195,6 +199,14 @@ analyze(
     tree->Branch("adc_p0_err", &adc_p0_err);
     tree->Branch("tdc_p0_val", &tdc_p0_val);
     tree->Branch("tdc_p0_err", &tdc_p0_err);
+    tree->Branch("tdc_fit_status", &tdc_fit_status);
+    tree->Branch("tdc_fit_valid", &tdc_fit_valid);
+    tree->Branch("tdc_fit_method", &tdc_fit_method);
+    tree->Branch("tdc_fit_covariance_status", &tdc_fit_covariance_status);
+    tree->Branch("adc_ped_fit_status", &adc_ped_fit_status);
+    tree->Branch("adc_ped_fit_valid", &adc_ped_fit_valid);
+    tree->Branch("adc_ped_fit_method", &adc_ped_fit_method);
+    tree->Branch("adc_ped_fit_covariance_status", &adc_ped_fit_covariance_status);
     tree->Branch("adc_ok", &adc_ok, "adc_ok/I"); // 0: broad pedestal hidden by the signal, not written
     tree->Branch("tdc_ok", &tdc_ok, "tdc_ok/I"); // 0: offset outside params.h bac_tdc_window, not written
     
@@ -204,17 +216,27 @@ analyze(
         adc_p0_err.clear();
         tdc_p0_val.clear();
         tdc_p0_err.clear();
+        tdc_fit_status.clear(); tdc_fit_valid.clear(); tdc_fit_method.clear(); tdc_fit_covariance_status.clear();
+        adc_ped_fit_status.clear(); adc_ped_fit_valid.clear(); adc_ped_fit_method.clear(); adc_ped_fit_covariance_status.clear();
 
         // -- pedestal -----
         adc_p0_val.push_back(adc_res[i].par[1]);
         adc_p0_err.push_back(adc_res[i].err[1]);
         adc_ok = static_cast<Int_t>(adc_res[i].additional.at(0));
+        adc_ped_fit_status.push_back(adc_res[i].migrad_stats);
+        adc_ped_fit_valid.push_back(adc_res[i].fit_valid);
+        adc_ped_fit_method.push_back(adc_res[i].fit_method);
+        adc_ped_fit_covariance_status.push_back(adc_res[i].covariance_status);
 
         // -- tdc (common) -----
         // BAC TDC is essentially the sum (seg 4). 
         // We fill it for all segments including segment 4.
         tdc_p0_val.push_back(tdc_res.par[1]);
         tdc_p0_err.push_back(tdc_res.err[1]);
+        tdc_fit_status.push_back(tdc_res.migrad_stats);
+        tdc_fit_valid.push_back(tdc_res.fit_valid);
+        tdc_fit_method.push_back(tdc_res.fit_method);
+        tdc_fit_covariance_status.push_back(tdc_res.covariance_status);
 
         tree->Fill();
     }

@@ -19,6 +19,13 @@ struct FitResult {
     Double_t chi_square = 0.0;
     Int_t ndf = 0;
     Int_t migrad_stats = -1;
+    Int_t covariance_status = -1;
+    Bool_t fit_valid = kFALSE;
+    std::string fit_method = "none";
+    Int_t pedestal_fit_status = -1;
+    Int_t pedestal_covariance_status = -1;
+    Bool_t pedestal_fit_valid = kFALSE;
+    std::string pedestal_fit_method = "none";
     std::vector<Double_t> additional; // 何か追加で値を返したいときのコンテナ
 };
 

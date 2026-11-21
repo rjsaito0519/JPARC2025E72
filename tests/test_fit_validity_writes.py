@@ -100,19 +100,127 @@ class HdprmUpdateTests(unittest.TestCase):
         tree = {
             "ch": np.array([0.0]),
             "tdc_p0_val": np.array([[float("nan")]]),
+            "tdc_fit_status": np.array([[0]]),
+            "tdc_fit_valid": np.array([[1]]),
+            "tdc_fit_method": np.array([["gaussian"]]),
             "adc_p0_val": np.array([[10.0]]),
             "adc_p1_val": np.array([[2.0]]),
+            "adc_ped_fit_status": np.array([[0]]),
+            "adc_ped_fit_valid": np.array([[1]]),
+            "adc_ped_fit_method": np.array([["gaussian"]]),
+            "adc_mip_fit_status": np.array([[0]]),
+            "adc_mip_fit_valid": np.array([[1]]),
+            "adc_mip_fit_method": np.array([["landau"]]),
         }
         data = self.hd.ud_counter_rows(tree, cid=2, n_ud=1)
         self.assertIn("2-0-0-0-0", data)
         self.assertNotIn("2-0-0-1-0", data)
+
+    def test_ud_counter_skips_finite_failed_fit(self):
+        tree = {
+            "ch": np.array([0.0]),
+            "tdc_p0_val": np.array([[123.0]]),
+            "tdc_fit_status": np.array([[4]]),
+            "tdc_fit_valid": np.array([[0]]),
+            "tdc_fit_method": np.array([["gaussian"]]),
+            "adc_p0_val": np.array([[10.0]]),
+            "adc_p1_val": np.array([[2.0]]),
+            "adc_ped_fit_status": np.array([[0]]),
+            "adc_ped_fit_valid": np.array([[1]]),
+            "adc_ped_fit_method": np.array([["gaussian"]]),
+            "adc_mip_fit_status": np.array([[0]]),
+            "adc_mip_fit_valid": np.array([[1]]),
+            "adc_mip_fit_method": np.array([["landau"]]),
+        }
+        data = self.hd.ud_counter_rows(tree, cid=2, n_ud=1)
+        self.assertIn("2-0-0-0-0", data)
+        self.assertNotIn("2-0-0-1-0", data)
+
+    def test_ud_counter_accepts_valid_low_stat_fallback(self):
+        tree = {
+            "ch": np.array([0.0]),
+            "tdc_p0_val": np.array([[123.0]]),
+            "tdc_fit_status": np.array([[-1]]),
+            "tdc_fit_valid": np.array([[1]]),
+            "tdc_fit_method": np.array([["moments"]]),
+        }
+        data = self.hd.ud_counter_rows(tree, cid=2, n_ud=1)
+        self.assertIn("2-0-0-1-0", data)
+
+    def test_bht_tot_uses_tot_fit_status(self):
+        tree = {
+            "ch": np.array([0.0]),
+            "adc_p0_val": np.array([[0.0]]),
+            "adc_p1_val": np.array([[1.7]]),
+            "tot_fit_status": np.array([[4]]),
+            "tot_fit_valid": np.array([[0]]),
+            "tot_fit_method": np.array([["landau"]]),
+        }
+        data = self.hd.ud_counter_rows(tree, cid=8, n_ud=1, adc_kind="tot")
+        self.assertNotIn("8-0-0-0-0", data)
+
+    def test_old_output_without_fit_status_is_rejected(self):
+        tree = {
+            "ch": np.array([0.0]),
+            "tdc_p0_val": np.array([[123.0]]),
+        }
+        with self.assertRaises(SystemExit):
+            self.hd.ud_counter_rows(tree, cid=2, n_ud=1)
+
+    def test_sfv_requires_only_tdc_status(self):
+        tree = {
+            "ch": np.array([0.0]),
+            "tdc_p0_val": np.array([[123.0]]),
+            "tdc_fit_status": np.array([[0]]),
+            "tdc_fit_valid": np.array([[1]]),
+            "tdc_fit_method": np.array([["gaussian"]]),
+        }
+        with mock.patch.object(self.hd, "read_tree", return_value=tree), \
+             mock.patch.object(self.hd.config, "DETECTOR_I_LIST", {"SFV": 10}), \
+             mock.patch.object(self.hd.config, "DETECTOR_N_UD_LIST", {"SFV": 1}):
+            data = self.hd.make_dictdata("/dev/null", "SFV")
+        self.assertIn("10-0-0-1-0", data)
 
     def test_t0_skips_nan(self):
         tree = {
             "ch": np.array([1.0]),
             "offset_p0_val": np.array([[float("nan")]]),
         }
+        fit_tree = {
+            "ch": np.array([1]),
+            "status": np.array([-1]),
+            "valid": np.array([1]),
+            "method": np.array(["moments"]),
+        }
+        fake = mock.MagicMock()
+        fake.__contains__.return_value = True
+        fake.__getitem__.side_effect = lambda key: SimpleNamespace(
+            arrays=lambda library: fit_tree if key == "t0_fit" else tree
+        )
         with mock.patch.object(self.hd, "read_tree", return_value=tree), \
+             mock.patch.object(self.hd.uproot, "open", return_value=fake), \
+             mock.patch.object(self.hd.config, "DETECTOR_I_LIST", {"BH2": 5}):
+            data = self.hd.make_t0_offset_dictdata("/dev/null")
+        self.assertEqual(data, {})
+
+    def test_t0_skips_finite_failed_fit(self):
+        tree = {
+            "ch": np.array([1.0]),
+            "offset_p0_val": np.array([[123.0]]),
+        }
+        fit_tree = {
+            "ch": np.array([1]),
+            "status": np.array([4]),
+            "valid": np.array([0]),
+            "method": np.array(["gaussian"]),
+        }
+        fake = mock.MagicMock()
+        fake.__contains__.return_value = True
+        fake.__getitem__.side_effect = lambda key: SimpleNamespace(
+            arrays=lambda library: fit_tree if key == "t0_fit" else tree
+        )
+        with mock.patch.object(self.hd, "read_tree", return_value=tree), \
+             mock.patch.object(self.hd.uproot, "open", return_value=fake), \
              mock.patch.object(self.hd.config, "DETECTOR_I_LIST", {"BH2": 5}):
             data = self.hd.make_t0_offset_dictdata("/dev/null")
         self.assertEqual(data, {})
@@ -122,7 +230,13 @@ class HdprmUpdateTests(unittest.TestCase):
             "ch": [0],
             "tdc_ok": [1],
             "tdc_p0_val": [[123.0]],
+            "tdc_fit_status": [[0]],
+            "tdc_fit_valid": [[1]],
+            "tdc_fit_method": [["gaussian"]],
             "adc_p0_val": [[float("nan"), 10.0, 10.0, 10.0, 10.0]],
+            "adc_p0_fit_status": [[0, 0, 0, 0, 0]],
+            "adc_p0_fit_valid": [[1, 1, 1, 1, 1]],
+            "adc_p0_fit_method": [["mode"] * 5],
         }
         data = self.hd.kvc_rows(tree, 6, 5)
         self.assertNotIn("6-0-0-0-0", data)
@@ -137,7 +251,13 @@ class HdprmUpdateTests(unittest.TestCase):
             "adc_ok": np.array([1, 1]),
             "tdc_ok": np.array([1]),
             "tdc_p0_val": np.array([[100.0]]),
+            "tdc_fit_status": np.array([[0]]),
+            "tdc_fit_valid": np.array([[1]]),
+            "tdc_fit_method": np.array([["gaussian"]]),
             "adc_p0_val": np.array([[float("nan")], [5.0]]),
+            "adc_ped_fit_status": np.array([[0], [0]]),
+            "adc_ped_fit_valid": np.array([[1], [1]]),
+            "adc_ped_fit_method": np.array([["gaussian"], ["gaussian"]]),
         }
         data = self.hd.bac_rows(tree, cid=3)
         self.assertNotIn("3-0-0-0-0", data)
@@ -148,6 +268,9 @@ class HdprmUpdateTests(unittest.TestCase):
         tree = {
             "ch": np.array([0.0]),
             "tdc_p0_val": np.array([[1.0, float("inf"), 3.0]]),
+            "tdc_fit_status": np.array([[0, 4, 0]]),
+            "tdc_fit_valid": np.array([[1, 0, 1]]),
+            "tdc_fit_method": np.array([["gaussian", "gaussian", "moments"]]),
         }
         data = self.hd.htof_tdc_rows(tree, cid=7)
         self.assertIn("7-0-0-1-0", data)
@@ -159,6 +282,12 @@ class HdprmUpdateTests(unittest.TestCase):
             "ch": np.array([0.0]),
             "adc_p0_val": np.array([[1.0, float("nan"), 3.0]]),
             "adc_p1_val": np.array([[10.0, 20.0, 30.0]]),
+            "adc_ped_fit_status": np.array([[0, 0, 0]]),
+            "adc_ped_fit_valid": np.array([[1, 1, 1]]),
+            "adc_ped_fit_method": np.array([["gaussian"] * 3]),
+            "adc_mip_fit_status": np.array([[0, 0, 0]]),
+            "adc_mip_fit_valid": np.array([[1, 1, 1]]),
+            "adc_mip_fit_method": np.array([["landau"] * 3]),
         }
         fake = mock.MagicMock()
         fake.__getitem__.return_value.arrays.return_value = tree

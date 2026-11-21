@@ -1,3 +1,4 @@
+#include <cmath>
 #include <stdexcept>
 
 #include <TGraphErrors.h>
@@ -9,6 +10,36 @@
 #include "ana_helper.h"
 
 namespace ana_helper {
+
+    static Bool_t valid_root_fit(TF1* function, Int_t status, Int_t covariance, Bool_t require_covariance = kTRUE) {
+        if ((status != 0 && status != 4000) || function->GetNDF() <= 0
+            || !std::isfinite(function->GetChisquare())
+            || (require_covariance && covariance < 2)) return kFALSE;
+        for (Int_t i = 0; i < function->GetNpar(); ++i) {
+            if (!std::isfinite(function->GetParameter(i))) return kFALSE;
+        }
+        return kTRUE;
+    }
+
+    static void set_fit_result(FitResult& result, TF1* function, Int_t status, Int_t covariance,
+                               const std::string& method, Bool_t require_covariance = kTRUE) {
+        result.migrad_stats = status;
+        result.covariance_status = covariance;
+        result.fit_valid = valid_root_fit(function, status, covariance, require_covariance);
+        result.fit_method = result.fit_valid ? method : "invalid";
+    }
+
+    static Bool_t valid_peak_fit(TF1* function, Int_t status, Int_t covariance) {
+        return describe_mip_fit(function, status, covariance).success;
+    }
+
+    static void set_peak_fit_result(FitResult& result, TF1* function, Int_t status, Int_t covariance,
+                                    const std::string& method) {
+        result.migrad_stats = status;
+        result.covariance_status = covariance;
+        result.fit_valid = valid_peak_fit(function, status, covariance);
+        result.fit_method = result.fit_valid ? method : "invalid";
+    }
 
     // ____________________________________________________________________________________________
     void set_tdc_search_range(TH1D *h) {
@@ -91,13 +122,17 @@ namespace ana_helper {
             f_fit->SetLineColor(kOrange);
             f_fit->SetLineWidth(2);
             f_fit->SetNpx(1000);
-            h->Fit(f_fit, fit_option.Data(), "", lower, upper);
+            TFitResultPtr fitted = h->Fit(f_fit, fit_option + "S", "", lower, upper);
 
             // -- fill result -----
             for (Int_t i = 0, n_par = f_fit->GetNpar(); i < n_par; i++) {
                 result.par.push_back(f_fit->GetParameter(i));
                 result.err.push_back(f_fit->GetParError(i));
             }
+            result.chi_square = f_fit->GetChisquare();
+            result.ndf = f_fit->GetNDF();
+            set_fit_result(result, f_fit, int(fitted),
+                           fitted.Get() ? fitted->CovMatrixStatus() : -1, "gaussian");
 
             // -- draw figure -----
             h->GetXaxis()->SetRangeUser(
@@ -117,6 +152,11 @@ namespace ana_helper {
             
             result.par.push_back(h->GetStdDev());
             result.err.push_back(h->GetStdDevError());
+            result.migrad_stats = -1;
+            result.fit_method = "moments";
+            result.fit_valid = evnum_within_range > 0.0
+                && std::isfinite(result.par[1]) && std::isfinite(result.par[2])
+                && result.par[2] >= 0.0;
 
             // -- draw figure -----
             h->GetXaxis()->SetRangeUser(
@@ -170,6 +210,9 @@ namespace ana_helper {
         result.par = {n, seed, 0.0};
         result.err = {9999.0, 9999.0, 9999.0};
         result.additional = {0.0};
+        result.migrad_stats = -1;
+        result.fit_method = "seed_fallback";
+        result.fit_valid = n > 0.0 && std::isfinite(seed);
         h->GetXaxis()->SetRangeUser(seed - 15.0*kvc_tdc_seed_sigma, seed + 15.0*kvc_tdc_seed_sigma);
         h->Draw();
         TLatex* comment = new TLatex();
@@ -204,9 +247,10 @@ namespace ana_helper {
         Double_t mu = seed, sigma = kvc_tdc_seed_sigma;
         TF1 *f_fit = new TF1(Form("gaus_%s", h->GetName()), "gausn", mu - 1.5*sigma, mu + 2.0*sigma);
         f_fit->SetParameters(n, mu, sigma);
+        TFitResultPtr fitted;
         for (Int_t iround = 0; iround < 2; ++iround) {
             f_fit->SetRange(mu - 1.5*sigma, mu + 2.0*sigma);
-            h->Fit(f_fit, "0QEMRL", "", mu - 1.5*sigma, mu + 2.0*sigma);
+            fitted = h->Fit(f_fit, "0QEMRLS", "", mu - 1.5*sigma, mu + 2.0*sigma);
             mu = f_fit->GetParameter(1);
             sigma = std::abs(f_fit->GetParameter(2));
         }
@@ -217,6 +261,9 @@ namespace ana_helper {
         }
         result.par[2] = sigma;
         result.additional = {1.0};
+        result.chi_square = f_fit->GetChisquare();
+        result.ndf = f_fit->GetNDF();
+        set_fit_result(result, f_fit, int(fitted), fitted.Get() ? fitted->CovMatrixStatus() : -1, "gaussian");
         kvc_tdc_draw(h, f_fit, mu, sigma);
         c->Update();
         return result;
@@ -266,9 +313,15 @@ namespace ana_helper {
         f_fit_ped->SetLineColor(kOrange);
         f_fit_ped->SetLineWidth(2);
         f_fit_ped->SetNpx(1000);
-        h->Fit(f_fit_ped, "0QEMR", "", par[1]-ped_n_sigma.first*par[2], par[1]+ped_n_sigma.second*par[2]);
+        TFitResultPtr fitted_ped = h->Fit(f_fit_ped, "0QEMRS", "",
+            par[1]-ped_n_sigma.first*par[2], par[1]+ped_n_sigma.second*par[2]);
 
         FitResult result;
+        result.pedestal_fit_status = int(fitted_ped);
+        result.pedestal_covariance_status = fitted_ped.Get() ? fitted_ped->CovMatrixStatus() : -1;
+        result.pedestal_fit_valid = valid_root_fit(f_fit_ped, result.pedestal_fit_status,
+            result.pedestal_covariance_status);
+        result.pedestal_fit_method = result.pedestal_fit_valid ? "gaussian" : "invalid";
         for (Int_t i = 0, n_par = f_fit_ped->GetNpar(); i < n_par; i++) {
             result.par.push_back(f_fit_ped->GetParameter(i));
             result.err.push_back(f_fit_ped->GetParError(i));
@@ -313,7 +366,12 @@ namespace ana_helper {
                 mip_state->statistics = summary;
                 mip_state->status = summary.valid ? 0 : -1;
                 mip_state->success = summary.valid;
+                mip_state->status = -1;
+                mip_state->covariance = -1;
             }
+            result.migrad_stats = -1;
+            result.fit_method = "quantile_mean";
+            result.fit_valid = summary.valid;
             h->GetXaxis()->SetRangeUser(mip_range_left, statistics_right);
             h->Draw();
             for (double position : {summary.lower, summary.upper, summary.mean, summary.median}) {
@@ -344,6 +402,10 @@ namespace ana_helper {
             if (fitted_state.function == "landau")
                 result.par[4] = fitted->GetMaximumX(fitted_state.lower, fitted_state.upper);
             result.chi_square = fitted_state.chi_square;
+            result.migrad_stats = fitted_state.status;
+            result.covariance_status = fitted_state.covariance;
+            result.fit_valid = fitted_state.success;
+            result.fit_method = fitted_state.success ? fitted_state.function : "invalid";
             h->Draw();
             fitted->Draw("same");
             delete f_prefit;
@@ -439,10 +501,12 @@ namespace ana_helper {
                 chi_square_l = f_fit_mip_l->GetChisquare();
                 p_value_l = TMath::Prob(chi_square_l, f_fit_mip_l->GetNDF());
 
-                if (chi_square_g <= chi_square_l) {
+                const Bool_t valid_g = valid_peak_fit(f_fit_mip_g, fit_status_g, covariance_g);
+                const Bool_t valid_l = valid_peak_fit(f_fit_mip_l, fit_status_l, covariance_l);
+                if ((valid_g && valid_l && chi_square_g <= chi_square_l) || (valid_g && !valid_l)) {
                     fit_mean  = f_fit_mip_g->GetParameter(1);
                     fit_sigma = f_fit_mip_g->GetParameter(2);
-                } else {
+                } else if (valid_l) {
                     fit_mean  = f_fit_mip_l->GetParameter(1);
                     fit_sigma = f_fit_mip_l->GetParameter(2);
                 }
@@ -455,7 +519,9 @@ namespace ana_helper {
             // std::cout << flag << std::endl;
 
             // if (p_value_g >= p_value_l) {
-            if (chi_square_g <= chi_square_l) {
+            const Bool_t valid_g = valid_peak_fit(f_fit_mip_g, fit_status_g, covariance_g);
+            const Bool_t valid_l = valid_peak_fit(f_fit_mip_l, fit_status_l, covariance_l);
+            if ((valid_g && valid_l && chi_square_g <= chi_square_l) || (valid_g && !valid_l) || (!valid_g && !valid_l)) {
                 for (Int_t i = 0; i < 3; i++) {
                     result.par.push_back(f_fit_mip_g->GetParameter(i));
                     result.err.push_back(f_fit_mip_g->GetParError(i));
@@ -470,6 +536,7 @@ namespace ana_helper {
                 f_fit_mip_g->SetNpx(1000);
                 f_fit_mip_g->Draw("same");
                 if (mip_state) *mip_state = describe_mip_fit(f_fit_mip_g, fit_status_g, covariance_g);
+                set_peak_fit_result(result, f_fit_mip_g, fit_status_g, covariance_g, "gaussian");
                 result.chi_square = chi_square_g;
                 delete f_fit_mip_l;
             } else {
@@ -489,6 +556,7 @@ namespace ana_helper {
                 f_fit_mip_l->SetNpx(1000);
                 f_fit_mip_l->Draw("same");
                 if (mip_state) *mip_state = describe_mip_fit(f_fit_mip_l, fit_status_l, covariance_l);
+                set_peak_fit_result(result, f_fit_mip_l, fit_status_l, covariance_l, "landau");
                 result.chi_square = chi_square_l;
                 delete f_fit_mip_g;
             }
@@ -516,7 +584,13 @@ namespace ana_helper {
                 mip_state->upper = std::min(h->GetXaxis()->GetXmax(), result.par[4] + 2.2*mip_state->parameters[2]);
                 mip_state->function = "mean";
                 mip_state->statistics = summarize_mip_statistics(h, mip_range_left, window_right, adc_mip_qlo, adc_mip_qhi);
+                mip_state->status = -1;
+                mip_state->covariance = -1;
             }
+            result.migrad_stats = -1;
+            result.fit_method = "quantile_mean";
+            result.fit_valid = mip_state ? mip_state->statistics.valid
+                : summarize_mip_statistics(h, mip_range_left, window_right, adc_mip_qlo, adc_mip_qhi).valid;
 
             // -- draw figure -----
             h->GetXaxis()->SetRangeUser(
@@ -645,7 +719,8 @@ namespace ana_helper {
         FitResult result;
         result.chi_square = 0.0;
         result.ndf = 0;
-        result.migrad_stats = 0;
+        result.migrad_stats = -1;
+        result.fit_method = "invalid";
         Int_t flag = 0;
 
         // -- pedestal: fit from the raw (species-unselected) histogram -----
@@ -662,7 +737,12 @@ namespace ana_helper {
         f_fit_ped->SetLineColor(kOrange);
         f_fit_ped->SetLineWidth(2);
         f_fit_ped->SetNpx(1000);
-        h_raw->Fit(f_fit_ped, "0QEMR", "", p1-2.0*p2, p1+2.0*p2);
+        TFitResultPtr fitted_ped = h_raw->Fit(f_fit_ped, "0QEMRS", "", p1-2.0*p2, p1+2.0*p2);
+        result.pedestal_fit_status = int(fitted_ped);
+        result.pedestal_covariance_status = fitted_ped.Get() ? fitted_ped->CovMatrixStatus() : -1;
+        result.pedestal_fit_valid = valid_root_fit(f_fit_ped, result.pedestal_fit_status,
+            result.pedestal_covariance_status);
+        result.pedestal_fit_method = result.pedestal_fit_valid ? "gaussian" : "invalid";
         for (Int_t i = 0; i < 3; i++) {
             result.par.push_back(f_fit_ped->GetParameter(i));
             result.err.push_back(f_fit_ped->GetParError(i));
@@ -770,13 +850,13 @@ namespace ana_helper {
             f_g->SetParameters(amp, sel_m, sel_s*0.9, bg);
             f_g->SetParLimits(1, fit_lo, fit_hi);
             f_g->SetParLimits(3, 0.0, h_sel->GetMaximum());
-            h_sel->Fit(f_g, "0QEMR", "", fit_lo, fit_hi);
+            TFitResultPtr fitted_g = h_sel->Fit(f_g, "0QEMRS", "", fit_lo, fit_hi);
 
             TF1 *f_l = new TF1(Form("mip_landau_%s", h_selected->GetName()), "landaun(0)+pol0(3)", fit_lo, fit_hi);
             f_l->SetParameters(amp, sel_m, sel_s*0.9, bg);
             f_l->SetParLimits(1, fit_lo, fit_hi);
             f_l->SetParLimits(3, 0.0, h_sel->GetMaximum());
-            h_sel->Fit(f_l, "0QEMR", "", fit_lo, fit_hi);
+            TFitResultPtr fitted_l = h_sel->Fit(f_l, "0QEMRS", "", fit_lo, fit_hi);
 
             // Hint channels: the fit can stop in a local minimum (landau + const trading width
             // for background) depending on the initial width; start from several widths and keep
@@ -786,22 +866,45 @@ namespace ana_helper {
                     std::vector<Double_t> best(f->GetNpar());
                     for (Int_t k = 0; k < f->GetNpar(); ++k) best[k] = f->GetParameter(k);
                     Double_t best_chi2 = f->GetChisquare();
+                    const TFitResultPtr& initial_fit = (f == f_g) ? fitted_g : fitted_l;
+                    Int_t best_status = int(initial_fit);
+                    Int_t best_covariance = initial_fit.Get() ? initial_fit->CovMatrixStatus() : -1;
+                    Bool_t best_valid = valid_peak_fit(f, best_status, best_covariance);
                     for (Double_t frac : {0.1, 0.2, 0.3}) {
                         f->SetParameters(amp, sel_m, frac*(fit_hi - fit_lo), bg);
-                        h_sel->Fit(f, "0QEMR", "", fit_lo, fit_hi);
-                        if (f->GetChisquare() < best_chi2) {
+                        TFitResultPtr fitted = h_sel->Fit(f, "0QEMRS", "", fit_lo, fit_hi);
+                        const Int_t status = int(fitted);
+                        const Int_t covariance = fitted.Get() ? fitted->CovMatrixStatus() : -1;
+                        const Bool_t fit_valid = valid_peak_fit(f, status, covariance);
+                        if (fit_valid && (!best_valid || f->GetChisquare() < best_chi2)) {
                             best_chi2 = f->GetChisquare();
+                            best_status = status;
+                            best_covariance = covariance;
+                            best_valid = true;
                             for (Int_t k = 0; k < f->GetNpar(); ++k) best[k] = f->GetParameter(k);
                         }
                     }
                     f->SetParameters(best.data());
-                    h_sel->Fit(f, "0QEMR", "", fit_lo, fit_hi);
+                    if (f == f_g)
+                        fitted_g = h_sel->Fit(f, "0QEMRS", "", fit_lo, fit_hi);
+                    else
+                        fitted_l = h_sel->Fit(f, "0QEMRS", "", fit_lo, fit_hi);
                 }
             }
 
-            const Bool_t take_gauss = (model == 1) || (model == 0 && f_g->GetChisquare() <= f_l->GetChisquare());
+            const Int_t status_g = int(fitted_g), status_l = int(fitted_l);
+            const Int_t covariance_g = fitted_g.Get() ? fitted_g->CovMatrixStatus() : -1;
+            const Int_t covariance_l = fitted_l.Get() ? fitted_l->CovMatrixStatus() : -1;
+            const Bool_t valid_g = valid_peak_fit(f_g, status_g, covariance_g);
+            const Bool_t valid_l = valid_peak_fit(f_l, status_l, covariance_l);
+            const Bool_t take_gauss = model == 1 || (model == 0
+                && ((valid_g && valid_l && f_g->GetChisquare() <= f_l->GetChisquare())
+                    || (valid_g && !valid_l) || (!valid_g && !valid_l)));
             if (take_gauss) { f_best = f_g; delete f_l; }
             else            { f_best = f_l; delete f_g; }
+            const Bool_t selected_fit_valid = (f_best == f_g) ? valid_g : valid_l;
+            const Int_t selected_fit_status = (f_best == f_g) ? status_g : status_l;
+            const Int_t selected_fit_covariance = (f_best == f_g) ? covariance_g : covariance_l;
             for (Int_t i = 0; i < 3; i++) {
                 result.par.push_back(f_best->GetParameter(i));
                 result.err.push_back(f_best->GetParError(i));
@@ -810,6 +913,10 @@ namespace ana_helper {
             if (f_best == f_l) result.par[4] = f_best->GetMaximumX(fit_lo, fit_hi);
             result.chi_square = f_best->GetChisquare();
             result.ndf        = f_best->GetNDF();
+            result.migrad_stats = selected_fit_status;
+            result.covariance_status = selected_fit_covariance;
+            result.fit_valid = selected_fit_valid;
+            result.fit_method = selected_fit_valid ? (f_best == f_g ? "gaussian" : "landau") : "invalid";
             if (result.ndf < 10) flag |= 4;
             Double_t pm = f_best->GetParameter(1);
             if (std::fabs(pm - fit_lo) < 1e-3*fit_hi || std::fabs(pm - fit_hi) < 1e-3*fit_hi) flag |= 8;
@@ -819,6 +926,9 @@ namespace ana_helper {
             result.par.push_back(n_win);             result.err.push_back(err_value);
             result.par.push_back(h_sel->GetMean());  result.err.push_back(h_sel->GetMeanError());
             result.par.push_back(h_sel->GetStdDev()); result.err.push_back(h_sel->GetStdDevError());
+            result.migrad_stats = -1;
+            result.fit_method = "moments";
+            result.fit_valid = false;
         }
         result.additional = { static_cast<Double_t>(flag), static_cast<Double_t>(n_rebin), cut, seed_m, seed_s };
 
@@ -950,9 +1060,13 @@ namespace ana_helper {
         FitResult result;
         result.par.assign(base.par.begin(), base.par.begin() + 3);
         result.err.assign(base.err.begin(), base.err.begin() + 3);
+        result.pedestal_fit_status = base.pedestal_fit_status;
+        result.pedestal_covariance_status = base.pedestal_covariance_status;
+        result.pedestal_fit_valid = base.pedestal_fit_valid;
+        result.pedestal_fit_method = base.pedestal_fit_method;
         result.chi_square = 0.0;
         result.ndf = 0;
-        result.migrad_stats = 0;
+        result.migrad_stats = -1;
         Int_t flag = 32;
         const Double_t ped = base.par[1];
         const Double_t cut = base.additional.size() > 2 ? base.additional[2] : ped;
@@ -987,7 +1101,7 @@ namespace ana_helper {
         f->SetParLimits(5, 5.0, u);
         f->SetParLimits(6, 0.0, 0.05*sp_amp);
         f->SetNpx(1000);
-        h->Fit(f, "0QRL");
+        TFitResultPtr fitted = h->Fit(f, "0QRLS");
         if (use_hint) {
             // start from several hump positions / widths and keep the best likelihood
             std::vector<Double_t> best(f->GetNpar());
@@ -995,14 +1109,14 @@ namespace ana_helper {
             Double_t best_chi2 = f->GetChisquare();
             for (Double_t mfrac : {0.3, 0.7}) for (Double_t wfrac : {0.1, 0.2, 0.35}) {
                 f->SetParameters(sp_amp, sp, 12.0, 0.3*sp_amp, mpv_lo + mfrac*(mpv_hi - mpv_lo), wfrac*u, 0.0);
-                h->Fit(f, "0QRL");
+                fitted = h->Fit(f, "0QRLS");
                 if (f->GetChisquare() < best_chi2) {
                     best_chi2 = f->GetChisquare();
                     for (Int_t k = 0; k < f->GetNpar(); ++k) best[k] = f->GetParameter(k);
                 }
             }
             f->SetParameters(best.data());
-            h->Fit(f, "0QRL");
+            fitted = h->Fit(f, "0QRLS");
         }
 
         TF1 *f_s = new TF1(Form("%s_spike", f->GetName()), "gaus", lo, hi);
@@ -1021,6 +1135,10 @@ namespace ana_helper {
         result.par.push_back(f->GetParameter(5)); result.err.push_back(f->GetParError(5));
         result.chi_square = f->GetChisquare();
         result.ndf        = f->GetNDF();
+        set_peak_fit_result(result, f, int(fitted), fitted.Get() ? fitted->CovMatrixStatus() : -1,
+                            "gaussian_landau");
+        if (flag & (2 | 8 | 64)) result.fit_valid = kFALSE;
+        if (!result.fit_valid) result.fit_method = "invalid";
         result.additional = { static_cast<Double_t>(flag), static_cast<Double_t>(n_rebin), cut,
                               f->GetParameter(1), f->GetParameter(2) };
 
@@ -1291,6 +1409,9 @@ namespace ana_helper {
         FitResult result;
         result.par = {h->Integral(b_lo, b_hi), h->GetBinCenter(b_max), h->GetStdDev()};
         result.err = {0.0, h->GetBinWidth(b_max), 0.0};
+        result.migrad_stats = -1;
+        result.fit_method = "mode";
+        result.fit_valid = result.par[0] > 0.0 && std::isfinite(result.par[1]) && std::isfinite(result.par[2]);
 
         h->GetXaxis()->SetRangeUser(result.par[1] - 80.0, result.par[1] + 150.0);
         h->Draw();
@@ -1340,7 +1461,7 @@ namespace ana_helper {
             fit_min, fit_max, 4);
         f_gauss->SetParameters(par[0], par[1], par[2]*0.9, 1.0);
         f_gauss->SetParLimits(3, 0.0, h->GetMaximum());
-        h->Fit(f_gauss, "0QEMR", "", fit_min, fit_max);
+        TFitResultPtr fitted_gauss = h->Fit(f_gauss, "0QEMRS", "", fit_min, fit_max);
 
         // -- candidate 2: Landau + background -----
         TF1 *f_landau = new TF1(Form("ped_l_%s", h->GetName()), 
@@ -1348,10 +1469,28 @@ namespace ana_helper {
             fit_min, fit_max, 4);
         f_landau->SetParameters(par[0], par[1], par[2]*0.5, 1.0); // Landau sigma is usually narrower
         f_landau->SetParLimits(3, 0.0, h->GetMaximum());
-        h->Fit(f_landau, "0QEMR", "", fit_min, fit_max);
+        TFitResultPtr fitted_landau = h->Fit(f_landau, "0QEMRS", "", fit_min, fit_max);
 
         // -- selection -----
-        TF1 *f_best = (f_gauss->GetChisquare() <= f_landau->GetChisquare()) ? f_gauss : f_landau;
+        const Int_t status_gauss = int(fitted_gauss);
+        const Int_t status_landau = int(fitted_landau);
+        const Int_t covariance_gauss = fitted_gauss.Get() ? fitted_gauss->CovMatrixStatus() : -1;
+        const Int_t covariance_landau = fitted_landau.Get() ? fitted_landau->CovMatrixStatus() : -1;
+        const Bool_t valid_gauss = valid_root_fit(f_gauss, status_gauss, covariance_gauss);
+        const Bool_t valid_landau = valid_root_fit(f_landau, status_landau, covariance_landau);
+        TF1 *f_best = nullptr;
+        if (valid_gauss && valid_landau)
+            f_best = (f_gauss->GetChisquare() <= f_landau->GetChisquare()) ? f_gauss : f_landau;
+        else if (valid_gauss)
+            f_best = f_gauss;
+        else if (valid_landau)
+            f_best = f_landau;
+        else
+            f_best = f_gauss;
+        const Bool_t selected_valid = (f_best == f_gauss) ? valid_gauss : valid_landau;
+        const Int_t selected_status = (f_best == f_gauss) ? status_gauss : status_landau;
+        const Int_t selected_covariance = (f_best == f_gauss) ? covariance_gauss : covariance_landau;
+        const std::string selected_method = (f_best == f_gauss) ? "gaussian" : "landau";
         if (f_best == f_gauss) delete f_landau; else delete f_gauss;
 
         FitResult result;
@@ -1360,6 +1499,11 @@ namespace ana_helper {
             result.err.push_back(f_best->GetParError(i));
         }
         result.chi_square = f_best->GetChisquare();
+        result.ndf = f_best->GetNDF();
+        result.migrad_stats = selected_status;
+        result.covariance_status = selected_covariance;
+        result.fit_valid = selected_valid;
+        result.fit_method = selected_valid ? selected_method : "invalid";
         
         // Use actual maximum of the function as the representative peak (user suggestion)
         result.par[1] = f_best->GetMaximumX(fit_min, fit_max);
@@ -1426,7 +1570,8 @@ namespace ana_helper {
         f_fit_g->SetParLimits(3, 0.0, 100000.0);        
         f_fit_g->SetLineColor(kOrange);
         f_fit_g->SetLineWidth(2.0);
-        h->Fit(f_fit_g, fit_option.Data(), "", par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
+        TFitResultPtr fitted_g = h->Fit(f_fit_g, fit_option+"S", "",
+            par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
         Double_t chi_square_g = f_fit_g->GetChisquare();
 
         
@@ -1456,12 +1601,20 @@ namespace ana_helper {
         f_fit_l->SetParLimits(3, 0.0, 100000.0);
         f_fit_l->SetLineColor(kOrange);
         f_fit_l->SetLineWidth(2.0);
-        h->Fit(f_fit_l, fit_option.Data(), "", par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
+        TFitResultPtr fitted_l = h->Fit(f_fit_l, fit_option+"S", "",
+            par[1]-peak_n_sigma.first*par[2], par[1]+peak_n_sigma.second*par[2]);
         Double_t chi_square_l = f_fit_l->GetChisquare();
 
         // -- draw -----
         FitResult result;
-        if (chi_square_g <= chi_square_l) {
+        const Int_t status_g = int(fitted_g), status_l = int(fitted_l);
+        const Int_t covariance_g = fitted_g.Get() ? fitted_g->CovMatrixStatus() : -1;
+        const Int_t covariance_l = fitted_l.Get() ? fitted_l->CovMatrixStatus() : -1;
+        const Bool_t valid_g = valid_peak_fit(f_fit_g, status_g, covariance_g);
+        const Bool_t valid_l = valid_peak_fit(f_fit_l, status_l, covariance_l);
+        const Bool_t take_gauss = (valid_g && valid_l && chi_square_g <= chi_square_l)
+            || (valid_g && !valid_l) || (!valid_g && !valid_l);
+        if (take_gauss) {
             for (Int_t i = 0, n_par = f_fit_g->GetNpar(); i < n_par; i++) {
                 result.par.push_back(f_fit_g->GetParameter(i));
                 result.err.push_back(f_fit_g->GetParError(i));
@@ -1474,6 +1627,7 @@ namespace ana_helper {
             h->Draw();
             f_fit_g->SetNpx(1000);
             f_fit_g->Draw("same");
+            set_peak_fit_result(result, f_fit_g, status_g, covariance_g, "gaussian");
             delete f_fit_l;
         } else {
             for (Int_t i = 0, n_par = f_fit_l->GetNpar(); i < n_par; i++) {
@@ -1491,6 +1645,7 @@ namespace ana_helper {
             h->Draw();
             f_fit_l->SetNpx(1000);
             f_fit_l->Draw("same");
+            set_peak_fit_result(result, f_fit_l, status_l, covariance_l, "landau");
             delete f_fit_g;
         }
         TLine *line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());
@@ -1615,7 +1770,19 @@ namespace ana_helper {
                     result.par[1], std::max(h->GetBinWidth(1), result.par[2]), 0.}};
                 fit_state->lower = std::max(h->GetXaxis()->GetXmin(), center-half_width);
                 fit_state->upper = std::min(h->GetXaxis()->GetXmax(), center+half_width);
+                fit_state->function = "moments";
+                fit_state->status = -1;
+                fit_state->covariance = -1;
+                fit_state->ndf = 0;
+                fit_state->chi_square = 0.;
+                fit_state->statistics = summarize_mip_statistics(h, fit_state->lower, fit_state->upper);
+                fit_state->success = false;
             }
+            result.migrad_stats = -1;
+            result.covariance_status = -1;
+            result.fit_method = "moments";
+            result.fit_valid = evnum_within_range > 0.0 && std::isfinite(result.par[1])
+                && std::isfinite(result.par[2]) && result.par[2] >= 0.0;
         }
 
         TLine *line = new TLine(result.par[1], 0, result.par[1], h->GetMaximum());

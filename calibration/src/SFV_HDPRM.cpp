@@ -128,18 +128,29 @@ void analyze(TString path, TString particle){
     Int_t ch;
     std::vector<Double_t> tdc_p0_val; 
     std::vector<Double_t> tdc_p0_err; 
+    std::vector<Int_t> tdc_fit_status, tdc_fit_valid, tdc_fit_covariance_status;
+    std::vector<std::string> tdc_fit_method;
     tree->Branch("ch", &ch, "ch/I");
     tree->Branch("tdc_p0_val", &tdc_p0_val);
     tree->Branch("tdc_p0_err", &tdc_p0_err);
+    tree->Branch("tdc_fit_status", &tdc_fit_status);
+    tree->Branch("tdc_fit_valid", &tdc_fit_valid);
+    tree->Branch("tdc_fit_method", &tdc_fit_method);
+    tree->Branch("tdc_fit_covariance_status", &tdc_fit_covariance_status);
     
     for (Int_t i = 0; i < conf.num_of_ch.at("sfv"); i++) {
         ch = i;
         tdc_p0_val.clear();
         tdc_p0_err.clear();
+        tdc_fit_status.clear(); tdc_fit_valid.clear(); tdc_fit_method.clear(); tdc_fit_covariance_status.clear();
 
         // -- tdc -----
         tdc_p0_val.push_back(tdc_up[i].par[1]);
         tdc_p0_err.push_back(tdc_up[i].err[1]);
+        tdc_fit_status.push_back(tdc_up[i].migrad_stats);
+        tdc_fit_valid.push_back(tdc_up[i].fit_valid);
+        tdc_fit_method.push_back(tdc_up[i].fit_method);
+        tdc_fit_covariance_status.push_back(tdc_up[i].covariance_status);
     
         tree->Fill();
     }
